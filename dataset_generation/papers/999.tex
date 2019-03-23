@@ -1,0 +1,555 @@
+\documentclass{bmvc2k}
+
+\usepackage{amsmath} % assumes amsmath package installed
+\usepackage{amssymb}  % assumes amsmath package installed
+\usepackage{array,multirow}
+
+%% Enter your paper number here for the review copy
+%\bmvcreviewcopy{1023}
+
+\title{Deep Representation Learning for Domain Adaptation of
+Semantic Image Segmentation}
+
+% Enter the paper's authors in order
+% \addauthor{Name}{email/homepage}{INSTITUTION_CODE}
+\addauthor{Assia Benbihi}{abenbihi@georgiatech-metz.fr}{1}
+\addauthor{Matthieu Geist}{matthieu.geist@univ-lorrainefr}{2}
+\addauthor{Cedric Pradalier}{cedric.pradalier@georgiatech-metz.fr}{1}
+
+% Enter the institutions
+% \addinstitution{Name\\Address}
+\addinstitution{
+ UMI 2958 GT-CNRS -- 
+ GeorgiaTech Lorraine\\
+ Metz, France
+}
+\addinstitution{
+ Universit\'e de Lorraine\\
+ CNRS LIEC UNR 7360,\\
+ Metz, France
+}
+
+\runninghead{Benbihi, Geist, Pradalier}{Deep Representation Learning}
+% \runninghead{Assia Benbihi, Matthieu Geist, Cedric Pradalier}{BMVC Author Guidelines}
+
+% Any macro definitions you would like to include
+% These are not defined in the style file, because they don't begin
+% with \bmva, so they might conflict with the user's own macros.
+% The \bmvaOneDot macro adds a full stop unless there is one in the
+% text already.
+\def\eg{\emph{e.g}\bmvaOneDot}
+\def\Eg{\emph{E.g}\bmvaOneDot}
+\def\etal{\emph{et al}\bmvaOneDot}
+
+%-------------------------------------------------------------------------
+% Document starts here
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Deep Convolutional Neural Networks have pushed the state-of-the art for semantic segmentation provided
+that a large amount of images together with pixel-wise annotations is available. Data collection is 
+expensive and a solution to alleviate it is to use transfer learning. 
+This reduces the amount of annotated data required for the network training
+but it does not get rid of this heavy processing step. 
+We propose a method of transfer learning without annotations on the target task for
+datasets with redundant content and distinct pixel distributions. 
+%Many applications that relies on reccurent semantic segmentation 
+%such as environement monitoring or medical image processing generates such dataset.
+%For example, two image surveys of the same natural environment at two different times 
+%have approximately the same semantic content but distinct pixel distribution 
+%because of the image quality. This prevents a network trained on the 
+%first survey to generalize to the other.
+%And the content change prevents the use of the annotation of one survey to 
+%another. 
+Our method takes advantage of the approximate content alignment of the images 
+between two datasets when the approximation error prevents the reuse of annotation from one dataset 
+to another. Given the annotations for only one dataset, we train a first network in 
+a supervised manner. This network autonomously learns to generate deep data representations
+relevant to the semantic segmentation. Then the images in the new dataset, 
+we train a new network to generate a deep data representation that matches 
+the one from the first network on the previous dataset. 
+The training consists in a regression between feature maps and does not require any annotations on the 
+new dataset. We show that this method reaches performances similar to a classic transfer learning
+on the PASCAL VOC dataset with synthetic transformations.
+\end{abstract}
+
+%-------------------------------------------------------------------------
+\section{Introduction}
+\label{sec:intro}
+
+\begin{figure}[thb]
+  \centering
+  \includegraphics[width=\linewidth]{training_pipeline.PNG}
+  \caption{Top: The trained and frozen (gray) network provides ground truth deep representations. Down: The trainable layers (blue) must learn the deep representations.}
+  \label{fig:method}
+\end{figure}
+
+
+Many applications such as environment monitoring or medical image processing 
+rely of semantic segmentation of datasets with redundant content. 
+Deep Convolutional Neural Networks (DCNN) reach state-of-the-art performance
+on segmentation on such datasets but require a large amount of data 
+together with pixel-wise annotations. 
+These types of applications share a common feature which is that the segmentation dataset gets larger with time and the data distribution may change. This prevents a network 
+trained on a dataset at time t to generalize a latter time. 
+Each time the pixel distribution deviates too much from the past, 
+the network needs to be fine-tuned or retrained from scratch. In
+both cases, one needs to provide new pixel-wise annotations as the dataset changes. 
+To avoid the burden of reannotation, we propose a method to transfer the learning from a network trained at
+time t to the dataset at time t+1 without annotations on the new dataset. To do
+so, we transfer the deep representations learned by the network at time t 
+instead of transferring the whole segmentation learning. 
+This method has been studied in \cite{bengio2012deep} in the Unsupervised and 
+Transfer Learning Challenge for classification. 
+One of the limitation in this work was the lack of
+instances pairs with the same semantic content. In the applications we address, 
+such pairs arise naturally which solves this issue. 
+
+For example,
+environment monitoring surveys the same area across time. This generates several
+datasets with approximately aligned images across surveys. 
+One could provide annotations for a
+small part of the dataset to train the network and then generalize it to the future.
+However,
+the image distribution may change across time which prevent a good generalization.
+In \cite{richard2018}, a DCNN is used to segment land categories on aerial images over a 
+period from 1955 to 2015. The 2015 dataset is made of RGB digital images whereas 
+the 1955 data is made of black and white analog images that have been digitized.
+A network trained on the 2015 data can not generalize on the 1955 because
+the images do not have the same color domain nor the same resolution or grain. 
+Also, even though 
+the surveys cover the same area, the images are not perfectly aligned due to small changes in land use, which prevent
+the use of 2015 annotations to train a network on the 1955 data. 
+What stays approximately invariant for one image across surveys is the 
+high-level semantic content. DCNN have the property to autonomously build 
+high-level data representation in the feature maps during supervised training. 
+Our method proposes to train a network $H_1$ only on one of the dataset 
+$D_1$ with 
+pixel-wise supervision. Then a second network $H_2$ is trained 
+to generate deep representations for another dataset $D_2$
+so as to match the deep representation of $H_1$ on $D_1$. 
+
+We apply this method to synthetic transformations on the PASCAL VOC 12. We use 
+synthetic data to gather ideal baselines that require to have pixel-wise 
+annotations on 
+all datasets. We show that our transfer learning method reach the same
+performance as classic transfer learning and classic training. 
+The next section describes the state-of-the-art in transfer learning for DCNN. 
+Section 3 and 4 presents our method and results.
+
+\section{Related work}
+
+Transfer learning \cite{pan2010survey} is relevant for DCNN because convolution filters
+can be transferred as-is from one network to another and it solves a main issue 
+which is collecting enough data for the network training to converge. 
+There are two main categories of transfer learning that the literature addresses: 
+inductive transfer learning and transductive transfer learning. Inductive transfer 
+learning consists in transferring the weights of a network trained on a different 
+task but on the same dataset distribution.
+This is relevant because the early layers of a DCNN
+capture low-level image features such as colours or edges 
+\cite{zeiler2014visualizing} which are 
+agnostic to the task. Given one dataset, they can be reused as-is as a
+foundation on which to 
+build high-level features that will be specialised to the task at hands in deeper layers. 
+For example, \cite{long2015fully} extend a classification network with fully 
+connected layer to a fully convolutional layer for semantic segmentation. 
+They keep the first layers of the network which build high level
+representations
+such as object contours and replace the fully connected layers with convolutional
+layers. These last layers are trained from scratch and compute the segmentation
+labels from the representation built by the lower layers. State-of-the art segmentation networks
+ such as DeepLab \cite{chen2018deeplab} and SegNet \cite{badrinarayanan2017segnet}
+ also use this approach.
+
+Transductive transfer on the other hand consists in transferring the weights of a network trained 
+to do the same task but on an other dataset. This is a classic method to decrease
+the amount of data needed to train a network. For example, \cite{ilg2017flownet} 
+propose
+to train a network to compute the flow between two images with supervised learning. However, it is
+extremely complex to generate real data with ground truth flow. So the authors created the Flying Chair
+synthetic dataset to train the network. Then, they trained this network on a reduced 
+set of the target dataset. Pre-training on synthetic data is also relevant for 
+urban scenes segmentation as demonstrated in~\cite{ros2016synthia}. Our method is similar in that we initialise 
+$H_2$ with the weights of the supervised training of $H_1$. However, we do not 
+train $H_2$ on the target task which is semantic segmentation. We train $H_2$ 
+to generate the same high level representation on $D_2$ as $H_1$ does on $D_1$ 
+even though the style of the datasets is different. We do so by taking advantage 
+of the content similarity between $D_1$ and $D_2$ which allows us to bypass 
+the need for $D_2$ annotations.   
+
+\cite{bengio2012deep} addresses the issue of learning a ``good representation'' in the 
+context of The Unsupervised and Transfer Learning Challenge. 
+The test sets have examples which are not well represented in the training set.
+As a result, the input distribution of the training set is very different what appears in the test set and few or no labels are provided for some of the classes
+of interest. This is similar to the problem we address where $D_2$ has a different
+distribution from $D_1$ and there are no annotations for $D_2$. The solution they propose
+is to learn relevant representations for the non-annotated data using 
+an unsupervised representation-learning algorithm. Their results 
+are not as satisfying as they expect them to be and their explanation is that they
+lack annotated images. They argue that some of the relevant features should be 
+learned on other instances than the non-annotated ones. So they use the annotated
+training set to build a set of relevant features for the training set and select
+the one that were also relevant for the non-annotated test set. 
+We follow their guidelines as we first learn relevant semantic representations 
+of the image content during the supervised training of $D_1$. Then we use these
+representations as a baseline to learn the relevant representations for $D_2$. 
+Their work provide guidelines to unsupervised representation learning and 
+experiments on classification dataset. We extend their work to semantic segmentation
+for tasks where similar content representation naturally arises across distinct
+input distributions. This solves the challenge of the lack of annotated 
+examples.
+
+\section{Method}
+
+\subsection{Training}
+Figure \ref{fig:method} illustrates the training pipeline: the upper network
+has been trained in a supervised manner on an annotated dataset $D_1$. 
+It has learned relevant high-level semantic representations of the image 
+content and is then frozen (grey). The bottom network is initialised with the
+weights of the upper one and is trained on  
+the second dataset $D_2$. $D_2$ has content similar to $D_1$ but with a different 
+distribution. Given two images $(X_1, X_2) \in D_1 \times D_2$,  
+the blue layers are fine-tuned to generate the same representation 
+on $X_2$ as the upper network on $X_1$. 
+The training is a regression between feature maps and does not require 
+any annotation on $D_2$. 
+
+More formally, let $H(\theta)$ be a network model parameterised by weights
+$\theta$ and ${\cal F}(\theta) = \left\{F^l(\theta), \;l \in L\right\}$ a set 
+of feature maps of the network $H(\theta)$. 
+For example in VGG-16, ${\cal F}(\theta)$ could be the {\tt conv1\_1} or {\tt conv2\_2} layer. 
+Let $H_1 = H(\theta_1)$ and $H_2 = H(\theta_2)$ be two instances of $H$ trained on $D_1$ 
+and $D_2$, leading respectively to the weights $\theta_1$ and $\theta_2$. 
+$H_1$ is trained with the pixel-wise cross-entropy loss. 
+$H_2$ first initialised with the weights $\theta_1$ and then trained on the set of image pairs 
+$\left\{(X_1^i, X_2^i), \; i \in I\right\} \subset D_1 \times D_2$. Each pair has a similar content but 
+different pixel distributions. However, $H_2$ is not trained using the cross-entropy
+loss, but it is trained so that its feature maps 
+${\cal F}(\theta_2) = \left\{F^l_2,\;l \in L\right\}$
+match the corresponding feature maps ${\cal F}(\theta_1)=\left\{F^l_1,\;l \in L\right\}$ from $H_1$. 
+Given a set of feature map ${\cal F}$, for one image pair, the training loss is:
+
+\begin{equation}
+  \begin{split}
+    \mathcal{L}(H_2)  & = \sum_{l \in L}{w_l \mathcal{L}(F^l_2)}\\
+                              & = \sum_{l \in L}{ w_l \| F^l_1 - F^l_2 \|^2}
+  \end{split}
+\end{equation}
+
+Each feature map $F^l_2$ generates a loss weighted by $w_l$. 
+During training, the loss from the $l$-th feature map is back-propagated only 
+in the layers lower than $l$. In our implementation, the feature weights has
+been kept constant. Investigations over more complex weighing strategies have been left
+for future work.
+
+\subsection{Evaluation}
+
+Following the standard practice in segmentation problems, we evaluate our method with the segmentation performance of $H_2$ on 
+the test set of $D_2$. We use both the mean class accuracy (acc) and the mean 
+Intersection Over Union (IOU).
+The performances of $H_2$ are compared to three baselines. 
+The baseline B0 
+measures the performance of $H_1$ on $D_2$, i.e. how well $H_1$ 
+generalises to a dataset with the same content but a different pixel distribution. 
+This also gives a quantitative measure of the transformation between two datasets.
+The transformation is small when the performances of $H_1$ on $D_1$ and $D_2$ are equivalent.
+The baseline B1 measures the performance of $H_2$ trained from scratch 
+on $D_2$ when 
+pixel-wise annotations are provided. This ideal setting provides the performance 
+the transfer learning should aim at.
+The last baseline B2 measures the performance of $H_2$ when it is initialised 
+with $\theta_1$ and then fine-tuned on $D_2$ using standard cross-entropy loss with full annotations. This provides the performance of 
+classic supervised fine-tuning our method should reach, even though it does not require explicit annotations. The baselines are summarised in Table \ref{tab:baselines}.
+
+\begin{table}
+\label{tab:baselines}
+\begin{center}
+\begin{tabular}{|l|l|l|}
+\hline
+  B & Training & Test \\
+\hline
+  B0 & $H_1$ on annotated $D_1$ & $H_1$ on $D_2$ \\
+\hline
+  B1 & $H_2$ on annotated $D_2$ & $H_2$ on $D_2$ \\
+\hline
+  B2 & $H_2$ initialised with $\theta_1$,  & $H_2$ on $D_2$ \\
+     & fine-tuned on annotated $D_2$ &                         \\
+\hline          
+\end{tabular}
+\end{center}
+  \caption{Baselines summary.} 
+\end{table}
+
+\subsection{Visualisation}
+Once $H_2$ is trained, we propose to visualise the changes of representation space induced
+by the regression. In principle, this is achieved by feeding an image $X_1 \in D_1$ to $H_2$ 
+which generates a set of features ${\cal F}_2(X_1)$.  We then need to design an optimisation for an image $X$ initialised with noise so that ${\cal F}_2(X)$ 
+matches ${\cal F}_2(X_1)$. 
+At the end of the optimisation, $X$ should display the same content as $X_1$ with the 
+style of $D_2$. 
+
+To generate these images, we adapt the feature map inversion method from
+\cite{Mahendran_2015_CVPR} to integrate style transfer into the inversion. In
+addition, we adapt the style transfer method from \cite{gatys2016image},
+\cite{johnson2016perceptual} to generate image content and style from only one
+network instead of two. 
+
+In practice, the content and style generation is performed as follows: we feed $X$ to $H_2$, 
+compute a content loss and a style loss between ${\cal F}_2(X_1)$ 
+and ${\cal F}_2(X)$. 
+Then we use Stochastic Gradient Descent (SGD)
+on $X$ so as to make the features extracted from $X$ converge to those extracted
+from $X_1$.
+
+The loss used in the optimisation is computed for each feature map $F^l_2$. We use the loss definitions and Gram matrix definition 
+from \cite{gatys2016image}. The content loss is a simple $\mathcal{L}_2$ loss
+between feature maps. The style loss is a normalised $\mathcal{L}_2$ loss 
+between the Gram matrix of the feature maps. This matrix is computed from a 2D
+representation of each $F^l_2$.
+
+\begin{equation}
+  \begin{split}
+    \mathcal{L}_{content}(l)  &= \frac{1}{2} \|F^l_2(X_1) - F^l_2(X)\|^2 \\ 
+    \mathcal{L}_{style}(l)    &\propto \|G(F^l_2(X_1))-G(F^l_2(X))\|^2 \\ 
+  \end{split}
+\end{equation}
+
+\section{Experiments}
+
+\subsection{Dataset}
+
+\begin{figure}[thb]
+  \centering
+  \includegraphics[width=\linewidth]{transfo_voc12_2_244.png}
+  \caption{Synthetic transformations. Left-right: VOC, photocopy, ripple, cubism}
+  \label{fig:transfoVOC12}
+\end{figure}
+
+To compute the quantitative baselines, we use the PASCAL VOC12 
+\cite{everingham2015pascal} with three synthetic transformations.  
+It contains
+20 categories to segment and classify from an additional background category. 
+The original dataset contains 1464 train images, 
+1449 validation images and 1456 test images. \cite{hariharan2011semantic} provides additional
+annotated images resulting in 10 582 training images. 
+Three transformations are simulated on this dataset using
+GIMP\footnote{\url{https://www.gimp.org/}} and illustrated
+in Figure \ref{fig:transfoVOC12}. The regression is trained on the 10 582 original
+images together with their transformation. $H_2$ is then evaluated on the transformed validation 
+set resulting from each transformation.
+
+$T_1$ is generated using the 'photocopy' filter 
+which simulates a change of domain color with a change of saturation. This can
+be encountered in environment monitoring across long period of time such as
+land usage monitoring \cite{richard2018}.
+$T_2$ is generated with the ripple distortion to simulate misalignment of image 
+content together with noise. This is typical in natural environment monitoring such 
+as in the dataset from \cite{griffith2017symphony}. 
+$T_3$ is generated with the cubism filter to simulate both a change of texture, 
+misalignment with edge noise. 
+
+We measure the distance between the original 
+PASCAL VOC 12 dataset $D_1$ and a transformed dataset $D_2$ (Table \ref{tab:dd}) 
+with the normalized performance degradation of the network 
+$H_1$ between $D_1$ and $D_2$. We train $H_1$ on $D_1$ following the setup from 
+DeepLab V3 \cite{chen2018deeplab} and reach an accuracy of 79.92 and a mIOU of 
+69.22. Let $acc_2$ and $mIOU_2$ the performance of $H_1$ on $D_2$, the distance 
+is computed as follow: 
+\begin{equation}
+  d(D_1, D_2) = \frac{1}{2}( \frac{\|79.92 - acc_2\|}{79.92} + 
+  \frac{\|69.22 - mIOU_2\|}{69.22})
+\end{equation}
+
+\begin{table}
+\begin{center}
+\begin{tabular}{|c|c|c|}
+\hline
+T1: Photocopy & T2: Ripple & T3: Cubism\\
+\hline     
+32.48  & 62.59  & 94.03\\
+\hline
+\end{tabular}
+\end{center}
+\caption{Dataset distance and measure of the transformation
+    complexity.}
+\label{tab:dd}
+\end{table}
+
+From the normalized distances shown in Table~\ref{tab:dd}, it is clear that
+the three transformation exhibit a increasing level of complexity that
+challenges a network trained only on $D_1$. 
+
+\begin{figure}[thb]
+  \centering
+  \includegraphics[width=\linewidth]{feat_map_conv.png}
+   \caption{Feature map convergence. 
+   Line 1 show the original images. 
+   Line 2 show the feature map of $H_1$ on $D_1$. 
+   Line 3 shows the transformed image. 
+   Line 4 show the feature map of $H_1$ on $D_2$. 
+   Line 5 show the feature map of $H_2$ on $D_2$.}
+  \label{fig:feat_map}
+\end{figure}
+\subsection{Experimental Setup}
+
+\paragraph{Supervised training of $H_1$.}
+$H$ follows the VGG-16 architecture \cite{simonyan2014very} from DeepLabV3 \cite{chen2018deeplab} for
+training time considerations. The network reaches near state-of-the-art
+performance on PASCAL VOC 12 with only 5 hours of training on an NVIDIA Ge1080Ti.
+The training setting is the same as in \cite{chen2018deeplab}:
+we train the network for 20 000 iterations with a batch size of 10, stochastic
+gradient descent with a momentum of 0.9, a weight decay of 0.5 and the "poly"
+learning rate policy initialized at $2.5 \times 10^{-4}$ with
+$power=0.9$. 
+
+\paragraph{Feature map training of $H_2$.}
+$H_2$ has the same architecture as $H_1$. We feed $D_1$ to the trained $H_1$,
+$D_2$ to $H_2(\theta)$ and train a regression between a set of feature map ${\cal F}(\theta)$. 
+We chose several sets of feature maps to build ${\cal F}$ to better understand the hierarchical representation
+model of the network. An intuition gathered from the literature 
+(\cite{dosovitskiy2016inverting,oquab2014learning,simonyan2013deep}) suggests that early layers captures low-level 
+representations such as colors and edges, and deeper-level more complex representations 
+such as object contours and their label. 
+We evaluate this intuition by comparing the performance of $H_2$ with regression 
+on early layers such as {\tt pool\_1} or {\tt pool\_2} versus deeper layers 
+such as {\tt pool\_5}. 
+We also evaluate the correlation between these feature maps with regression 
+on several layers simultaneously: {\tt pool\_1} to {\tt pool\_5}. 
+Finally, we evaluate the relative importance of the features maps with two weights 
+strategies. In the first one, $w_l$ increases with the layer level, i.e. $w_l$ is 
+higher for {\tt pool\_5} than for {\tt pool\_1}. In the second, the weights are reversed. We use a uniform weight distribution [0.2, 0.4, 0.6, 0.8, 0.9]. 
+
+
+\subsection{Experimental Results}
+
+\begin{figure}[thb]
+  \centering
+  \includegraphics[width=\linewidth]{rec_pool1_133.png}
+  \caption{Style reconstruction: $H_2$ is fed with the left-most image and generates a feature map. Then an image is generated to match this feature map. Left-right: $H_2$ trained on $T_1, T_2, T_3$. The generated image match the content and the style transformation after 2000 iterations.}
+  \label{fig:rec_pool5_53}
+\end{figure}
+
+Our method reaches comparable or better performance than fine-tuning on all transformation 
+(Table~\ref{tab:res_pool5}). Let us recall however, that this is achieved without using an explicitly labeled segmentation on $D_2$.
+Figure \ref{fig:feat_map} shows that the deep representations of $H_2$ on $D_2$ 
+(bottom lines) converge towards the deep representation of $H_1$ on $D_1$ (Figure \ref{fig:feat_map} line 2).
+Visualization (Figure \ref{fig:rec_pool5_53}) shows that this transfer learning method 
+adapt the parameters to the dataset style. Reconstruction from the feature map 
+shows the original image with the appropriate style.  
+
+\begin{table}[tbh]
+\begin{center}
+\begin{tabular}{|l|c|c|c|}
+\hline
+B  & T1 & T2 & T3 \\
+\hline
+B0  &54.73-46.07&31.76-24.28&5.18-3.78\\
+\hline
+B1  &74.43-62.26&73.43-62.58&54.04-43.74\\
+\hline
+B2  &\textbf{74.65}-63.41&74.71-63.99&\textbf{55.39}-45.37\\
+\hline
+Our &74.05-\textbf{64.39}&\textbf{78.65-67.23} &54.46-\textbf{45.79}\\
+\hline
+\end{tabular}
+\end{center}
+  \caption{Segmentation perf. of $H_2$ on $D_2$ for regression on pool\_5 (acc-mIOU)}
+\label{tab:res_pool5}
+\end{table}
+
+%D1 VOC 12: acc: 79.92 - rec (/8): 84.52 - mIOU: 69.22
+Table \ref{tab:res_pool5} shows that our method reaches performances similar to 
+classic fine-tuning for all image transformations. 
+The first line (B0) shows the performance of $H_1$ on the transformed dataset. 
+$H_1$ is trained with supervision on the original dataset $D_1$. So these metrics show the generalization
+properties of $H_1$ on the transformed dataset. It also reflects the level of transformation between the original dataset
+and the transformed ones. For example, the photocopy dataset distribution is closer to the 
+original dataset than the cubism dataset distribution: the accuracy drops from 54.73 to 5.18. 
+Our method presents an improvement over all B0 results which means that 
+transferring deep representations is a relevant transfer learning method for semantic segmentation.
+The second and third lines are the baselines we compare our method to: baseline B1 shows the performance 
+of the network if trained from scratch  on $D_2$ when pixel-wise annotations
+are provided. 
+Baseline B2 shows the performance of $H_2$ when it is finetuned from $H(\theta_1)$ with annotations of $D_2$. 
+B2 outperforms B1 which confirms that transfer learning is relevant to DCNN
+even when pixel-wise annotations are provided. 
+The third line shows our method always outperforms B2 with respect to mIOU 
+and either outperform or reach comparable mean accuracy as B2. This shows that 
+transfer learning of deep representations can replace classic DCNN finetuning.
+
+\begin{table}
+\begin{center}
+\begin{tabular}{|l|c|c|c|}
+\hline
+T       & T1              & T2     & T3 \\
+\hline
+  \texttt{pool\_1}   &60.77-50.40 &24.13-16.47 &5.32-3.77\\
+\hline
+  \texttt{pool\_2}   &65.84-54.26 &25.59-17.72 &7.03-5.55\\
+\hline
+  \texttt{pool\_3} &57.14-46.47   &25.56-17.70   &4.76-3.45 \\
+\hline
+  \texttt{pool\_4}  &4.76-3.45    &25.53-17.67  &43.25-35-14\\
+\hline
+  \texttt{pool\_5}   &\textbf{75.05-64.39}&\textbf{78.65-67.23}&\textbf{54.47-45.79} \\
+\hline
+  $W_{inc}$ &69.27-59.15 & 4.76-3.45 & 35.24-29.44 \\
+\hline 
+  $W_{dec}$ &71.80-61.71 & 4.76-0.03 & 4.76-3.45 \\
+\hline
+\end{tabular}
+\end{center}
+\caption{Segmentation perf. of $H_2$ on $D_2$ for regression on different feature maps}
+\label{tab:feat_res}
+\end{table}
+
+Table \ref{tab:feat_res} shows the segmentation performance of $H_2$ when trained 
+with different regression setting. The best performances are reached
+when the transfer learning
+is supervised between only the layers \texttt{pool\_5} of each network. 
+This suggests that
+ the high level representation are the most relevant learning to transfer for 
+semantic segmentation. 
+The feature maps relevant to transfer may change with the nature of 
+the transformation. The experiments do not provide a generic rule on
+the choice of the feature maps to transfer. But we can still draw an intuition with 
+the results in Table \ref{tab:feat_res}. 
+For $T_1$, we observe that transferring layers up to {\tt pool\_3} trains $H_2$ to 
+improve compared to B0 which is not the case for $T_2$ and $T_3$. One explanation 
+can be that $T_1$ is only a texture transformation which conserves the alignment 
+of the image. So the only change in the dataset is with regard to low-level
+features usually generated in early layers. However, in $T_2$ and $T_3$, the 
+contours of the semantic units in the images change. In $T_2$ it is a regular 
+change defined by the ripple parameters and for $T_3$ the contour pattern is 
+random. Object contours are features usually generated in deeper layers which 
+can explain why the transfer of \texttt{pool\_5} only is relevant for these datasets.
+The results also suggest that when low-level layers are not relevant to transfer, they
+can hinder the transfer of the relevant layers. For example, the 
+transfer learning on multiple layers performs worse than the transfer on \texttt{pool\_5} only. 
+For $T_3$, we observe that a weight distribution that favors high layers performs
+better than $W_{dec}$ but worse than the transfer of \texttt{pool\_5}. 
+Future work will focus on the influence of the choice of the features maps in 
+the transfer learning performance together with the choice of weight distribution. 
+
+\section{Conclusion}
+This work extends the transfer learning of deep representations initiated 
+in \cite{bengio2012deep} to semantic segmentation. The application to recurrent
+dataset overcomes one of its limitation which is the lack of instance pairs
+with similar deep representations. For these applications, such pairs arise 
+naturally.
+This method shows similar performance to classic fine-tuning without using 
+annotations on the target task. The preliminary results suggest that 
+the transfer learning is the most relevant between high layers. 
+While this proof-of-concept targets the feasibility of this method, the
+experiments are not extensive enough to draw a relation between the transfer
+learning performance and the level of transferred deep representations. 
+In future work, we will explore this dependence together with the correlation 
+of transfer learning on multiple deep representations simultaneously.
+
+\bibliography{bmvc_review}
+\end{document}
+
+

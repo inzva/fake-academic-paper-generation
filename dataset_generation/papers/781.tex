@@ -1,0 +1,912 @@
+\documentclass[10pt,twocolumn,letterpaper]{article}
+
+\usepackage{cvpr}
+\usepackage{times}
+\usepackage{epsfig}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{subcaption}
+\usepackage{threeparttable}
+\usepackage{booktabs}
+\usepackage{adjustbox}
+\usepackage{dsfont}
+\usepackage{pifont}
+\usepackage{pgfplots}
+\usepackage{enumerate}
+\usepackage{xcolor}
+
+\renewcommand\thefootnote{\textcolor{red}{\arabic{footnote}}}
+
+\graphicspath{{images/}}
+
+% Include other packages here, before hyperref.
+
+% If you comment hyperref and then uncomment it, you should delete
+% egpaper.aux before re-running latex.  (Or just hit 'q' on the first latex
+% run, let it finish, and you should be clear).
+\usepackage[pagebackref=true,breaklinks=true,letterpaper=true,colorlinks,bookmarks=false]{hyperref}
+
+\cvprfinalcopy % *** Uncomment this line for the final submission
+
+\def\cvprPaperID{1333} % *** Enter the CVPR Paper ID here
+\def\httilde{\mbox{\tt\raisebox{-.5ex}{\symbol{126}}}}
+
+% Pages are numbered in submission mode, and unnumbered in camera-ready
+\ifcvprfinal\pagestyle{empty}\fi
+\begin{document}
+
+%%%%%%%%% TITLE
+\title{OCNet: Object Context Network for Scene Parsing}
+
+\author{Yuhui Yuan \quad Jingdong Wang\\
+Microsoft Research\\
+{\tt\small \{yuyua,jingdw\}@microsoft.com}
+}
+
+\maketitle
+
+\begin{abstract}
+In this paper,
+we address the problem of scene parsing
+with deep learning
+and focus on the context aggregation strategy 
+for robust segmentation. 
+Motivated by
+that the label of a pixel is 
+the category of the object that the pixel belongs to,
+we introduce
+an \emph{object context pooling (OCP)} scheme,
+which represents each pixel
+by exploiting the set of pixels 
+that belong to the same object category 
+with such a pixel,
+and we call the set of pixels as object context.
+
+Our implementation, inspired by the self-attention approach,
+consists of two steps:
+(i) compute the similarities
+between each pixel and all the pixels,
+forming a so-called object context map for each pixel
+served as a surrogate for the true object context,
+and (ii) represent the pixel
+by aggregating the features
+of all the pixels 
+weighted by the similarities.
+The resulting representation is more robust 
+compared to existing context aggregation schemes,
+e.g., pyramid pooling modules (PPM) in PSPNet
+and atrous spatial pyramid pooling (ASPP),
+which do not differentiate the context pixels 
+belonging to the same object category or not,
+making the reliability of contextually aggregated representations limited. 
+We empirically demonstrate our approach 
+and two pyramid extensions 
+with state-of-the-art performance on 
+three semantic segmentation benchmarks: Cityscapes, ADE20K and LIP.
+Code has been made available at: \url{https://github.com/PkuRainBow/OCNet.pytorch}.
+\end{abstract}
+
+\section{Introduction}
+Scene parsing is a fundamental topic in computer vision 
+and is critical for various challenging tasks such as autonomous driving and virtual reality.
+The goal is to predict the label of each pixel,
+i.e., the category label of the object that the pixel belongs to.
+
+Various techniques based on deep convolutional neural networks 
+have been developed for scene parsing
+since the pioneering fully convolutional network approach~\cite{long2015fully}.
+There are two main paths to tackle the segmentation problem.
+The first path is to raise the resolution
+of response maps for improving the spatial precision,
+e.g., through dilated convolutions~\cite{chen2018deeplab, yu2015multi}. 
+The second path is to exploit the context~\cite{chen2018deeplab, yu2015multi,zhao2017pyramid}
+for improving the labeling robustness,
+which our work belongs to.
+
+\begin{figure}
+\centering
+	\includegraphics[width=.15\textwidth]{intro/image3.png}
+	\includegraphics[width=.15\textwidth]{intro/label3.png}
+	\includegraphics[width=.145\textwidth]{intro/map3.png}\\
+	\vspace{.05cm}
+	\includegraphics[width=.15\textwidth]{intro/image2.png}
+	\includegraphics[width=.15\textwidth]{intro/label2.png}
+	\includegraphics[width=.145\textwidth]{intro/map2.png}\\
+	\vspace{.05cm}
+	\includegraphics[width=.15\textwidth]{intro/image1.png}
+	\includegraphics[width=.15\textwidth]{intro/label1.png}
+	\includegraphics[width=.145\textwidth]{intro/map1.png}
+\caption{\small
+Illustrations of the object context maps.
+The first column illustrates example images sampled from the validation set of Cityscapes.
+Three pixels from object car, person and road are marked by {\color{red}{\ding{57}}}.
+The second column illustrates ground truth segmentation maps.
+The third column illustrates object context maps of the three pixels.
+For each object context map,
+it can be seen that 
+most of the weights are focused on 
+the pixels belonging to the same category with the
+selected pixel. 
+}
+\label{fig:ocmap_intro}
+\end{figure}
+
+Existing representative works
+mainly exploit the context
+formed from spatially nearby or sampled pixels.
+For instance, the pyramid pooling module in PSPNet~\cite{zhao2017pyramid} partitions the feature maps
+into multiple regions,
+and the pixels lying within each region are regarded as the context
+of the pixel belonging to the region.
+The atrous spatial pyramid pooling module (ASPP) in DeepLabv3~\cite{chen2017rethinking} 
+regards spatially regularly sampled pixels 
+at different atrous rates as
+the context of the center pixel.
+Such spatial context is a mixture of pixels 
+that might belong to different object categories,
+thus the resulting representations
+obtained from context aggregation
+are limitedly reliable for
+label prediction.
+
+Motivated by that 
+the label of a pixel in an image is 
+the category of the object that the pixel belongs to,
+we present a so-called object context for each pixel,
+which is the set of pixels that belong to the same object category 
+with such a pixel.
+We propose a novel object context pooling (OCP) to 
+aggregate the information according to the object context.
+We compute a similarity map for each pixel $p$, 
+where each similarity score indicates
+the degree that the corresponding pixel and the pixel $p$ belongs
+to the same category.
+We call such similarity map as object context map,
+which serves as a surrogate of the true object context.
+Figure~\ref{fig:ocmap_intro}
+shows several examples of object context map.
+
+We exploit the object context 
+to update the representation for each pixel.
+The implementation of object context pooling,
+inspired by the self-attention approach~\cite{lin2017structured, vaswani2017attention},
+computes the weighted summation of
+the representations of all the pixels contained
+in the object context,
+with the weights from the object context map. 
+% The updated representations are then used for label prediction.
+
+We further present two extensions:
+(i) pyramid object context,
+which performs object context pooling 
+in each region in the spatial pyramid and follows the pyramid design
+introduced in PSPNet~\cite{zhao2017pyramid}. 
+(ii) atrous spatial pyramid object context,
+which combines ASPP~\cite{chen2017rethinking} and object context pooling.
+We demonstrate our proposed approaches
+by state-of-the-art performance on two challenging scene parsing datasets, Cityscapes and ADE20K,
+and the challenging human parsing dataset LIP.
+
+\section{Related Work}
+
+\paragraph{Semantic Segmentation.}
+Semantic segmentation or scene parsing has achieved great progress with the recent works such as FCN~\cite{long2015fully}, UNet~\cite{ronneberger2015u}, SegNet~\cite{badrinarayanan2015segnet}, ParseNet~\cite{liu2015parsenet}, PSPNet~\cite{zhao2017pyramid} and DeepLabv3~\cite{chen2017rethinking}.
+
+There exist two main challenges, (i) resolution: there exists a huge gap between the output feature map's resolution and the input image's resolution. (e.g., the output feature map of ResNet-$101$ is $\frac{1}{8}$ or $\frac{1}{32}$ of the input image's size when we use dilated convolution~\cite{yu2015multi} or not.) 
+(ii) multi-scale: there exist objects of various scales, especially in the urban scene images such as Cityscapes~\cite{cordts2016cityscapes}. Most of the recent works are focused on solving these two challenges.
+
+To handle the problem of resolution, we adopt the dilated convolution within OCNet by following the same settings of PSPNet and DeepLabv3.
+Besides, it is important to capture information of multiple scales to alleviate the problem caused by multi-scale objects. PSPNet applies PPM (pyramid pooling module) while DeepLabv3 employs the image-level feature augmented ASPP (atrous spatial pyramid pooling).
+OCNet captures the multi-scale context information by employing object context pooling over regions of multiple scales.
+
+\paragraph{Context.}
+The context plays an important role in various computer vision tasks and it is of various forms such as global scene context, geometric context, relative location, 3D layout and so on. 
+Context has been investigated for both object detection~\cite{divvala2009empirical,Liu_2018_CVPR} and part detection~\cite{Gonzalez-Garcia_2018_CVPR}. 
+% e.g., Divvala \etal ~\cite{divvala2009empirical} used to conduct an empirical study of the influence of the context in object detection. Abel \etal ~\cite{Gonzalez-Garcia_2018_CVPR} improved the semantic part detection by leveraging the context information of the object that the part belonging to.
+
+The importance of context for semantic segmentation is also verified in the recent works~\cite{liu2015parsenet,zhao2017pyramid,chen2017rethinking}.
+We define the context as a set of pixels in the literature of semantic segmentation.
+Especially, we can partition the conventional context to two kinds:
+(i) nearby spatial context: the ParseNet~\cite{liu2015parsenet} treats all the pixels over the whole image as the context, and the PSPNet~\cite{zhao2017pyramid} employs pyramid pooling over sub-regions of four pyramid scales and all the pixels within the same sub-region are treated as
+the context for the pixels belonging to the sub-region.
+(ii) sampled spatial context:  the DeepLabv3 employs multiple atrous convolutions with different atrous rates to capture spatial pyramid context information and regards these spatially regularly sampled pixels as the context.
+Both these two kinds of context are defined over rigid rectangle regions and carry pixels belonging to various object categories.
+
+Different from the conventional context, object context is defined as the set of pixels belonging to the same object category.
+% Especially, we propose to employ the object context pooling to update the 
+% representation of each pixel.
+% proposes to learn the self-adaptively point-wise context by employing bi-directional information propagation. We illustrate the differences between OCNet and PSANet in the supplementary material.
+% The definition of context is unclear and there exist various definition of context information for different purposes.
+% It matters to encode the image-level context for datasets such as ADE20K~\cite{zhou2017scene} as there exist about 365 scene categories.
+% The image-level context considers objects of various categories while the basic goal of scene parsing is to assign the label of the objects belonging to the same category to the pixels.
+% Thus we introduce a novel context named "object context" that carries the information of objects belonging to the same category with the associated pixel $\mathit{P}$.
+% The object context encodes the semantic information of all the pixels that share the same category with the associated pixel. 
+% Especially, different pixels can access adaptive object context according to the pixel-wise similarity map learned with self-attention method.
+% {\color{red}.... context map?}
+
+% put these discussion in the supplemenary material
+% Our work is different from the PSANet from the following aspects: 
+% (1) OCNet is purposed for information aggregation over the objects that the pixel $\mathit{P}$ belonging to while the PSANet is proposed for information aggregation over the all the existing objects in the whole image.
+% (2) OCNet predicts the pixel-wise similarity map based on the pair-wise semantic features while the PSANet learns the pixel-wise attention map based on mainly the unary semantic features based their relative positions. 
+% % We employ the absolute position representations~\cite{vaswani2017attention} to study the influence of the position information while the PSANet considers the relative position information by employing over over-completed attention maps.
+% (3) OCNet shows significant advantages over the PSANet empirically.
+
+\paragraph{Attention.}
+Attention is widely used for various tasks such as machine translation, visual question answering and video classification.
+The self-attention~\cite{lin2017structured,vaswani2017attention} method calculates the context at one position as a weighted sum of all positions in a sentence.
+Wang \etal  further proposed the non-local neural network~\cite{wang2018non} for vision tasks such as video classification, object detection and instance segmentation based on the self-attention method.
+
+Our work is inspired by the self-attention approach and we mainly employ the self-attention method to learn the object context map recording the similarities between all the pixels and the associated pixel $p$.
+The concurrent DANet~\cite{fu2018dual} also exploits the self-attention method for segmentation, and OCNet outperforms the DANet on the
+test set of Cityscapes and DANet is not evaluated on the ADE20K and LIP benchmarks.
+% The DANet employs the self-attention on both the spatial dimension and the channel dimension
+% while OCNet 
+
+Besides, the concurrent work PSANet~\cite{psanet} is also different from our method. The PSANet constructs the pixel-wise attention map based on each pixel independently while OCNet constructs the object context map by considering the pair-wise similarities among all the pixels.
+
+\section{Approach}
+Given an image $\mathsf{I}$,
+the goal of scene parsing is to 
+assign a label to each pixel,
+where the label is the category
+of the object the pixel belongs to,
+outputting a segmentation (or label) map $\mathbf{L}$.
+
+\begin{figure*}[t]
+\hspace{-0.5cm}
+\includegraphics[scale=0.47]{oc_module.pdf}
+\caption{\small{
+(a) The overall network structure of OCNet: Given an input image, we employ a fully convolution network (FCN) to extract a feature map, then employ an object context module on the feature map and output an updated feature map. Based on the updated feature map, we employ a classifier to predict the pixel-wise label map and employ bilinear method to up-sample the label map for $8 \times$ times as the final prediction.
+(b) Base-OC: Given an input feature map, we employ an object context pooling (OCP) on it, then we concatenate the output feature map of OCP and the input feature map as the output feature map.
+(c) Pyramid-OC: Given an input feature map, we employ four parallel OCPs independently. Each branch partitions the input to different pyramid scales, and the object context pooling is shared within each branch, then we concatenate the four output feature maps with a new feature map that is generated by increasing the channels of the input feature map.
+(d) ASP-OC: Given an input feature map, we employ an OCP and four dilated convolutions (these four branches are the same with the original ASPP), then we concatenate the five output feature maps as the output.}}
+\label{fig:OCNet_pipeline}
+\end{figure*}
+
+
+\vspace{.1cm}
+\noindent\textbf{Pipeline}.
+Our approach feeds the input image $\mathsf{I}$
+to a fully convolution network (e.g., a part of a ResNet),
+outputting a feature map $\mathsf{X}$ of size $ W\times H$,
+then lets the feature map $\mathsf{X}$ go through an object context module,
+yielding an updated feature map $\bar{\mathsf{X}}$,
+next predicts the label for each pixel according to the updated feature map, 
+and up-samples the label map for $8 \times$ times at last.
+The whole structure is called OCNet, 
+and our key contribution to scene parsing
+lies in the object context module.
+The pipeline is given 
+in Figure~\ref{fig:OCNet_pipeline} (a).
+
+\subsection{Object Context}
+The intuition of the object context 
+is to represent a pixel
+by exploiting the representations of other pixels 
+lying in the object that belongs to the same category.
+
+The key component of object context module is the object context pooling (OCP),
+and the design of OCP is inspired
+by the self-attention approach~\cite{lin2017structured, vaswani2017attention}.
+The object context pooling includes two main steps:
+object context estimation and
+object context aggregation.
+
+
+\vspace{.1cm}
+\noindent\textbf{Object context pooling}.
+\noindent\emph{(i) Object context estimation.}
+The \emph{object context} for each pixel $p$
+is defined as 
+as a set of pixels 
+that belong to the same object category
+as the pixel $p$.
+We compute an object context map, denoted in a vector form by $\mathbf{w}_p$\footnote{We use the vector form to represent the 2D map for description convenience.}
+for the pixel $p$,
+indicating the degrees that each other pixel and the pixel $p$ belong to the same object category.
+The object context map is a surrogate for the true object context.
+The computation of object context map is given as follows,
+\begin{align}
+w_{pi} =\frac{1}{Z_p} \exp(f_q(\mathbf{x}_p)^\top f_k(\mathbf{x}_i)),
+\end{align}
+where $\mathbf{x}_p$ and $\mathbf{x}_i$ are the representation vectors
+of the pixels $p$ and $i$.
+The normalization number $Z_p$ is a summation of all the similarities:
+$Z_p = \sum_{i=1}^N \exp(f_q(\mathbf{x}_p)^\top f_k(\mathbf{x}_i))$,
+where $N = W \times H$.
+$f_q(\cdot)$ and $f_k(\cdot)$ are the query transform function and the key transform function.
+
+\emph{(ii) Object context aggregation}.
+We construct the object context representation of the pixel $p$ by 
+aggregating the representations of the pixels according to the object context map as below,
+\begin{align}
+\mathbf{c}_p &= \sum_{i=1}^N w_{pi} \phi(\mathbf{x}_i),
+\end{align}
+where $\phi(\cdot)$ is the value transform function following the self-attention.
+
+\vspace{.1cm}
+\noindent\textbf{Base object context}.
+We employ an object context pooling to aggregate the object context information according to the
+object context map of each pixel,
+and concatenate the output feature map by OCP with the input feature map as the output. 
+We call the resulting method as \emph{Base-OC}. More details are illustrated in Figure~\ref{fig:OCNet_pipeline} (b).
+
+\vspace{.1cm}
+\noindent\textbf{Pyramid object context}.
+We partition the image into regions 
+using four pyramid scales:
+$1\times 1$ region,
+$2\times 2$ regions,
+$3\times 3$ regions,
+and $6 \times 6$ regions,
+which is similar to PSPNet~\cite{zhao2017pyramid}, 
+and we update the feature maps for each scale
+by feeding the feature map of each region 
+into the object context pooling separately,
+then we combine the four updated feature maps together.
+The pyramid object context module has 
+the capability of purifying the object context map
+by removing spatially far but appearance similar pixels that
+belong to different object categories.
+Finally, we concatenate the multiple pyramid object context representations
+with the input feature map.
+We call the resulting method as \emph{Pyramid-OC}.
+More details are illustrated in Figure~\ref{fig:OCNet_pipeline} (c).
+
+\vspace{.1cm}
+\noindent\textbf{Combination with ASPP}.
+The atrous spatial pyramid pooling (ASPP) 
+consists of five branches:
+an image-level pooling branch,
+a $1 \times 1$ convolution branch
+and three $3 \times 3$ dilated convolution branches
+with dilation rates being $12$, $24$ and $36$, respectively over 
+the feature map with output stride of $8$.
+We connect four among the five branches except the image-level pooling branch
+and our object context pooling in parallel, 
+resulting in a method which we name as \emph{ASP-OC}.
+More details are illustrated in Figure~\ref{fig:OCNet_pipeline} (d).
+
+\subsection{Network Architecture}
+\noindent\textbf{Backbone}.
+We use the ResNet-$101$ pretrained over the ImageNet dataset 
+as the backbone, 
+and make some modifications by following PSPNet~\cite{zhao2017pyramid}:
+replace the convolutions within the last two blocks 
+by dilated convolutions with dilation rates being $2$ and $4$, respectively,
+so that the output stride becomes $8$.
+
+\vspace{.1cm}
+\noindent\textbf{Object context module}.
+We construct the Base-OC module, Pyramid-OC module and ASP-OC module
+by employing an extra $1 \times 1$ convolution on the output feature map of 
+Base-OC, Pyramid-OC and ASP-OC.
+
+The detailed architecture of Base-OC module is given as follows.
+Before feeding the feature map into the OCP,
+we employ a dimension reduction module (a $3 \times 3$ convolution)
+to reduce the channels of the feature maps output from the backbone from $2048$ to $512$. 
+Then we feed the updated feature map into the 
+OCP and concatenate the output feature map of the OCP with the 
+input feature map to the OCP.
+We further employ a $1 \times 1$ convolution 
+to decrease the channels of
+the concatenated feature map from $1024$ to $512$.
+
+% fetch the outputs a feature map with $512$ channels and
+% we concatenate the output feature map and the input feature map
+% and a $1 \times 1$ convolution to decrease the channels of
+% the concatenated feature map from $1024$ to $512$.
+
+For the Pyramid-OC module, we also employ a $3 \times 3$ convolution to reduce the channels
+from $2048$ to $512$ in advance,
+then we feed the dimension reduced feature map to the Pyramid-OC and employ four different pyramid partitions ($1\times 1$ region,
+$2\times 2$ regions,
+$3\times 3$ regions,
+and $6 \times 6$ regions) on the 
+input feature map,
+and we concatenate the four different output object context feature maps output
+by the four parallel OCPs.
+Each one of the four object context feature maps has $512$ channels.
+We employ a $1 \times 1$ convolution to increase the channel of the input feature map
+from $512$ to $2048$ and concatenate it with all the four object context feature maps.
+Lastly, we employ a $1 \times 1$ convolution on the concatenated feature map with $4096$ channels and produce the final feature map with $512$ channels.
+
+For the ASP-OC module, we only employ the dimension reduction within the object context pooling branch, where we employ a $3 \times 3$ convolution to reduce the channel from $2048$ to $512$. The output feature map from object context pooling module has $512$ channels.
+For the other four branches, we exactly follow the original ASPP module and employ a $1 \times 1$ convolution within the second above branch and $3 \times 3$ dilated convolution with different dilation rates ($12$, $24$, $36$) in the remained three parallel branches except that we change the output channel from $256$ to $512$ in all of these four branches.
+To ensure the fairness of our experiments, we also increase the channel dimension from $256$ to $512$ within the original ASPP in all of our experiments.
+Lastly, we concatenate these five parallel output feature maps and employ a $1 \times 1$ convolution
+to decrease the channel of the concatenated feature map from $2560$ to $512$.
+
+\section{Experiments}
+\subsection{Cityscapes}
+
+\noindent\textbf{Dataset}.
+The Cityscapes dataset~\cite{cordts2016cityscapes} is tasked for urban scene understanding, which contains $30$ classes and only $19$ classes of them are used for scene parsing evaluation.
+The dataset contains $5,000$ high quality pixel-level finely annotated images and $20,000$ coarsely annotated images. The finely annotated $5,000$ images are divided into $2,975/500/1,525$ images for training, validation and testing. 
+
+\vspace{0.1cm}
+\noindent\textbf{Training settings}.
+We set the initial learning rate as $0.01$ and weight decay as $0.0005$ by default, the original image size is $1024\times 2048$ and we choose crop size as $769\times 769$ following PSPNet~\cite{zhao2017pyramid}, all the baseline experiments only use the $2975$ train-fine images as the training set without specification, the batch size is 8 and we choose the InPlaceABNSync~\cite{Bulò_2018_CVPR} to synchronize the mean and standard-deviation of BN across multiple GPUs in all the experiments. 
+We employ $40$K training iterations, which take about $\sim20$ hours with 4$\times$P100 GPUs.
+
+Similar to the previous works~\cite{chen2017rethinking}, we employ the "poly" learning rate policy, where the learning rate is multiplied by $(1-\frac{iter}{iter_{max}})^{0.9}$. 
+For the data augmentation methods, we only apply random flipping horizontally and random scaling in the range of $[0.5, 2]$.
+
+\vspace{0.1cm}
+\noindent\textbf{Loss function}.
+We employ class-balanced cross entropy loss on both the final output of OCNet and the intermediate feature map output from res$4$b$22$, where the weight over the final loss is $1$ and the auxiliary loss is $0.4$ following the original settings proposed in PSPNet~\cite{zhao2017pyramid}.
+% The balance weight of each class is computed following the DenseASPP~\cite{Yang_2018_CVPR},
+% e.g., the weight of class $k$ is computed with $\frac{1}{\log (1+d_k)}$, where the $d_k$ is the number of pixels belonging to class $k$ over the whole training dataset.
+% We employ the same balance weights for all the experiments on the Cityscapes.
+
+
+\begin{table}[htb]
+\centering
+\footnotesize
+\caption{\small{Comparison to global pooling (GP), pyramid pooling module (PPM) in PSPNet~\cite{zhao2017pyramid},
+and atrous spatial pyramid pooling (ASPP) in DeepLabv3~\cite{chen2017rethinking} on the validation set of Cityscapes.}}
+% \vspace{-0.2cm}
+\begin{tabular}{l|c|c} \hline
+Method &  Train. mIoU ($\%$) & Val. mIoU ($\%$)  \\
+\hline  
+ResNet-$101$ Baseline  &   $84.26$ $\pm$ $0.23$  &  $75.69$ $\pm$ $0.20$  \\ \hline  
+ResNet-$101$ + GP~\cite{liu2015parsenet}  &  $85.02$ $\pm$ $0.14$  &  $77.60$ $\pm$ $0.22$  \\ 
+ResNet-$101$ + PPM~\cite{zhao2017pyramid}  &   $85.26$ $\pm$ $0.12$  &  $77.84$ $\pm$ $0.44$  \\ 
+ResNet-$101$ + ASPP~\cite{chen2017rethinking} &  $85.64$ $\pm$ $0.15$ &  $78.65$ $\pm$ $0.17$  \\ \hline  
+ResNet-$101$ + Base-OC  &   $85.16$ $\pm$ $0.12$ &  $78.80$ $\pm$ $0.26$  \\ 
+ResNet-$101$ + Pyramid-OC  &  $85.10$ $\pm$ $0.11$ &  $78.78$ $\pm$ $0.30$  \\ 
+ResNet-$101$ + ASP-OC &  $\bf{85.72}$ $\pm$ $\bf{0.12}$  &  $\bf{79.58}$ $\pm$ $\bf{0.24}$  \\
+\hline
+\end{tabular}
+\label{table:ocvsppmasppgc}
+\end{table}
+
+\begin{table}[htb]
+\centering
+\footnotesize
+\caption{\small{The effect of the OHEM, Ms+Flip, Training w/ the validation set and Fine-tuning, we report the results on the test set of Cityscapes.}}
+% \vspace{-0.2cm}
+\begin{tabular}{c|c|c|c|c} \hline
+OHEM & Ms + Flip &  w/ Val & Fine-tuning & Test. mIoU ($\%$)  \\
+\hline 
+ $\times$ & $\times$ & $\times$ & $\times$  & $78.22$ \\
+ $\surd$ & $\times$ & $\times$  & $\times$  & $78.90$ ($\blacktriangle 0.68$) \\
+ $\surd$ & $\surd$ & $\times$   & $\times$  & $80.06$ ($\blacktriangle 1.16$) \\
+ $\surd$ & $\surd$ & $\surd$    & $\times$  & $81.54$ ($\blacktriangle 1.48$) \\
+ $\surd$ & $\surd$ & $\surd$   & $\surd$    & $81.67$ ($\blacktriangle 0.13$) \\
+\hline
+\end{tabular}
+\label{table:ocnet_ms_ohem}
+\end{table}
+
+\begin{table}[ht!]
+\centering
+\footnotesize
+\begin{threeparttable}
+\caption{\small{Comparison to state-of-the-art on the test set of Cityscapes.}}
+\begin{tabular}{l|c|c|c} \hline
+Method & Conference & Backbone & mIoU ($\%$)  \\
+\hline 
+PSPNet~\cite{zhao2017pyramid}\tnote{\textdagger}  &  CVPR$2017$  & ResNet-$101$  &  $78.4$ \\ 
+PSANet~\cite{psanet}\tnote{\textdagger} &  ECCV$2018$  & ResNet-$101$  &  $78.6$ \\ 
+AAF~\cite{aaf2018}\tnote{\textdagger}  &  ECCV$2018$  & ResNet-$101$  &  \underline{$79.1$} \\ 
+OCNet\tnote{\textdagger} & - &  ResNet-$101$ & $\bf{80.1}$ \\  \hline 
+RefineNet~\cite{lin2017refinenet}\tnote{\textdaggerdbl} &  CVPR$2017$  & ResNet-$101$  &  $73.6$ \\ 
+SAC~\cite{Zhang_2017_ICCV}\tnote{\textdaggerdbl}  &  ICCV$2017$  & ResNet-$101$  &  $78.1$ \\ 
+DUC-HDC~\cite{wang2018understanding}\tnote{\textdaggerdbl} & WACV$2018$ & ResNet-$101$ & $77.6$ \\ 
+BiSeNet~\cite{yu2018bisenet}\tnote{\textdaggerdbl} &  ECCV$2018$  & ResNet-$101$  &  $78.9$ \\ 
+PSANet~\cite{psanet}\tnote{\textdaggerdbl} &  ECCV$2018$  & ResNet-$101$  &  $80.1$ \\ 
+DFN~\cite{Yu_2018_CVPR}\tnote{\textdaggerdbl} &  CVPR$2018$  & ResNet-$101$  &  $79.3$ \\ 
+DSSPN~\cite{Liang_2018_CVPR}\tnote{\textdaggerdbl}  &  CVPR$2018$  & ResNet-$101$  & $77.8$  \\ 
+DepthSeg~\cite{Kong_2018_CVPR}\tnote{\textdaggerdbl} &  CVPR$2018$  & ResNet-$101$  &  $78.2$ \\ 
+DenseASPP~\cite{Yang_2018_CVPR}\tnote{\textdaggerdbl}  &  CVPR$2018$  & DenseNet-$161$  &  \underline{$80.6$} \\ 
+OCNet\tnote{\textdaggerdbl} & - &  ResNet-$101$ & $\bf{81.7}$ \\
+\hline 
+\end{tabular}
+\begin{tablenotes}
+\item[\textdagger] Training with only the train-fine datasets.
+\item[\textdaggerdbl] Training with both the train-fine and val-fine datasets.
+\end{tablenotes}
+\label{table:ocnet_sota_exp_cityscapes}
+\end{threeparttable}
+\end{table}
+
+\vspace{0.1cm}
+\noindent\textbf{Object context vs. PPM and ASPP}.
+To evaluate the effectiveness of OCNet, we conduct a set of baseline experiments on Cityscapes.
+Especially, we run all of the experiments for three times and report the mean and the variance to ensure that our results are reliable. 
+We use the ResNet-$101$ + GP to represent employing the global average pooling based context following ParseNet~\cite{liu2015parsenet}, ResNet-$101$ + PPM represents the PSPNet that applies pyramid pooling module on feature maps of multiple scales and ResNet-$101$ + ASPP follows the DeepLabv3 that incorporates the image-level global context into the ASPP module except that we increase the output channel of ASPP from $256$ to $512$ in all of our experiments to ensure the fairness. 
+
+We compare these three methods with the object context module based methods such as Base-OC, Pyramid-OC and ASP-OC. The related experimental results are reported in Table~\ref{table:ocvsppmasppgc}, where all the results are based on single scale testing.
+The performance of both PSPNet and DeepLabv3 are comparable with the numbers in the original paper.
+
+
+According to the performance on the validation set,
+we find that our basic method ResNet-$101$ + Base-OC can outperform the previous state-of-the-art methods such as PSPNet and DeepLabv3. 
+We can further improve the performance with the ASP-OC module. For example, the ResNet-$101$ + ASP-OC achieves about $79.58$ on the validation set based on single scale testing and improves about $1.0 \uparrow $ point over DeepLabv3 and $2.0 \uparrow $ points over PSPNet. 
+
+% The original settings of both PSPNet and DeepLabv3 employ larger batch size 16 and longer training iterations 90K while we choose 8 and 40K by default, 
+% which is much more cheap compared with the original settings and also achieves better performance than the original reported mIoU=$77.59$ based on PSPNet and mIoU=$77.82$ based on DeepLabv3. 
+% Especially, we increase the output channel of ASPP from 256 to 512 in all of our experiments.  
+
+\vspace{0.1cm}
+\noindent\textbf{Ablation study}.
+Based on the ResNet-$101$ + ASP-OC method (mIoU=$79.58/78.22$ on the Val./Test. set), we adopt the online hard example mining (OHEM), multi-scale (Ms), left-right flipping (Flip) and training with validation set (w/ Val)  to further improve the performance on the test set.
+All the related results are reported in Table~\ref{table:ocnet_ms_ohem}.
+
+
+\begin{itemize}
+\item 
+{\textbf{OHEM:}
+Following the previous works~\cite{wu2016high}, the hard pixels are defined as the pixels associated with probabilities smaller than $\theta$ over the correct classes. Besides, we need to keep at least $\mathcal{K}$ pixels within each mini-batch when few pixels are hard pixels. e.g., we set $\theta=0.7$ and $\mathcal{K}=100000$ on the Cityscapes and improves $+0.83$ mIoU on validation set and $+0.68$ mIoU on test set.}
+\item 
+{\textbf{Ms + Flip:}
+We further apply the left-right flipping and multiple scales including $[0.75\times, 1\times, 1.25\times]$ to improve the performance from $78.90$ to $80.06$ on the test set.}
+\item 
+{\textbf{Training w/ validation set:}
+We can further improve the performance on test set by employing the validation set for training.
+We train the OCNet for 80K iterations on the mixture of training set and validation set and improve the performance from $80.06$ to $81.54$ on the test set.
+}
+
+\item 
+\textbf{Fine-tuning:} 
+We adopt the finetuning strategy proposed by DeepLabv3~\cite{chen2017rethinking} and DenseASPP~\cite{Yang_2018_CVPR} to fine-tune the model with the fine-labeled dataset for extra epochs 
+and further boost the performance to $81.67$ on the test set with only fine-labeled training set.
+\end{itemize}
+
+
+\begin{table}[htb]
+\centering
+\footnotesize
+\caption{\small{Comparison to global pooling (GP), pyramid pooling module (PPM) in PSPNet~\cite{zhao2017pyramid},
+and atrous spatial pyramid pooling (ASPP) in DeepLabv3~\cite{chen2017rethinking} on the validation set of ADE20K.}}
+\begin{tabular}{l|c|c} \hline
+Method & mIoU ($\%$) & Pixel Acc ($\%$)  \\
+\hline  
+ResNet-$50$ Baseline  &   $34.35$ $\pm$ $0.10$  &  $76.41$ $\pm$ $0.10$  \\  
+\hline
+ResNet-$50$ + GP~\cite{liu2015parsenet}  &   $41.17$ $\pm$ $0.38$  &  $79.87$ $\pm$ $0.20$  \\ 
+ResNet-$50$ + PPM~\cite{zhao2017pyramid}  &  $41.34$ $\pm$ $0.10$  &  $79.96$ $\pm$ $0.10$  \\ 
+ResNet-$50$ + ASPP~\cite{chen2017rethinking} &  $42.53$ $\pm$ $0.17$  &  $80.44$ $\pm$ $0.10$ \\
+\hline  
+ResNet-$50$ + Base-OC  &  $40.66$ $\pm$ $0.26$ &  $79.77$ $\pm$ $0.17$  \\ 
+ResNet-$50$ + Pyramid-OC  &  $42.28$ $\pm$ $0.28$  &  $80.21$ $\pm$ $0.17$ \\ 
+ResNet-$50$ + ASP-OC &  $\bf{43.06}$ $\pm$ $\bf{0.15}$ &  $\bf{80.70}$ $\pm$ $\bf{0.10}$  \\ 
+\hline
+\end{tabular}
+\label{table:ocvsppmasppgc_ade}
+\end{table}
+
+\begin{table}[htb]
+\centering
+\footnotesize
+\caption{\small{Comparison to state-of-the-art on the validation set of ADE20K.}}
+\begin{tabular}{l|c|c|c} \hline
+Method & Conference & Backbone & mIoU ($\%$)  \\
+\hline  
+RefineNet~\cite{lin2017refinenet} &  CVPR$2017$  & ResNet-$101$  &  $40.20$ \\ 
+RefineNet~\cite{lin2017refinenet} &  CVPR$2017$  & ResNet-$152$  & $40.70$\\ 
+PSPNet~\cite{zhao2017pyramid}  &  CVPR$2017$  & ResNet-$101$  &  $43.29$ \\ 
+PSPNet~\cite{zhao2017pyramid}  &  CVPR$2017$  & ResNet-$152$  &  $43.51$ \\ 
+PSPNet~\cite{zhao2017pyramid}  &  CVPR$2017$  & ResNet-$269$  &  \underline{$44.94$} \\ 
+SAC~\cite{Zhang_2017_ICCV}  &  ICCV$2017$  & ResNet-$101$  &  $44.30$ \\ 
+PSANet~\cite{psanet} &  ECCV$2018$  & ResNet-$101$  &  $43.77$ \\ 
+UperNet~\cite{xiao2018unified} &  ECCV$2018$  & ResNet-$101$  &  $42.66$ \\ 
+DSSPN~\cite{Liang_2018_CVPR}  &  CVPR$2018$  & ResNet-$101$  &  $43.68$ \\ 
+EncNet~\cite{Zhang_2018_CVPR}  &  CVPR$2018$  & ResNet-$101$  &  $44.65$ \\ 
+OCNet & - &  ResNet-$101$ & $\bf{45.45}$ \\
+\hline
+\end{tabular}
+\label{table:ocnet_sota_exp_ade20k}
+\end{table}
+
+\vspace{0.1cm}
+\noindent\textbf{Results}.
+We compare the OCNet with the current state-of-the-art methods on the Cityscapes.
+The results are illustrated in Table~\ref{table:ocnet_sota_exp_cityscapes} and we can see that our method achieves better performance over all the previous methods based on ResNet-$101$. 
+OCNet without using the validation set achieves even better performance than most methods that employ the validation set.
+Through employing the validation set and fine-tuning strategies,
+OCNet achieves new state-of-the-art performance of $81.7$ on the test set and outperforms
+the DenseASPP based on DenseNet-$161$ by over $1.0 \uparrow $ point. 
+
+\subsection{ADE20K}
+\noindent\textbf{Dataset}.
+The ADE20K dataset~\cite{zhou2017scene} is used in ImageNet scene parsing challenge 2016, which contains $150$ classes and diverse scenes with $1,038$ image-level labels.
+The dataset is divided into $20$K/$2$K/$3$K images for training, validation and testing. 
+
+\vspace{.1cm}
+\noindent\textbf{Training setting}.
+We set the initial learning rate as $0.02$ and weight decay as $0.0001$ by default, the input image is resized to the length randomly chosen from the set $\{300,375,450,525,600\}$ due to that the images are of various sizes on ADE20K. The batch size is 8 and we also synchronize the mean and standard-deviation of BN cross multiple GPUs. We employ 100K training iterations, which take about $\sim30$ hours with ResNet-$50$ and $\sim60$ hours with ResNet-$101$ based on 4$\times$P100 GPUs. 
+
+The experiments on ADE20K are based on the open-source implementation~\cite{zhou2017scene}. 
+By following the previous works~\cite{zhao2017pyramid,chen2017rethinking}, we employ the same "poly" learning rate policy and data augmentation methods and employ the deep supervision in the intermediate feature map output from res$4$b$22$.
+
+\begin{table}[htb]
+\centering
+\footnotesize
+\caption{\small{Comparison to state-of-the-art on the validation dataset of LIP.}}
+\begin{tabular}{l|c|c|c} \hline
+Method & Conference & Backbone & mIoU ($\%$)  \\
+\hline 
+Attention+SSL~\cite{Gong_2017_CVPR} &  CVPR$2017$  & ResNet-$101$  &  $44.73$\\ 
+JPPNet~\cite{liang2018look}         &  PAMI$2018$  & ResNet-$101$  &  $51.37$ \\ 
+SS-NAN~\cite{zhao2017self}       &  CVPR$2017$  & ResNet-$101$  &  $47.92$ \\ 
+MMAN~\cite{luo2018macro} &  ECCV$2018$   & ResNet-$101$  &  $46.81$ \\ 
+MuLA~\cite{nie2018mutual} &  ECCV$2018$  & ResNet-$101$  &  $49.30$ \\ 
+CE2P~\cite{liu2018devil}  &  AAAI$2019$     & ResNet-$101$  &  \underline{$53.10$} \\ 
+OCNet & - &  ResNet-$101$ & $\bf{54.72}$ \\
+\hline
+\end{tabular}
+\label{table:ocnet_sota_exp_lip}
+\end{table}
+
+\vspace{0.1cm}
+\noindent\textbf{Object context vs. PPM and ASPP}.
+We follow the same settings as the previous comparison experiments on Cityscapes.
+We also re-run all of the experiments for three times and  report the mean and the variance. 
+We compare the ResNet-$50$ + GP, ResNet-$50$ + PPM and ResNet-$50$ + ASPP with ResNet-$50$ + Base-OC, ResNet-$50$ + Pyramid-OC and ResNet-$50$ + ASP-OC. The related experimental results on ADE20K are reported in Table~\ref{table:ocvsppmasppgc_ade}, where all the results are based on single scale testing.
+
+
+The performance of both PSPNet and DeepLabv3 is comparable with the numbers reported in the original paper.
+We can see that both ResNet-$50$ + Pyramid-OC and ResNet-$50$ + ASP-OC achieve better performance compared with the ResNet-$50$ + Base-OC, which verifies the effectiveness of considering the multi-scale context information.
+Especially, ResNet-$50$ + Pyramid-OC improves the ResNet-$50$ + PPM by about $1.0 \uparrow $ point while ResNet-$50$ + ASP-OC improves the ResNet-$50$ + ASPP by about $0.5 \uparrow $ points.
+
+\vspace{0.1cm}
+\noindent\textbf{Results}.
+To compare with the state-of-the-art, we replace the ResNet-$50$ with ResNet-$101$ and further employ the multi-scale, left-right flipping strategies to improve the performance.
+According to the reported results in Table~\ref{table:ocnet_sota_exp_ade20k}, OCNet improves the previous ResNet-$101$ based state-of-the-art method EncNet by about $0.8 \uparrow $ points,
+and OCNet also improves the PSPNet based on ResNet-$269$ by about $0.5 \uparrow $ points.
+
+\subsection{LIP}
+
+\noindent\textbf{Dataset}.
+The LIP (Look into Person) dataset~\cite{Gong_2017_CVPR} is employed in the LIP challenge 2016 for single human parsing task, which contains $50,462$ images with $20$ classes ($19$ semantic human part classes and $1$ background class).
+
+\vspace{.1cm}
+\noindent\textbf{Training setting}.
+We set the initial learning rate as $0.007$ and weight decay as $0.0005$ following the CE2P~\cite{liu2018devil}. 
+The original images are of various sizes and we resize all the images to $473\times473$. 
+The batch size is $40$ and we also employ the InPlaceABNSync. 
+We employ 110K training iterations, which take about $\sim45$ hours with 4$\times$P100 GPUs.
+We also employ the same (i) "poly" learning rate policy, (ii) data augmentation methods and (iii) deep supervision in the intermediate feature map output from res$4$b$22$ following the experiments on 
+Cityscapes and ADE20K.
+
+\vspace{0.1cm}
+\noindent\textbf{Results}.
+We evaluate the OCNet (ResNet-$101$ + ASP-OC) on the LIP benchmark and report
+the related results in Table~\ref{table:ocnet_sota_exp_lip}. We can observe that the OCNet improves $1.6 \uparrow$ points over the previous state-of-the-art methods on the validation set of LIP. 
+Especially, the human parsing task is different from the previous two scene parsing task as it is about labeling each pixel with the part category that it belongs to.
+The state-of-the-art results verify that OCNet generalizes well to the part-level semantic segmentation tasks.
+
+
+\begin{figure*}[htb]
+\centering
+\includegraphics[width=0.15\textwidth]{cityscapes/building-image.png}
+\includegraphics[width=0.15\textwidth]{cityscapes/building-label.png}
+\includegraphics[width=0.145\textwidth]{cityscapes/building-map.png}
+\includegraphics[width=0.15\textwidth]{cityscapes/person-image.png}
+\includegraphics[width=0.15\textwidth]{cityscapes/person-label.png}
+\includegraphics[width=0.145\textwidth]{cityscapes/person-map.png}
+\vspace{.05cm}
+\includegraphics[width=0.15\textwidth]{cityscapes/bus-image.png}
+\includegraphics[width=0.15\textwidth]{cityscapes/bus-label.png}
+\includegraphics[width=0.145\textwidth]{cityscapes/bus-map.png}
+\includegraphics[width=0.15\textwidth]{cityscapes/sidewalk-image.png}
+\includegraphics[width=0.15\textwidth]{cityscapes/sidewalk-label.png}
+\includegraphics[width=0.145\textwidth]{cityscapes/sidewalk-map.png}
+\vspace{.05cm}
+\includegraphics[width=0.15\textwidth]{cityscapes/pole-image.png}
+\includegraphics[width=0.15\textwidth]{cityscapes/pole-label.png}
+\includegraphics[width=0.145\textwidth]{cityscapes/pole-map.png}
+\includegraphics[width=0.15\textwidth]{cityscapes/sky-image.png}
+\includegraphics[width=0.15\textwidth]{cityscapes/sky-label.png}
+\includegraphics[width=0.145\textwidth]{cityscapes/sky-map.png}
+\vspace{.05cm}
+\includegraphics[width=0.15\textwidth]{cityscapes/image1.png}
+\includegraphics[width=0.15\textwidth]{cityscapes/label1.png}
+\includegraphics[width=0.145\textwidth]{cityscapes/map1.png}
+\includegraphics[width=0.15\textwidth]{cityscapes/image2.png}
+\includegraphics[width=0.15\textwidth]{cityscapes/label2.png}
+\includegraphics[width=0.145\textwidth]{cityscapes/map2.png}
+\vspace{.05cm}
+\includegraphics[width=0.15\textwidth]{cityscapes/image3.png}
+\includegraphics[width=0.15\textwidth]{cityscapes/label3.png}
+\includegraphics[width=0.145\textwidth]{cityscapes/map3.png}
+\includegraphics[width=0.15\textwidth]{cityscapes/image4.png}
+\includegraphics[width=0.15\textwidth]{cityscapes/label4.png}
+\includegraphics[width=0.145\textwidth]{cityscapes/map4.png}
+\vspace{.05cm}
+\includegraphics[width=0.148\textwidth,height=0.10\textwidth]{ade20k/image1.png}
+\includegraphics[width=0.148\textwidth,height=0.10\textwidth]{ade20k/label1.png}
+\includegraphics[width=0.148\textwidth,height=0.10\textwidth]{ade20k/map1.png}
+\includegraphics[width=0.148\textwidth,height=0.10\textwidth]{ade20k/image2.png}
+\includegraphics[width=0.148\textwidth,height=0.10\textwidth]{ade20k/label2.png}
+\includegraphics[width=0.148\textwidth,height=0.10\textwidth]{ade20k/map2.png}
+\vspace{.05cm}
+\includegraphics[width=0.148\textwidth,height=0.10\textwidth]{ade20k/image3.png}
+\includegraphics[width=0.148\textwidth,height=0.10\textwidth]{ade20k/label3.png}
+\includegraphics[width=0.148\textwidth,height=0.10\textwidth]{ade20k/map3.png}
+\includegraphics[width=0.148\textwidth,height=0.10\textwidth]{ade20k/image4.png}
+\includegraphics[width=0.148\textwidth,height=0.10\textwidth]{ade20k/label4.png}
+\includegraphics[width=0.148\textwidth,height=0.10\textwidth]{ade20k/map4.png}
+\vspace{.05cm}
+\includegraphics[width=0.148\textwidth,height=0.10\textwidth]{ade20k/image5.png}
+\includegraphics[width=0.148\textwidth,height=0.10\textwidth]{ade20k/label5.png}
+\includegraphics[width=0.148\textwidth,height=0.10\textwidth]{ade20k/map5.png}
+\includegraphics[width=0.148\textwidth,height=0.10\textwidth]{ade20k/image6.png}
+\includegraphics[width=0.148\textwidth,height=0.10\textwidth]{ade20k/label6.png}
+\includegraphics[width=0.148\textwidth,height=0.10\textwidth]{ade20k/map6.png}
+\vspace{.05cm}
+\includegraphics[width=0.1485\textwidth]{lip/image1.png}
+\includegraphics[width=0.1485\textwidth]{lip/label1.png}
+\includegraphics[width=0.1485\textwidth]{lip/map1.png}
+\includegraphics[width=0.1485\textwidth]{lip/image2.png}
+\includegraphics[width=0.1485\textwidth]{lip/label2.png}
+\includegraphics[width=0.1485\textwidth]{lip/map2.png}
+\vspace{.05cm}
+\includegraphics[width=0.1485\textwidth]{lip/image3.png}
+\includegraphics[width=0.1485\textwidth]{lip/label3.png}
+\includegraphics[width=0.1485\textwidth]{lip/map3.png}
+\includegraphics[width=0.1485\textwidth]{lip/image5.png}
+\includegraphics[width=0.1485\textwidth]{lip/label5.png}
+\includegraphics[width=0.1485\textwidth]{lip/map5.png}
+\vspace{.05cm}
+\includegraphics[width=0.1485\textwidth]{lip/image4.png}
+\includegraphics[width=0.1485\textwidth]{lip/label4.png}
+\includegraphics[width=0.1485\textwidth]{lip/map4.png}
+\includegraphics[width=0.1485\textwidth]{lip/image6.png}
+\includegraphics[width=0.1485\textwidth]{lip/label6.png}
+\includegraphics[width=0.1485\textwidth]{lip/map6.png}
+\vspace{.05cm}
+\vspace{.05cm}
+\caption{\small{Visualization of object context map predicted by OCNet. The first five rows illustrate $10$ examples from the validation set of Cityscapes, the next three rows illustrate $6$ examples from the validation set of ADE20K, and the last three rows illustrate $6$ examples from the validation set of LIP. (Best viewed in color)}}
+\label{fig:vis_ocmap}
+\end{figure*}
+
+\subsection{Visualization of object context maps}
+We randomly choose some examples from the validation set of Cityscapes 
+and visualize the object context map learned within OCNet in
+the first five rows of Figure~\ref{fig:vis_ocmap}, 
+where each object context map corresponds to the pixel marked with red {\color{red}{\ding{57}}} 
+in both the original images and ground-truth segmentation maps.
+
+As illustrated in Figure~\ref{fig:vis_ocmap}, 
+we can find that the estimated object context maps 
+for most classes capture the object context
+that mainly consists of pixels of the same categories. 
+Take the $1^{st}$ image on the $2^{rd}$ row as an example, it can be seen that
+the object context map corresponding to the pixel on the object bus
+distributes most of the weights on the pixels lying 
+on the object bus and thus the object bus's context information
+can help the pixel-wise classification.
+
+Besides, we also illustrate some examples from the ADE20K and LIP 
+in the middle three rows and the last three rows of Figure~\ref{fig:vis_ocmap}.
+It can be seen that most of the weights within each object context map are focused on the
+objects or parts that the selected pixel belongs to.
+
+
+% \section{Discussion}
+% \begin{table}[htb]
+% \vspace{-0.2cm}
+% \centering
+% \footnotesize
+% \caption{\small{Comparison of GT-OC, GT-NOC and GT-OC-NOC.
+% It can be seen that the both GT-OC and GT-OC-NOC
+% outperform other methods by a large margin, which verifies the
+% importance of the true object context.
+% }}
+% \vspace{-0.2cm}
+% \begin{tabular}{l|c|c} \hline
+% Method &  Train. mIoU ($\%$) & Val. mIoU ($\%$)  \\
+% \hline 
+% Baseline  &  84.26  & 75.69 \\
+% GT-NOC    &  84.94  & 78.77 \\
+% GT-OC     &  \textbf{91.17}  & 88.47 \\
+% GT-OC-NOC &  91.12  & \textbf{88.76} \\
+% \hline
+% \end{tabular}
+% \vspace{-0.2cm}
+% \label{table:oc_gt}
+% \end{table}
+
+% % $\bar{\textbf{c}}_{i} = \sum_{j=1}^{N} \frac{\mathds{1}[y_{i}\neq y_{j}]}{N-\mathcal{S}(\textbf{x}_{i})}  \phi(\textbf{x}_{j})$.
+% First, we illustrate that the OCNet based on true \emph{object context} surpasses
+% the current state-of-the-art by a large margin.
+% % The true \emph{object context} is the set of pixels belonging to the same object category with $p$.
+% We employ GT-OC to represent the method employing true \emph{object context} within Base-OC module. 
+% In our implementation, 
+% we set $w_{pi} = \frac{1}{Z_p}$ if pixel $p$ and pixel $i$ belong to the 
+% same category and $w_{pi} = 0$ otherwise, where $Z_p$ represents the count of the pixels
+% belonging to the same category with $p$ in the whole image.
+
+% Besides, we use GT($\times8$) to represent the upper-bound of the performance on the 
+% $8\times$ down-sampled predictions according to the quantitative results reported in~\cite{cordts2016cityscapes}.
+% We report the performance of these methods on the validation set of Cityscapes in Figure~\ref{fig:gt_oc}
+% and we only employ single scale testing.
+% It can be seen that there still exists large performance gap between the OCNet and GT-OC.
+% We argue that how to construct more accurate object context is crucial towards solving the scene 
+% parsing problem.
+
+% Lastly, we investigate the influence of \emph{non-object context}, 
+% which is defined as the set of all the pixels belonging to different categories with $p$.
+% We employ GT-NOC to represent the method employing \emph{non-object context} to replace the \emph{object context} within Base-OC module.
+% In our implementation, 
+% we set $w_{pi} = \frac{1}{Z_p}$ if pixel $p$ and pixel $i$ belong to different 
+% categories and $w_{pi} = 0$ otherwise, where $Z_p$ represents the count of the pixels
+% belonging to the different categories with $p$ in the whole image.
+% We further use GT-OC-NOC to represent the method employing both true \emph{object context} and \emph{non-object context}.
+% % In our implementation, we concatenate both context information as the final context of GT-OC-NOC.
+
+% We compare these different methods and illustrate the results in Table~\ref{table:oc_gt}.
+% According to the reported results on the validation set of Cityscapes, we conclude with three key observations:
+% \begin{enumerate}[(i)]
+% \item 
+% GT-NOC improves the performance and verifies that the context relationship improves
+% the performance.
+% \item 
+% GT-OC reaches nearly $\uparrow 10$ absolute points improvement compared with GT-NOC and verifies that 
+% the \emph{object context} is much more reliable than the context relationship.
+% \item 
+% GT-OC-NOC performs slightly better than GT-OC and verifies that the context relationship
+% becomes less effecient when we employ the \emph{object context}.
+% \end{enumerate}
+
+% \begin{figure}
+% \footnotesize
+% % \centering
+% \hspace{-0.0cm}
+% \begin{tikzpicture}
+%   \begin{axis}[
+%     ybar, 
+%     width=8cm, height=5cm, enlarge y limits=0.5,
+%     ylabel={mIoU($\%$)},
+%     % ytick={70,71,...,95}
+%     ymin=75,
+%     y label style={at={(0.08,0.5)}},
+%     symbolic x coords={PSPNet,DeepLabv3,OCNet,GT-OC,GT($\times8$)},
+%     x tick label style={font=\footnotesize,text width=1cm,align=center},
+%     nodes near coords,
+%     ]
+%     \addplot [color=blue!60, fill] coordinates {
+%                 (PSPNet, 77.84)     
+%                 (DeepLabv3, 78.65) 
+%                 (OCNet, 80.41)
+%                 (GT-OC, 88.47)  
+%                 (GT($\times8$), 90.70)
+%             };
+%   \end{axis}
+% \end{tikzpicture}
+% \caption{\small{
+% Influence of the context aggregation schemes. 
+% % All of the experiments are evaluated on the validation set of Cityscapes and are based on ResNet-$101$.
+% It can seen that OCNet outperforms PSPNet and DeepLabv3 and there still exists large
+% gap between OCNet and GT-OC.
+% }}
+% \label{fig:gt_oc}
+% \vspace{-0.5cm}
+% \end{figure}
+
+\section{Conclusions}
+
+In this work,
+we present the concept of object context 
+and propose the object context pooling (OCP) scheme 
+to construct more robust context information for semantic segmentation tasks.
+% and OCP generates more robust context information for semantic segmentation tasks.
+We verify that the predicted object context maps
+within OCP distribute most of the weights on the true object context
+by visualizing multiple examples.
+We further demonstrate the advantages of OCNet 
+with state-of-the-art performance on three challenging benchmarks 
+including Cityscapes, ADE20K and LIP.
+
+
+{\small
+\bibliographystyle{ieee}
+\bibliography{ocnet}
+}
+
+\end{document}

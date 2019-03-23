@@ -1,0 +1,635 @@
+\documentclass{article}
+
+% if you need to pass options to natbib, use, e.g.:
+% \PassOptionsToPackage{numbers, compress}{natbib}
+% before loading nips_2017
+%
+% to avoid loading the natbib package, add option nonatbib: 
+% \usepackage[nonatbib]{nips_2017}
+
+% \usepackage{nips_2017}
+
+% to compile a camera-ready version, add the [final] option, e.g.:
+\usepackage[square]{natbib}
+\usepackage[final]{nips_2017}
+
+\usepackage[utf8]{inputenc} % allow utf-8 input
+\usepackage[T1]{fontenc}    % use 8-bit T1 fonts
+\usepackage{hyperref}       % hyperlinks
+\usepackage{url}            % simple URL typesetting
+\usepackage{booktabs}       % professional-quality tables
+\usepackage{amsfonts}       % blackboard math symbols
+\usepackage{nicefrac}       % closed symbols for 1/2, etc.
+\usepackage{microtype}      % microtypography
+
+\usepackage{times}
+\usepackage{epsfig}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{amssymb}
+
+% Include other packages here, before hyperref.
+\usepackage{algorithm}
+\usepackage{algorithmic}
+\usepackage{amsthm}  
+\usepackage{wasysym}
+\usepackage[ruled,vlined,algo2e]{algorithm2e}
+\providecommand{\SetAlgoLined}{\SetLine}
+\usepackage{color}
+\usepackage{dsfont}	
+\usepackage{wrapfig}
+\usepackage{footnote}
+\usepackage{epstopdf}
+\usepackage{enumitem}
+\usepackage{subfigure}
+
+
+\def\eg{\emph{e.g. }}
+\def\ie{\emph{i.e. }}
+\def\cf{\emph{c.f. }}
+\def\etc{\emph{etc. }} 
+\def\vs{\emph{vs. }}
+\def\wrt{\emph{w.r.t. }}
+\def\etal{\emph{et al. }}
+
+\makeatletter
+\newcommand*{\rom}[1]{\expandafter\@slowromancap\romannumeral #1@}
+\makeatother
+
+\newtheorem{prop}{Proposition}
+\newtheorem{lemma}{Lemma}
+\newtheorem{defi}{Definition}
+\newtheorem{thm}{Theorem}
+\newtheorem{cor}{Corollary}
+
+
+\title{Convergent Block Coordinate Descent for Training Tikhonov Regularized Deep Neural Networks}
+
+% The \author macro works with any number of authors. There are two
+% commands used to separate the names and addresses of multiple
+% authors: \And and \AND.
+%
+% Using \And between authors leaves it to LaTeX to determine where to
+% break the lines. Using \AND forces a line break at that point. So,
+% if LaTeX puts 3 of 4 authors names on the first line, and the last
+% on the second line, try using \AND instead of \And before the third
+% author name.
+
+\author{
+	Ziming Zhang and Matthew Brand \\
+	Mitsubishi Electric Research Laboratories (MERL) \\	
+	Cambridge, MA 02139-1955 \\
+	\texttt{\{zzhang, brand\}@merl.com} \\
+	%% examples of more authors
+	%% \And
+	%% Coauthor \\
+	%% Affiliation \\
+	%% Address \\
+	%% \texttt{email} \\
+	%% \AND
+	%% Coauthor \\
+	%% Affiliation \\
+	%% Address \\
+	%% \texttt{email} \\
+	%% \And
+	%% Coauthor \\
+	%% Affiliation \\
+	%% Address \\
+	%% \texttt{email} \\
+	%% \And
+	%% Coauthor \\
+	%% Affiliation \\
+	%% Address \\
+	%% \texttt{email} \\
+}
+
+\begin{document}
+	% \nipsfinalcopy is no longer used
+	
+\maketitle
+	
+\begin{abstract}
+By lifting the ReLU function into a higher dimensional space, we develop a smooth multi-convex formulation for training feed-forward deep neural networks (DNNs). This allows us to develop a block coordinate descent (BCD) training algorithm consisting of a sequence of numerically well-behaved convex optimizations. Using ideas from proximal point methods in convex analysis, we prove that this BCD algorithm will converge globally to a stationary point with R-linear convergence rate of order one. In experiments with the MNIST database, DNNs trained with this BCD algorithm consistently yielded better test-set error rates than identical DNN architectures trained via all the stochastic gradient descent (SGD) variants in the Caffe toolbox.
+\end{abstract}
+	
+\section{Introduction}
+Feed-forward deep neural networks (DNNs) are function approximators wherein weighted combinations inputs are filtered through nonlinear activation functions that are organized into a cascade of fully connected (FC) hidden layers.  In recent years DNNs have become the tool of choice for many research areas such as machine translation and computer vision.% perception tasks such as image classification \cite{ILSVRC15}, object detection \cite{girshick2014rich}, and segmentation \cite{hariharan2015hypercolumns}. 
+%In other words, DNNs learn highly non-convex mapping functions between inputs and outputs.
+	
+The objective function for training a DNN is highly non-convex, leading to numerous obstacles to global optimization \cite{choromanska2015loss}, notably proliferation of saddle points \cite{dauphin2014identifying} and prevalence of local extrema that offer poor generalization off the training sample \cite{chaudhari2016entropy}.  These observations have motivated regularization schemes to smooth or simplify the energy surface, either explicitly such as weight decay \cite{krogh1991simple} or implicitly such as dropout \cite{srivastava2014dropout} and batch normalization \cite{ioffe2015batch}, so that the solutions are more robust, \ie better generalized to test data.
+
+Training algorithms face many numerically difficulties that can make it difficult to even find a local optimum. One of the well-known issues is so-called vanishing gradient in back propagation (chain rule differentiation) \cite{chapter-gradient-flow-2001}, \ie the long dependency chains between hidden layers (and corresponding variables) tend to drive gradients to zero far from the optimum.  This issue leads to very slow improvements of the model parameters, an issue that becomes more and more serious in deeper networks \cite{glorot2010understanding}. The vanishing gradient problem can be partially ameliorated by using non-saturating activation functions such as rectified linear unit (ReLU) \cite{lecun2015deep}, and network architectures that have shorter input-to-output paths such as ResNet \cite{he2016deep}. %One reason for this issue is about the activation functions that may be saturated very quickly. For this case rectified linear unit (ReLU) \cite{nair2010rectified} has been found to be superior to other activation functions such as sigmoid. In fact ReLU is the most popular activation function in current literature \cite{lecun2015deep}. Another reason is about network architectures that may be quite deep. Recently a better architecture, ResNet \cite{he2016deep}, has been proposed that can be trained over 1000 layers, where the concept of ``skip layer'' was introduced for modeling the residual of the input signals. %Empirically this appears to be much easier than modeling outputs directly based on inputs. 
+The saddle-point problem has been addressed by switching from deterministic gradient descent to stochastic gradient descent (SGD), which can achieve weak convergence in probability \cite{bottou2016optimization}. %To improve learning algorithms, several works have been proposed such as finding better initialization \cite{daniely2016toward}. %\cite{daniely2016toward, he2015delving, mishkin2015all, sutskever2013importance} 
+	%or regularization \cite{ioffe2015batch,srivastava2014dropout}. 
+	%\cite{ioffe2015batch,kingma2014adam, kingma2015variational, srivastava2014dropout}
+	%Recent work \cite{bottou2016optimization} showed that SGD can achieve weak convergence in deep learning. 
+ Classic proximal-point optimization methods such as the alternating direction method of multipliers (ADMM) have also shown promise for DNN training \cite{taylor2016training,Zhang_2016_CVPR}, but in the DNN setting their convergence properties remain unknown.  
+	
+% 	Considering the requirements of real-world applications such as hardware constraints like embedding systems, sometimes high computational efficiency at test time is desirable. To achieve this goal, an intuitive way is to control the complexity of learned deep models by, for instance, explicitly designing smaller \cite{iandola2016squeezenet} or sparser \cite{rastegari2016xnor} networks, or pruning existing networks as post-processing \cite{han2015learning}. 
+	
+	
+	
+	%Another well-known issue is the computational efficiency in both training and testing. At training time fast model/parameter selection is desirable, because it will be crucial for good performance in many applications. Vanishing gradient is a typical reason that prevents algorithms from learning good models. To improve training efficiency recent works mainly focus on hardware acceleration using (distributed) parallel computing \cite{iandola2016firecaffe,taylor2016training,Zhang_2016_CVPR}. At test time the learned deep models are expected to be as closed as possible while preserving high accuracy. Recent works mainly focus on reducing the network redundancy in terms of parameters, \eg constructing network weights using special matrix structures \cite{cheng2015exploration,wen2016learning,yang2015deep}, learning networks with simpler operators \cite{rastegari2016xnor} or fewer parameters \cite{iandola2016squeezenet}, or pruning deep models \cite{han2015learning}. 
+	
+	%Another well-known issue regarding training is that it lacks of theoretical works on convergence analysis of deep learning algorithms. %, which can be used for measuring performance stability of algorithms. 
+	%Most related work is about SGD based algorithms, which is either weak convergence \cite{zhang2015deep} or asymptotic convergence \cite{2017arXiv170208670I,lian2015asynchronous}.\\
+	
+	
+{\bf Contributions:} In this paper, 
+\begin{enumerate}[label*=\arabic*.]
+\item We propose a novel Tikhonov regularized multi-convex formulation for deep learning, which can be used to learn both dense and sparse DNNs;
+\item We propose a novel block coordinate descent (BCD) based learning algorithm accordingly, which can guarantee to globally converge to stationary points with R-linear convergence rate of order one;
+		%	\item We show that our learning algorithm is suitable for parallel computing;
+\item We demonstrate empirically that DNNs estimated with BCD can produce better representations than DNNs estimated with SGD, in the sense of yielding better test-set classification rates. % in terms of both classification accuracy and computational efficiency.
+	\end{enumerate}
+	
+% 	\begin{wrapfigure}{r}{0.4\linewidth} 
+% 		\vspace{-15pt}
+% 		\begin{center}
+% 			\includegraphics[width=\linewidth]{surf.eps}\vspace{-15pt}
+% 			\caption{\footnotesize Illustration of {\bf (left)} the surface of our multi-convex objective and {\bf (right)} its path of minimizers from top-left to bottom-right. Note the loss function used here is the Euclidean loss without losing generality.}
+% 			\label{fig:surface}
+% 		\end{center}
+% 		\vspace{-10pt}
+% 		%  \vspace{1pt}
+% 	\end{wrapfigure} 
+	Our Tikhonov regularization is motivated by the fact that the ReLU activation function is equivalent to solving a smoothly penalized projection problem in a higher-dimensional Euclidean space.  We use this to build a  Tikhonov regularization matrix which encodes all the information of the networks, %\footnote{In fact there exists a function that can map an arbitrary ReLU based DNNs into a unique Tikhonov matrix.}
+\ie the architectures as well as their associated weights. In this way our training objective can be divided into three sub-problems, namely, (1) Tikhonov regularized inverse problem \cite{willoughby1979solutions}, (2) least-square regression, and (3) learning classifiers. Since each sub-problem is convex and coupled with the other two, our overall objective is multi-convex. %Fig.~\ref{fig:surface} illustrates the surface generated by our objective using various inputs where the red curve denotes the solution path when minimizing our objective using alternating optimization. As we see, our surface is much smoother than those generated by the training loss in deep learning without regularization (\eg Figure 2 in \cite{chaudhari2016entropy}). The minimizers decrease our objective monotonically and smoothly as well. These observations are good indicators for global convergence of our learning algorithm based on our objective. 
+%Further by restricting variables within different domains that are convex sets, we can easily learn the networks with either dense or sparse architectures.
+	
+	Block coordinate descent (BCD) is often used for problems where finding an exact solution of a sub-problem with respect to a subset (block) of variables is much simpler than finding the solution for all variables simultaneously \cite{nesterov2012efficiency}. In our case, each sub-problem isolates block of variables which can be solved easily (\eg close-form solutions exist). %Therefore, we propose a novel BCD based algorithm for training DNNs with ReLU as the activation functions, and prove its global convergence as well as the convergence rate. %To our best knowledge, we are the first to provide such convergence results for training DNNs. 
+One of the advantages of our decomposition into sub-problems is that the long-range dependency between hidden layers is captured within a sub-problem whose solution helps to propagate the information between inputs and outputs to stabilize the networks (\ie convergence). Therefore, {\em it does not suffer from vanishing gradient at all.}
+	%the minimizer for each block variables can be found by solving a small-size quadratic programming (QP) problem. To accelerate the calculation, we propose approximating the minimizers by projecting the close-form solutions (\ie ignoring the constraints in QP) onto convex sets. Since the QP problems are small-size, the calculation of inverse matrices involved in computing close-form solutions is not expensive. Empirically our algorithms still can converge, but much faster.
+	In our experiments, we demonstrate the effectiveness and efficiency of our algorithm by comparing with SGD based solvers.% in terms of convergence, accuracy, and running time. %Further we compare ours with \cite{Zhang_2016_CVPR} on learning very deep models for supervised hashing.
+	
+	
+	\subsection{Related Work}{\bf (1) Stochastic Regularization (SR) \vs Local Regularization \vs Tikhonov Regularization:} SR is a widely-used technique in deep learning to prevent the training from overfitting. The basic idea in SR is to multiple the network weights with some random variables so that the learned network is more robust and generalized to test data. Dropout \cite{srivastava2014dropout} and its variants such like \cite{kingma2015variational} are classic examples of SR. Gal \& Ghahramani \cite{gal2015modern} showed that SR in deep learning can be considered as approximate variational inference in Bayesian neural networks.%More details on different regularization techniques can be seen in \cite{Goodfellow-et-al-2016}.
+	
+	Recently Baldassi \etal \cite{baldassi2015subdominant} proposed smoothing non-convex functions with local entropy, and latter Chaudhari \etal \cite{chaudhari2016entropy} proposed Entropy-SGD for training DNNs. The idea behind such methods is to locate solutions locally within large flat regions of the energy landscape that favors good generalization. In \cite{chaudhari2017deep} Chaudhari \etal provided the mathematical justification for these methods from the perspective of partial differential equations (PDEs)
+	
+	In contrast, our Tikhonov regularization tends to smooth the non-convex loss {\em explicitly, globally, and data-dependently}. We deterministically learn the Tikhonov matrix as well as the auxiliary variables in the ill-posed inverse problems. The Tikhonov matrix encodes all the information in the network, and the auxiliary variables represent the ideal outputs of the data from each hidden layer that minimize our objective. Conceptually these variables work similarly as target propagation \cite{bengio2014auto}.
+	
+	
+	{\bf (2) SGD \vs BCD:} 
+	In \cite{bottou2016optimization} Bottou \etal proved weak convergence of SGD for non-convex optimization. Ghadimi \& Lan \cite{ghadimi2013stochastic} showed that SGD can achieve convergence rates that scale as $O\left(t^{-1/2}\right)$ for non-convex loss functions if the stochastic gradient is unbiased with bounded variance, where $t$ denotes the number of iterations.
+	%In general for differentiable convex optimization problems, BCD can converge with linear rate \cite{beck2013convergence}, same as SGD \cite{nemirovski2009robust}. However, for certain problems such as regularized least-squares BCD can even converge with quadratic rate \cite{qin2013efficient}. This is of great interest to us because in our problem most of sub-problems for BCD are regularized least-squares (see Section \ref{ssec:BCD}). 
+	
+	For non-convex optimization, the BCD based algorithm in \cite{xu2014globally} was proven to converge globally to stationary points. For parallel computing another BCD based algorithm, namely Parallel Successive Convex Approximation (PSCA), was proposed in \cite{razaviyayn2014parallel} and proven to be convergent.
+	
+	{\bf (3) ADMM \vs BCD:}
+	Alternating direction method of multipliers (ADMM) is a proximal-point optimization framework from the 1970s and recently championed by Boyd \cite{boyd2011distributed}. It breaks a nearly-separable problem into loosely-coupled smaller problems, some of which can be solved independently and thus in parallel. ADMM offers linear convergence for strictly convex problems, and for certain special non-convex optimization problems, ADMM can also converge \cite{nishihara2015general,wang2015global}. %, similar to BCD. One of the advantages using ADMM is that it allows to update variables distributively or in parallel, and in certain cases it can guarantee to converge as well \cite{deng2014parallel}.
+Unfortunately, thus far there is no evidence or mathematical argument that DNN training is one of these special cases. Therefore, even though empirically it has been successfully applied to DNN training \cite{taylor2016training,Zhang_2016_CVPR}, it still lacks of convergence guarantee. %In both papers gradient descent is used to update variables in ADMM.
+
+	Our BCD-based DNN training algorithm is also amenable to ADMM-like parallelization.  More importantly, as we prove in Sec. \ref{sec:convergence}, it will converge globally to stationary points with R-linear convergence.
+	%\noindent
+	%{\bf (3) Learning sparse networks:} One of the advantages in sparse networks is its  high testing efficiency, which is desirable in many real-world applications such as embedding systems. To learn such networks, a common way is to design special network architectures particularly for the purpose. For instance, Iandola \etal \cite{iandola2016squeezenet} designed a network with smaller sizes of filters and much fewer parameters in layers. Rastegari \etal \cite{rastegari2016xnor} design a network with binary weights. Such networks have fixed architectures, lacking of flexibility in controlling sparsity. Another way is to prune the learned deep models to simplify the architectures as well as preserving the accuracy. This types of approaches can be taken as post-processing to intentionally improve the testing efficiency. For example, Han \etal \cite{han2015learning} proposed pruning redundant connections by learning only the important connections. Such methods usually lack of theoretical guarantee on convergence.
+	%Different from these works, our regularized block multi-convex formulation allows to learn a sparse DNN with the ability of controlling sparsity in network weights. Meanwhile our BCD learning algorithms guarantee to converge for learning such sparse networks.
+    
+\section{Tikhonov Regularization for Deep Learning}
+
+\subsection{Problem Setup}	
+    	 
+    {\bf Key Notations:} We denote $\mathbf{x}_i\in\mathbb{R}^{d_0}$ as the $i$-th training data, $y_i\in\mathcal{Y}$ as its corresponding class label from label set $\mathcal{Y}$, $\mathbf{u}_{i,n}\in\mathbb{R}^{d_n}$ as the output feature for $\mathbf{x}_i$ from the $n$-th ($1\leq n\leq N$) hidden layer in our network, $\mathbf{W}_{n,m}\in\mathbb{R}^{d_n\times d_m}$ as the weight matrix between the $n$-th and $m$-th hidden layers, $\mathcal{M}_n$ as the input layer index set for the $n$-th hidden layer, $\mathbf{V}\in\mathbb{R}^{d_{N+1}\times d_N}$ as the weight matrix between the last hidden layer and the output layer, $\mathcal{U}, \mathcal{V}, \mathcal{W}$ as nonempty closed convex sets, and $\ell(\cdot,\cdot)$ as a {\em convex} loss function.      
+    	        
+	{\bf Network Architectures:} In our networks we only consider ReLU as the activation functions.  To provide short paths through the DNN, we allow {\em multi-input ReLU} units which can take the outputs from multiple previous layers as its inputs. 
+    
+    \begin{wrapfigure}{r}{0.35\linewidth} 
+		\vspace{-27pt}
+		\begin{center}
+			\includegraphics[width=\linewidth]{network.eps}\vspace{-10pt}
+			\caption{\footnotesize Illustration of DNN architectures that we consider in the paper.}
+			\label{fig:network}
+		\end{center}
+		\vspace{-15pt}
+		%  \vspace{1pt}
+	\end{wrapfigure}
+    Fig. \ref{fig:network} illustrates a network architecture that we consider, where the third hidden layers (with ReLU activations), for instance, takes the input data and the outputs from the first and second hidden layers as its inputs. Mathematically, we define our multi-input ReLU function at layer $n$ for data $\mathbf{x}_i$ as:
+	\begin{align}\label{eqn:mir}
+	\hspace{-2mm}\mathbf{u}_{i,n} = \left\{
+	\begin{array}{ll}
+	\mathbf{x}_i, & \mbox{if} \, n=0 \\
+	\max\left\{\mathbf{0}, \sum_{m\in\mathcal{M}_n}\mathbf{W}_{n,m}\mathbf{u}_{i,m}\right\}, & \mbox{otherwise}
+	\end{array}
+	\right.
+	\end{align}
+	where $\max$ denotes the entry-wise max operator and $\mathbf{0}$ denotes a $d_n$-dim zero vector. Note that multi-input ReLUs can be thought of as conventional ReLU with skip layers \cite{he2016deep} where $\mathbf{W}$'s are set to identity matrices accordingly. 
+    
+%     In general the topology of our networks can be very dense (even fully connected directed graphs). Such {\em cross-layer} connections have been involved in recent deep models such as ResNet \citet{he2016deep} and highway networks \citet{srivastava2015training}.
+    
+    {\bf Conventional Objective for Training DNNs with ReLU:} We write down the general objective\footnote{For simplicity in this paper we always presume that the domain of each variable contains the regularization, \eg $\ell_2$-norm, without showing it in the objective explicitly.} in a recursive way as used in \cite{Zhang_2016_CVPR} as follows for clarity:	
+	\begin{align}\label{eqn:obj}
+	& \min_{\mathbf{V}\in\mathcal{V}, \tilde{\mathcal{W}}\subseteq\mathcal{W}} \sum_i\ell(y_i, \mathbf{V}\mathbf{u}_{i,N}), \, \mbox{s.t.} \; \mathbf{u}_{i,n} = \max\left\{\mathbf{0}, \sum_{m\in\mathcal{M}_n}\mathbf{W}_{n,m}\mathbf{u}_{i,m}\right\}, \mathbf{u}_{i,0}=\mathbf{x}_i, 
+	\forall i, \forall n,
+	\end{align}
+	where $\tilde{\mathcal{W}}=\{\mathbf{W}_{n,m}\}$. Note that we separate the last FC layer (with weight matrix $\mathbf{V}$) from the rest hidden layers (with weight matrices in $\tilde{\mathcal{W}}$) intentionally, because $\mathbf{V}$ is for learning classifiers while $\tilde{\mathcal{W}}$ is for learning useful features. The network architectures we use in this paper are mainly for extracting features, on top of which any arbitrary classifier can be learned further.
+    
+    Our goal is to optimize Eq. \ref{eqn:obj}. To that end, we propose a novel BCD based algorithm which can solve the relaxation of Eq. \ref{eqn:obj} using Tikhonov regularization with convergence guarantee.
+	
+	
+% 	\subsection{Our Training Objective}
+% 	\begin{wrapfigure}{r}{0.3\linewidth} 
+% 		\vspace{-20pt}
+% 		\begin{center}
+% 			\includegraphics[width=\linewidth]{dependency.eps}
+% 			\caption{Abstract view of long-dependency decomposition between $x$ and $y$.}
+% 			\label{fig:dependency}
+% 		\end{center}
+% 		\vspace{-10pt}
+% 		%  \vspace{1pt}
+% 	\end{wrapfigure} 
+% 	The main difficulty in solving Eq. \ref{eqn:obj} lies in the nature of {\em long} dependency between the input $x$ and the output $y$, leading to a highly non-convex optimization problem. In order to solve the difficulty, we introduce auxiliary variables to break down the long dependency into multiple {\em short} dependencies and update variables accordingly, as did in \citet{Zhang_2016_CVPR}. 
+	
+% 	Fig. \ref{fig:dependency} illustrates our dependency decomposition. Traditional approaches try to learn deep models to map $x$ to $y$ explicitly, illustrated by the black line. In our method, denoted by red lines, we try to model the relationship between $x$ and $y$ implicitly through a sequence of auxiliary variables $z$, which break down the long-dependency. From the perspective of dynamic systems, the functionality of such auxiliary variables is to help propagate the information between inputs and outputs so that the network can be stabilized eventually. Based on this idea, we propose a novel {\em block multi-convex} formulation for training DNNs.
+	
+	\subsection{Reinterpretation of ReLU}
+% 	One issue in \citet{Zhang_2016_CVPR} is that the outputs from ReLU have been put into the training objective directly based on the augmented Lagrangian method, which essentially does not simplify the problem. In contrast, in this paper we try to reinterpret ReLU for the purpose of simplifying the learning.
+	
+	The ReLU, ordinarily defined as $\mathbf{u}=\max\{\mathbf{0}, \mathbf{x}\}$ for  $\mathbf{x}\in\mathbb{R}^d$, can be viewed as a projection onto a convex set (POCS) \citet{bauschke1996projection}, and thus rewritten as a simple smooth convex optimization problem,
+	\begin{align}\label{eqn:relu}
+	\max\{\mathbf{0}, \mathbf{x}\} \equiv \arg\min_{\mathbf{u}\in\mathcal{U}}\|\mathbf{u}-\mathbf{x}\|_2^2,
+	\end{align}
+	where $\|\cdot\|_2$ denotes the $\ell_2$ norm of a vector and $\mathcal{U}$ here is the nonnegative closed half-space. This non-negative least squares problem becomes the basis of our lifted objective.
+		
+	\subsection{Our Tikhonov Regularized Objective}
+	We use Eq. \ref{eqn:relu} to lift and unroll the general training objective in Eq. \ref{eqn:obj} obtaining the relaxation:
+	\begin{align}\label{eqn:our_obj}
+	\min_{\tilde{\mathcal{U}}\subseteq\mathcal{U}, \mathbf{V}\in\mathcal{V}, \tilde{\mathcal{W}}\subseteq\mathcal{W}} & f(\tilde{\mathcal{U}}, \mathbf{V}, \tilde{\mathcal{W}}) \stackrel{\Delta}{=} \sum_i\ell(y_i, \mathbf{V}\mathbf{u}_{i,N}) + \sum_{i, n}\frac{\gamma_n}{2}\left\|\mathbf{u}_{i,n} - \sum_{m\in\mathcal{M}_n}\mathbf{W}_{n,m}\mathbf{u}_{i,m}\right\|_2^2, \\
+	\mbox{s.t.} \hspace{9mm} & \mathbf{u}_{i,n} \geq \mathbf{0}, \mathbf{u}_{i,0}=\mathbf{x}_i, \forall i, \forall n\geq 1, \nonumber
+	\end{align}
+	where $\tilde{\mathcal{U}}=\{\mathbf{u}_{i,n}\}$ and $\gamma_n\geq0, \forall n$ denote predefined regularization constants.  Larger $\gamma_n$ values force $\mathbf{u}_{i,n}, \forall i$ to more closely approximate the output of ReLU at the $n$-th hidden layer. %Note that if $\beta=0$ and $\gamma_n=+\infty, \forall n$, our objective in Eq. \ref{eqn:our_obj} is equivalent to that in Eq. \ref{eqn:obj}.
+    Arranging $\mathbf{u}$ and $\gamma$ terms into a matrix $\mathbf{Q}$, we rewrite Eq. \ref{eqn:our_obj} in familiar form as a Tikhonov regularized objective:
+    \begin{align}\label{eqn:f}
+    \min_{\tilde{\mathcal{U}}\subseteq\mathcal{U}, \mathbf{V}\in\mathcal{V}, \tilde{\mathcal{W}}\subseteq\mathcal{W}} f(\tilde{\mathcal{U}}, \mathbf{V}, \tilde{\mathcal{W}}) \equiv \sum_i\left\{\ell(y_i, \mathbf{V}\mathbf{P}\mathbf{u}_{i}) + \frac{1}{2}\mathbf{u}_i^T\mathbf{Q}(\tilde{\mathcal{W}})\mathbf{u}_i\right\}.
+    \end{align}
+Here $\mathbf{u}_i, \forall i$ denotes the concatenating vector of all hidden outputs as well as the input data, \ie $\mathbf{u}_i=[\mathbf{u}_{i,n}]_{n=0}^N, \forall i$, $\mathbf{P}$ is a predefined constant matrix so that $\mathbf{P}\mathbf{u}_i=\mathbf{u}_{i,N}, \forall i$, and $\mathbf{Q}(\tilde{\mathcal{W}})$ denotes another matrix constructed by the weight matrix set $\tilde{\mathcal{W}}$.
+    
+    \begin{prop}\label{lem:Tikhonov}
+    $\mathbf{Q}(\tilde{\mathcal{W}})$ is positive semidefinite, leading to the following Tikhonov regularization: $$\mathbf{u}_i^T\mathbf{Q}(\tilde{\mathcal{W}})\mathbf{u}_i\equiv(\boldsymbol{\Gamma}\mathbf{u}_i)^T(\boldsymbol{\Gamma}\mathbf{u}_i)=\|\boldsymbol{\Gamma}\mathbf{u}_i\|_2^2, \exists \boldsymbol{\Gamma}, \forall i,$$
+    where $\boldsymbol{\Gamma}$ is the Tikhonov matrix.
+    \end{prop}
+%     \begin{proof}
+%     $\mathbf{Q}(\tilde{\mathcal{W}})$ is constructed based on the sum of least-squares in Eq. \ref{eqn:our_obj}, leading to this lemma. 
+%     \end{proof}
+    
+    \begin{defi}[Block Multi-Convexity \cite{xu2013block}]\label{def:bmc}
+    A function $f$ is {\em block multi-convex} if for each block variable $\mathbf{x}_i, \forall i$, $f$ is a convex function of $\mathbf{x}_i$ while all the other blocks are fixed.
+    \end{defi}
+    
+    \begin{prop}\label{lem:multi-convex}
+    $f(\tilde{\mathcal{U}}, \mathbf{V}, \tilde{\mathcal{W}})$ is block multi-convex.
+    \end{prop}
+%     \begin{proof}
+%     It is straightforward from Def. \ref{def:bmc}.
+%     \end{proof}
+    
+%    {\bf Remarks:} 
+    
+%     \underline{\em (\rom{1}) Network-To-Matrix Embedding:} For an arbitrary pairwise connection in the network, there exists a corresponding non-zero block matrix in $\mathbf{Q}(\tilde{\mathcal{W}})$ whose entries are determined by $\tilde{\mathcal{W}}$. Therefore, matrix $\mathbf{Q}(\tilde{\mathcal{W}})$ (and corresponding Tikhonov matrix $\boldsymbol{\Gamma}$ in Prop. \ref{lem:Tikhonov}) encodes the network architecture and parameterization.
+    
+%     \underline{\em (\rom{2}) Alternate Activation Functions:}  Eq. \ref{eqn:relu} provides us with an efficient way to design different activation functions by varying the definition of $\mathcal{U}$. Such examples include ReLU, parametric ReLU \citet{he2015delving} and leaky ReLU \citet{xu2015empirical}. %We may also define new activation functions with, \eg a simplex that enforces stronger constraints than ReLU and can be solved efficiently \citet{condat2016fast}.
+
+
+% 	\noindent
+% 	{\bf Remarks:} Compared with \citet{Zhang_2016_CVPR}, our training objective in Eq.~\ref{eqn:our_obj} has the following three key differences: (1) We have much fewer number (almost half amount) of variables that need to be learned, leading to much smaller memory requirement. (2) We have much faster calculation for updating $\mathbf{z}$'s in principle, \eg close-form solution followed by projection rather than SGD. (3) Our BCD based training algorithm guarantees to converge to a global minimizer theoretically (see Section \ref{ssec:convergence}), which cannot be achieved in \citet{Zhang_2016_CVPR}.
+	
+	
+	\section{Block Coordinate Descent Algorithm}\label{sec:BCD}
+    \subsection{Training}
+    
+    
+    
+	%To optimize Eq. \ref{eqn:our_obj} we utilize block coordinate descent (BCD). To better see the connection between $\mathcal{W}$ and $\mathcal{Z}$, we rewrite the last two terms in Eq. \ref{eqn:our_obj} into a quadratic form as $\sum_{i}\mathbf{z}_i^T\mathbf{H}(\mathcal{W})\mathbf{z}_i$ where $\mathbf{z}_i=[\mathbf{z}_{i,0}; \mathbf{z}_{i,1}; \cdots; \mathbf{z}_{i,N-1}]$ is the concatenation of output vectors. Intuitively it seems that we should define three blocks of variables, \ie $\mathcal{W}$, $\{\mathbf{z}_{i,N-1}\}_{\forall i}$ (since they are the only variables that connect with both hidden and output layers), and $\mathcal{Z}^- = \mathcal{Z}\setminus\{\mathbf{z}_{i,N-1}\}_{\forall i}$. However, this variable grouping strategy will cause serious computational burden, because the complexity of constrained quadratic programming is at least $O(n^3)$ \citet{nesterov1994interior} (if and only if $\mathbf{H}(\mathcal{W})$ is positive definite, otherwise NP-hard \citet{sahni1974computationally}), where $n$ is the total number of hidden nodes from hidden layer 1 to $N-2$. Therefore, we instead define every $\mathbf{z}$ and every $\mathbf{W}$ as a block, respectively. 
+	
+% \subsection{Algorithm}        
+    
+%     \begin{algorithm}[t]\footnotesize
+% 		\SetAlgoLined
+% 		\SetKwInOut{Input}{Input}\SetKwInOut{Output}{Output}
+% 		\Input{training data $\{(\mathbf{x}_i, \mathbf{y}_i)\}$ and regularization parameters $\{\gamma_n\}$}
+% 		\Output{network weights $\tilde{\mathcal{W}}$}
+% 		\BlankLine
+% 		Randomly initialize network weights $\tilde{\mathcal{W}}^{(0)}\subseteq\mathcal{W}$ and the classifier weights $\mathbf{V}^{(0)}\in\mathcal{V}$;
+		
+% 		%	$\forall i, \forall n, \mathbf{z}_{i,n}^{(0)}=\mbox{Proj}_{\mathcal{V}}(\mathbf{W}_n^{(0)}\mathbf{z}_{i,n-1}^{(0)})$;	
+		
+% 		\For{$t=1,2,\cdots$}{
+% 			Compute minimizer $\mathbf{u}_{i,n}^{(t)}, \forall i, \forall n$ while fixing $\tilde{\mathcal{W}}^{(t-1)}$ and $\mathbf{V}^{(t-1)}$;
+			
+% 			Compute minimizer $\hat{\mathbf{W}}_{n,m}^{(t)}, \forall m\in\mathcal{M}_n, \forall n$ and $\hat{\mathbf{V}}^{(t)}$ while fixing $\tilde{\mathcal{U}}^{(t)}$;
+			
+% 			$\mathbf{W}_{n,m}^{(t)}\leftarrow\mathbf{W}_{n,m}^{(t-1)} + \frac{1}{t}(\hat{\mathbf{W}}_{n,m}^{(t)} - \mathbf{W}_{n,m}^{(t-1)}), \forall m, \forall n; \;        \mathbf{V}^{(t)}\leftarrow\mathbf{V}^{(t-1)} + \frac{1}{t}(\hat{\mathbf{V}}^{(t)} - \mathbf{V}^{(t-1)})$;
+% 		}
+% 		\Return $\mathcal{W}$;
+% 		\caption{\footnotesize Approximate Block Coordinate Descent (ABCD) Algorithm for Large-Scale Learning}\label{alg:abcd}
+% 	\end{algorithm}
+	
+    Eq. \ref{eqn:our_obj} can be minimized using alternating optimization, which decomposes the problem into the following three convex sub-problems based on Lemma \ref{lem:multi-convex}:
+
+        \begin{itemize}
+    \item Tikhonov regularized inverse problem: $\min_{\mathbf{u}_i\in\mathcal{U}} \ell(y_i, \mathbf{V}\mathbf{P}\mathbf{u}_{i}) + \frac{1}{2}\mathbf{u}_i^T\mathbf{Q}(\tilde{\mathcal{W}})\mathbf{u}_i, \forall i.$
+    \item Least-square regression: $\min_{\forall\mathbf{W}_{n,m}\in\tilde{\mathcal{W}}} \frac{\gamma_n}{2}\sum_{i}\left\|\mathbf{u}_{i,n} - \sum_{m\in\mathcal{M}_n}\mathbf{W}_{n,m}\mathbf{u}_{i,m}\right\|_2^2$;
+    \item Classification using learned features: $\min_{\mathbf{V}\in\mathcal{V}} \sum_i \ell(y_i, \mathbf{V}\mathbf{P}\mathbf{u}_{i})$.
+    \end{itemize}
+        All the three sub-problems can be solved efficiently due to their convexity. In fact the inverse sub-problem alleviates the vanishing gradient issue in traditional deep learning, because it tries to obtain the {\em estimated} solution for the output feature of each hidden layer, which are dependent on each other through the Tikhonov matrix. Such functionality is similar to that of target (\ie estimated outputs of each layer) propagation \cite{bengio2014auto}, namely, propagating information between input data and output labels.
+        
+        Unfortunately, a simple alternating optimization scheme cannot guarantee the convergence to stationary points for solving Eq. \ref{eqn:our_obj}.  Therefore we propose a novel BCD based algorithm for training DNNs based on Eq. \ref{eqn:our_obj} as listed in Alg. \ref{alg:bcd}. Basically we sequentially solve each sub-problem with an extra quadratic term. These extra terms as well as the convex combination rule guarantee the global convergence of the algorithm (see Sec. \ref{sec:convergence} for more details). 
+
+Our algorithm involves solving a sequence of quadratic programs (QP), whose computational complexity is cubic, in general, in the input dimension \cite{nesterov1994interior}. %Meanwhile solving these QP problems as well as updating variables involve the access to previous solutions of the variables. Issues like these should be handled well in practice for efficient implementation. 
+In this paper we focus on the theoretical development of the algorithm, and consider fast implementations in future work.% since it is beyond the scope of the paper.
+
+\begin{algorithm}[t]\footnotesize
+\SetAlgoLined
+\SetKwInOut{Input}{Input}\SetKwInOut{Output}{Output}
+\Input{training data $\{(\mathbf{x}_i, \mathbf{y}_i)\}$ and regularization parameters $\{\gamma_n\}$}
+\Output{network weights $\tilde{\mathcal{W}}$}
+\BlankLine
+Randomly initialize $\tilde{\mathcal{U}}^{(0)}\subseteq\mathcal{U}, \mathbf{V}^{(0)}\in\mathcal{V}, \tilde{\mathcal{W}}^{(0)}\subseteq\mathcal{W}$;
+        
+Set sequence $\left\{\theta_t\right\}_{t=1}^{\infty}$ so that $0\leq\theta_t\leq 1, \forall t$ and sequence $\left\{\sum_{k=t}^{\infty}\frac{\theta_k}{1-\theta_k}\right\}_{t=1}^{\infty}$ converges to zero, \eg $\theta_t = \frac{1}{t^2}$;
+		
+\For{$t=1,2,\cdots$}{
+$\mathbf{u}_i^* \leftarrow \arg\min_{\mathbf{u}_i\in\mathcal{U}} \ell(y_i, \mathbf{V}^{(t-1)}\mathbf{P}\mathbf{u}_{i}) + \frac{1}{2}\mathbf{u}_i^T\mathbf{Q}(\tilde{\mathcal{W}}^{(t-1)})\mathbf{u}_i + \frac{1}{2}(1-\theta_t)^2\|\mathbf{u}_{i} - \mathbf{u}_{i}^{(t-1)}\|_2^2, \forall i$;		
+
+$\mathbf{u}_{i}^{(t)}\leftarrow\mathbf{u}_{i}^{(t-1)} + \theta_t(\mathbf{u}_i^* - \mathbf{u}_{i}^{(t-1)}), \forall i$;
+			
+$\mathbf{V}^*\leftarrow\arg\min_{\mathbf{V}\in\mathcal{V}} \sum_i \ell(y_i, \mathbf{V}\mathbf{P}\mathbf{u}_{i}^{(t)}) + \frac{1}{2}(1-\theta_t)^2\|\mathbf{V}-\mathbf{V}^{(t-1)}\|_F^2$;
+            
+$\mathbf{V}^{(t)}\leftarrow\mathbf{V}^{(t-1)} + \theta_t(\mathbf{V}^* - \mathbf{V}^{(t-1)})$;            
+
+$\tilde{\mathcal{W}}^* \leftarrow \arg\min_{\tilde{\mathcal{W}}\subseteq\mathcal{W}} \sum_i\frac{1}{2}[\mathbf{u}_i^{(t)}]^T\mathbf{Q}(\tilde{\mathcal{W}})\mathbf{u}_i^{(t)} + \frac{1}{2}(1-\theta_t)^2\sum_n\sum_{m\in\mathcal{M}_n}\|\mathbf{W}_{n,m} - \mathbf{W}_{n,m}^{(t-1)}\|_F^2$
+			
+$\mathbf{W}_{n,m}^{(t)}\leftarrow\mathbf{W}_{n,m}^{(t-1)} + \theta_t(\mathbf{W}_{n,m}^* - \mathbf{W}_{n,m}^{(t-1)}), \forall n, \forall m\in\mathcal{M}_n, \mathbf{W}_{n,m}^*\in\tilde{\mathcal{W}}^*$;
+		}
+		\Return $\tilde{\mathcal{W}}$;
+		\caption{Block Coordinate Descent (BCD) Algorithm for Training DNNs}\label{alg:bcd}
+	\end{algorithm}
+    
+        %Here we care about the feature extraction networks more than the classifiers, which can be trained separately on top of the learned features. The convergence analysis is shown below:
+    
+%     {\bf Remarks:} The update rule for $\tilde{\mathcal{U}}, \mathbf{V}, \tilde{\mathcal{W}}$, respectively, is equivalent to the {\em average accumulation} of the corresponding minimizers. Among these three (block) variables $\tilde{\mathcal{U}}$ causes most of difficulties in terms of efficient implementation for large-scale learning:
+    
+%     \underline{\em (\rom{1}) Computation:} Solving $\mathbf{u}_i, \forall i$ involves constrained quadratic programming, whose complexity is $O(d^3)$ \cite{nesterov1994interior}, in general, where in our case $d=\sum_{n=1}^N d_n$. Therefore, efficient algorithms such as sequential minimal optimization (SMO) \cite{platt1998sequential} or POCS \citet{bauschke1996projection} can be used to accelerate the computation.
+    
+%     \underline{\em (\rom{2}) Storage:} Saving $\tilde{\mathcal{U}}^{(t-1)}$ in the memory for updating $\tilde{\mathcal{U}}^{(t)}$ is impractical to implement Alg. \ref{alg:bcd} for large-scale learning. One way to handle it is to approximate current $\mathbf{u}_{i,n}^{(t)}, \forall i, \forall n$ individually by the average accumulation of previous $T (T\geq 0)$ minimizers $\hat{\mathbf{u}}_{i,n}^{(t-k)}, k\in\{0,\cdots,T\}$ computed based on $\tilde{\mathcal{U}}^{(t-k-1)}$ and $\mathbf{V}^{(t-k-1)}$ which are saved in the memory.
+   
+    
+    %This will remove the dependency between current solutions and previous ones, but sacrificing some convergence guarantee (see Sec. \ref{ssec:convergence}). Saving $\tilde{\mathcal{W}}$ and $\mathbf{V}$ in the memory is much easier to implement.
+
+\subsection{Testing}\label{ssec:testing}
+Given a test sample $\mathbf{x}$ and learned network weights $\tilde{\mathcal{W}}^*, \mathbf{V}^*$, based on Eq. \ref{eqn:our_obj} the ideal decision function for classification should be $y^*=\arg\min_{y\in\mathcal{Y}} \left\{ \min_{\mathbf{u}} f(\mathbf{u}, \mathbf{V}^*, \tilde{\mathcal{W}}^*) \right\}.$ This indicates that for each pair of test data and potential label we have to solve an optimization problem, leading to unaffordably high computational complexity that prevents us from using it. 
+    
+%     Instead we consider the objective $f$ in Eq. \ref{eqn:our_obj} as the sequential combination of two separate components: the loss function determines the classifier based on the features that are generated by solving the (constrained) quadratic term. This approximation minimizes the upper bound of $f(\mathbf{u}, \mathbf{V}^*, \tilde{\mathcal{W}}^*)$ while enforcing the same deep features for all the class labels. Obviously the learned classifier weights $\mathbf{V}^*$ cannot be used any more.
+    
+%     In summary, we define a novel {\em deep feature generator} based on the Tikhonov regularizer as follows:
+%     \begin{align}\label{eqn:feat}
+%     \mathbf{u}^* = \arg\min_{\mathbf{u}\in\mathcal{U}} \frac{1}{2}\mathbf{u}^T\mathbf{Q}\left(\tilde{\mathcal{W}}^*\right)\mathbf{u} = \arg\min_{\mathbf{u}\in\mathcal{U}}\sum_{n=1}^N\frac{\gamma_n}{2}\left\|\mathbf{u}_{\cdot,n}-\sum_{m\in\mathcal{M}_n}\mathbf{W}_{n,m}^*\mathbf{u}_{\cdot,m}\right\|_2^2.
+%     \end{align}
+    
+Recall that our goal is to train feed-forward DNNs using the BCD algorithm in Alg. \ref{alg:bcd}. Considering this, we utilize the network weights $\tilde{\mathcal{W}}^*$ to construct the network for extracting deep features. Since these features are the approximation of $\tilde{\mathcal{U}}$ in Eq. \ref{eqn:our_obj} (in fact this is a feasible solution of an extreme case where $\gamma_n=+\infty, \forall n$), the learned classifier $\mathbf{V}^*$ can never be reused at test time. Therefore, we %extract the deep features from training data using the constructed network and retrain the classifier based on these features.
+retain the architecture and weights of the trained network and replace the classification layer (\ie the last layer with weights $\mathbf{V}$) with a linear support vector machine (SVM).
+
+ \subsection{Experiments}
+ \subsubsection{MNIST Demonstration}
+
+\begin{wrapfigure}{r}{0.35\linewidth} 
+	\vspace{-18pt}
+	\begin{center}
+		\includegraphics[width=\linewidth]{parallel.eps}\vspace{-3mm}
+		\caption{\footnotesize The network architecture for algorithm/solver comparison.}
+		\label{fig:structure}
+	\end{center}
+	\vspace{-20pt}
+	%  \vspace{1pt}
+\end{wrapfigure}
+
+To demonstrate the effectiveness and efficiency of our BCD based algorithm in Alg. \ref{alg:bcd}, we conduct comprehensive experiments on MNIST \cite{lecun1998mnist} dataset using its $28\times 28 = 784$ raw pixels as input features. We refer to our algorithm for learning {\em dense} networks as ``BCD'' and that for learning {\em sparse} networks as ``BCD-S'', respectively. For sparse learning, we define the convex set $\mathcal{W}=\{\mathbf{W} \mid \|\mathbf{W}_k\|_1\leq 1, \forall k\}$, where $\mathbf{W}_k$ denotes the $k$-th row in matrix $\mathbf{W}$ and $\|\cdot\|_1$ denotes the $\ell_1$ norm of a vector. All the comparisons are performed on the same PC. We implement our algorithms using MATLAB GPU implementation without optimizing the code.
+
+% \subsection{Comparison with SGD based Solvers}
+
+
+
+We compare our algorithms with the six SGD based solvers in Caffe \cite{jia2014caffe}, \ie SGD \cite{bottou2012stochastic}, AdaDelta \cite{zeiler2012adadelta}, AdaGrad \cite{duchi2011adaptive}, Adam \cite{kingma2014adam}, Nesterov \cite{sutskever2013importance}, RMSProp \cite{tieleman2012lecture}, which are coded in Python. The network architecture that we implemented is illustrated in Fig.~\ref{fig:structure}. This network has three hidden layers (with ReLU) with 784 nodes per layer, four FC layers, and three skip layers inside. %As we see for the third hidden layer, there are three inputs from previous layers, which can be formulated by our multi-input ReLU. 
+Therefore, the mapping function from input $\mathbf{x}_i$ to output $\mathbf{y}_i$ defined by the network is:
+\begin{align}
+& f(\mathbf{x}_i) = \mathbf{V}\mathbf{u}_{i,3}, \, \mathbf{u}_{i,3} = \max\{\mathbf{0}, \mathbf{x}_i+\mathbf{u}_{i,1}+\mathbf{W}_{3,2}\mathbf{u}_{i,2}\}, \nonumber \\
+& \mathbf{u}_{i,2}=\max\{\mathbf{0}, \mathbf{x}_i+\mathbf{W}_{2,1}\mathbf{u}_{i,1}\}, \, \mathbf{u}_{i,1}=\max\{\mathbf{0}, \mathbf{W}_{1,0}\mathbf{x}_i\}. \nonumber
+\end{align}
+For simplicity without loss of generality, we utilize MSE as the loss function, and learn the network parameters using different solvers with the same inputs and random initial weights for each FC layer. 
+
+\begin{figure}
+\centering
+    \begin{minipage}[b]{0.49\linewidth}
+    \centering
+        \includegraphics[width=\textwidth]{obj.eps}
+        \centerline{\footnotesize (a)}
+    \end{minipage}
+    ~ %add desired spacing between images, e. g. ~, \quad, \qquad, \hfill etc. 
+      %(or a blank line to force the subfigure onto a new line)
+    \begin{minipage}[b]{0.49\linewidth}
+    \centering
+        \includegraphics[width=\textwidth]{test_err.eps}
+        \centerline{\footnotesize (b)}
+    \end{minipage}  
+    \begin{minipage}[b]{0.49\linewidth}
+    \centering
+        \includegraphics[width=\textwidth]{run_time.eps}
+        \centerline{\footnotesize (c)}
+    \end{minipage}
+    ~ %add desired spacing between images, e. g. ~, \quad, \qquad, \hfill etc. 
+      %(or a blank line to force the subfigure onto a new line)
+    \begin{minipage}[b]{0.49\linewidth}
+    \centering
+        \includegraphics[width=\textwidth]{sparse_nonzero.eps}
+        \centerline{\footnotesize (d)}
+    \end{minipage}  
+    \vspace{-5mm}
+    \caption{\footnotesize {\bf (a)} Illustration of convergence for BCD and BCD-S. {\bf (b)} Test error comparison. {\bf (c)} Running time comparison. {\bf (d)} Sparseness comparison for BCD and BCD-S.}\label{fig:error}
+    \vspace{-4mm}
+\end{figure} 
+
+Without fine-tuning the regularization parameters, we simply set $\gamma_n=0.1, \forall n$ in Eq. \ref{eqn:our_obj} for both BCD and BCD-S algorithms. For the Caffe solvers, we modify the demo code in Caffe for MNIST and run the comparison with carefully tuning the parameters %related to each learning component such as learning rate, weight decay, dropout, and batch normalization, 
+to achieve the best performance that we can. We report the results within 100 epochs by averaging three trials, because at this point the training of all the methods seems convergent already. For all competing algorithms, in each epoch the entire training data is passed through once to update parameters. Therefore, for our algorithms each epoch is equivalent to one iteration, and there are 100 iterations in total.
+
+{\bf Convergence:} Fig. \ref{fig:error}(a) shows the change of training objective with increase of epochs for BCD and BCD-S, respectively. As we see both curves decrease monotonically and become flatter and flatter eventually, indicating that both algorithms converge. BCD-S converges much faster than BCD, but its objective is higher than BCD. This is because BCD-S learns sparse models that may not fit data as well as dense models learned by BCD.
+
+% \begin{wrapfigure}{r}{0.43\linewidth} 
+% 	\vspace{-20pt}
+% 	\begin{center}
+% 		\includegraphics[width=\linewidth]{obj.eps}\vspace{-5mm}
+% 		\caption{\footnotesize Comparison on convergence using the change of network weights for each algorithm.}
+% 		\label{fig:convergence}
+% 	\end{center}
+% 	%\vspace{-10pt}
+% 	%  \vspace{1pt}
+% \end{wrapfigure}
+
+% As we see both of our algorithms tend to converge with the increase of number of epochs as their curves tend to approach to zero with faster speed than the SGD based solvers. At the beginning our algorithms update the weights significantly faster than all the competitors in Caffe with one order of magnitude, roughly speaking. BCD-S seems to converge faster than BCD where much fewer nonzeros need to be updated. The theoretical results on convergence of Alg. \ref{alg:bcd} are shown in Sec. \ref{sec:convergence} later. In contrast, the SGD based solvers seem to converge very slowly (or even not converge at all) because the curves look flat after 50 epochs.
+
+
+{\bf Testing Error:} As mentioned in Sec. \ref{ssec:testing}, here we utilize linear SVMs and last-layer hidden features extracted from training data to retrain the classifier. Based on the network in Fig. \ref{fig:structure} the feature extraction function is $\mathbf{u}_{i,3}=\max\{\mathbf{0}, \mathbf{x}_i+\max\{\mathbf{0}, \mathbf{W}_{1,0}\mathbf{x}_i\}+\mathbf{W}_{3,2}\max\{\mathbf{0}, \mathbf{x}_i+\mathbf{W}_{2,1}\max\{\mathbf{0}, \mathbf{W}_{1,0}\mathbf{x}_i\}\}\}$. 
+% \begin{wrapfigure}{r}{0.43\linewidth} 
+% 	\vspace{-20pt}
+% 	\begin{center}
+% 		\includegraphics[width=\linewidth]{test_err.eps}\vspace{-5mm}
+% 		\caption{\footnotesize Comparison on convergence using the change of network weights for each algorithm.}
+% 		\label{fig:convergence}
+% 	\end{center}
+% 	%\vspace{-10pt}
+% 	%  \vspace{1pt}
+% \end{wrapfigure}
+To conduct fair comparison, we retrain the classifiers for all the algorithms, and summarize the test-time results in Fig.~\ref{fig:error}(b) with 100 epochs. Our BCD algorithm which learns dense architectures, same as the SGD based solvers, performs best, while our BCD-S algorithm works still better than the SGD competitors, although it learns much sparser networks. These results are consistent with the training objectives in Fig. \ref{fig:error}(a) as well.
+
+{\bf Computational Time:} We compare the training time in Fig. \ref{fig:error}(c). It seems that our BCD implementation is significantly faster than the Caffe solvers. For instance, our BCD achieves about 2.5 times speed-up than the competitors, while achieving best classification performance at test time.
+
+{\bf Sparseness:} In order to compare the difference in terms of weights between the dense and sparse networks learned by BCD and BCD-S, respectively, we compare the percentage of nonzero weights in each FC layer, and show the results in Fig. \ref{fig:error}(d). As we see, expect the last FC layer (corresponding to parameter $\mathbf{V}$ as classifiers) BCD-S has the ability of learning much sparser networks for deep feature extraction. In our case BCD-S learns a network with $2.42\%$ nonzero weights\footnote{Since we will retrain the classifiers after all, here we do not take the nonzeros in the last FC into account.}, on average, with classification accuracy $1.34\%$ lower than that of BCD which learns a network with $97.15\%$ nonzero weights. Potentially this ability could be very useful in the scenarios such as embedding systems where sparse networks are desired.
+
+\subsubsection{Supervised Hashing}
+To further demonstrate the usage of our approach, we compare with \cite{Zhang_2016_CVPR}\footnote{MATLAB code is available at \url{https://zimingzhang.wordpress.com/publications/}.} for the application of supervised hashing, which is the state-of-the-art in the literature. \cite{Zhang_2016_CVPR} proposed an ADMM based optimization algorithm to train DNNs with relaxed objective that is very related to ours. We train the same DNN on MNIST as used in \cite{Zhang_2016_CVPR}, \ie with 48 hidden layers and 256 nodes per layer that are sequentially and fully connected (see \cite{Zhang_2016_CVPR} for more details on the network). Using the same image features, we consistently observe marginal improvement over the results (\ie precision, recall, mAP) reported in \cite{Zhang_2016_CVPR}. However, on the same PC we can finish training within 1 hour based on our implementation, while using the MATLAB code for \cite{Zhang_2016_CVPR} the training needs about 9 hours. Similar observations can be made on CIFAR-10 as used in \cite{Zhang_2016_CVPR} using a network with 16 hidden layers and 1024 nodes per layer.
+
+
+\section{Convergence Analysis}\label{sec:convergence}
+
+\subsection{Preliminaries}\label{ssec:preliminaries}
+% 	\begin{algorithm}[t]
+% 		\SetAlgoLined
+% 		find a feasible point $x^0\in\mathcal{X}$ and set $r=0$;
+		
+% 		\For{$r=0,1,2,\cdots$}{
+% 			choose a subset $S^r\subseteq\{1,\cdots,n\}$;
+			
+% 			calculate $\hat{x}_i^r=\arg\min_{x_i\in\mathcal{X}_i}\tilde{h}_i(x_i,x^r), i\in S^r$;
+			
+% 			set $x_i^{r+1}=x_i^r+\gamma^r(\hat{x}_i^r - x_i^r), \forall i\in S^r$, and set $x_i^{r+1} = x_i^r, \forall i\neq S^r$;
+% 		}
+% 		\caption{Parallel Successive Convex Approximation (PSCA) Algorithm \cite{razaviyayn2014parallel}}\label{alg:PSCA}
+% 	\end{algorithm}
+% 	We start with Parallel Successive Convex Approximation (PSCA) algorithm in Alg. \ref{alg:PSCA}, which tries to solve the following optimization problem\footnote{Here for simplicity we follow the notations in each original paper.}:
+% 	\begin{align}\label{eqn:psca}
+% 	\min_x h(x)\stackrel{\Delta}{=}f(x_1,\cdots,x_n) + \sum_{i=1}^{n}g_i(x_i) \quad \mbox{s.t.} \, x_i\in\mathcal{X}_i, i=1,2,\cdots,n,
+% 	\end{align}
+% 	where $\mathcal{X}_i\subseteq\mathbb{R}^{m_i}$ is a closed convex set, the function $f:\prod_{i=1}^{n}\mathcal{X}_i\rightarrow\mathbb{R}$ is a smooth function (possibly non-convex), and $g(x)\stackrel{\Delta}{=}\sum_{i=1}^{n}g_i(x_i)$ is a separable convex function (possibly non-smooth). In Alg.~\ref{alg:PSCA}, $\tilde{h}_i(x_i,x^r)$ is a convex (possibly upper-bound) approximation of the function $h(\cdot)$ \wrt the $i$-th block around the current iteration $x^r$. Further let $\tilde{h}_i(x_i,y) = \tilde{f}_i(x_i,y) + g_i(x_i)$, where $\tilde{f}_i(\cdot,y)$ is an approximation of the function $f(\cdot)$ around the point $y$ \wrt the $i$-th block. 
+%     \begin{defi}[Assumptions on $\tilde{f}_i(x_i,y): \mathcal{X}_i \times \mathcal{X} \rightarrow \mathbb{R}$ in PSCA \cite{razaviyayn2014parallel}]\label{def:assumptions}
+%     Function $\tilde{f}_i(x_i,y)$ is assumed to satisfy the following assumptions:
+%     \begin{itemize}
+%     \item $\tilde{f}_i(\cdot,y)$ is continuously differentiable and uniformly strongly convex with parameter $\tau$;
+%     \item Gradient consistency assumption: $\nabla_{x_i}\tilde{f}_i(x_i,x) = \nabla_{x_i}f(x), \forall x\in\mathcal{X}$;
+%     \item $\nabla_{x_i}\tilde{f}_i(x_i,\cdot)$ is Lipschitz continuous on $\mathcal{X}$ for all $x_i\in\mathcal{X}$ with constant $\tilde{L}$.
+%     \end{itemize}    
+%     \end{defi}
+    
+%     \begin{defi}[Cyclic Update Rule for BCD \cite{razaviyayn2014parallel}]\label{def:cyclic}
+%     Given the partition $\{\mathcal{T}_0, \cdots, \mathcal{T}_{m-1}\}$ of the set $\{1,2,\cdots,n\}$ with $\mathcal{T}_i\cap\mathcal{T}_j=\emptyset, \forall i\neq j$ and $\cup_{l=0}^{m-1}=\{1,2,\cdots,n\}$, we say the choice of the variable selection is {\em cyclic} if $S^{mr+l}=\mathcal{T}_l, \forall l=0,1,\cdots,m-1$ and $\forall r$.
+%     \end{defi}
+		
+% 	\begin{thm}[Convergence of PSCA \cite{razaviyayn2014parallel}]\label{thm:PCSA}
+%     Assume that $\nabla f(\cdot)$ is Lipschitz continuous with constant $L_{\nabla f}$. In Alg. \ref{alg:PSCA} assume $\gamma^r\in(0,1], \sum_{r=1}^{\infty}\gamma^r=+\infty$, $\lim\sup_{r\rightarrow\infty}\gamma^r<\bar{\gamma}\stackrel{\Delta}{=}\min\{\frac{\tau}{L_{\nabla f}}, \frac{\tau}{\tau+\tilde{L}\sqrt{n}}\}$, and that $\{\gamma^r\}_{r=1}^{\infty}$ is monotonically decreasing sequence. Then every limit point of the iterates is a stationary point of Eq. \ref{eqn:psca} deterministically for cyclic update rule.
+% 	\end{thm}
+	
+\begin{defi}[Lipschitz Continuity \cite{erikssonapplied}]\label{defi:Lipschitz}
+We say that function $f$ is {\em Lipschitz continuous} with Lipschitz constant $L_f$ on $\mathcal{X}$, if there is a (necessarily nonnegative) constant $L_f$ such that
+$$|f(x_1)-f(x_2)|\leq L_f|x_1-x_2|, \forall x_1 , x_2 \in \mathcal{X}.$$
+\end{defi}
+
+\begin{defi}[Global Convergence \cite{lanckriet2009convergence}]\label{def:gl_conv}
+Let $\mathcal{X}$ be a set and $x_0\in\mathcal{X}$ a given point, Then an Algorithm, $\mathcal{A}$, with initial point $x_0$ is a point-to-set map $\mathcal{A}: \mathcal{X}\rightarrow\mathcal{P}(\mathcal{X})$ which generates a sequence $\{x_k\}_{k=1}^{\infty}$ via the rule $x_{k+1}\in \mathcal{A}(x_k), k=0,1,\cdots$. $\mathcal{A}$ is said to be {\em global convergent} if for any chosen initial point $x_0$, the sequence $\{x_k\}_{k=0}^{\infty}$ generated by $x_{k+1}\in \mathcal{A}(x_k)$ (or a subsequence) converges to a point for which a necessary condition of optimality holds.
+\end{defi}
+    
+\begin{defi}[R-linear Convergence Rate \cite{nocedal99}]\label{defi:rate}
+Let $\{x_k\}$ be a sequence in $\mathbb{R}^n$ that converges to $x^*$. We say that convergence is {\em R-linear} if there is a sequence of nonnegative scalars $\{v_k\}$ such that $\|x_k-x^*\|\leq v_k, \forall k$, and $\{v_k\}$ converges Q-linearly to zero.
+\end{defi}    
+
+\begin{lemma}[3-Point Property \cite{Baldassarre}]\label{lem:3-point}
+If function $\phi(\mathbf{w})$ is convex and $\hat{\mathbf{w}}=\arg\min_{\mathbf{w}\in\mathbb{R}^d}\phi(\mathbf{w})+\frac{1}{2}\|\mathbf{w}-\mathbf{w}_0\|_2^2$, then for any $\mathbf{w}\in\mathbb{R}^d$,
+$$
+\phi(\hat{\mathbf{w}})+\frac{1}{2}\|\hat{\mathbf{w}}-\mathbf{w}_0\|_2^2\leq\phi(\mathbf{w})+\frac{1}{2}\|\mathbf{w}-\mathbf{w}_0\|_2^2-\frac{1}{2}\|\mathbf{w}-\hat{\mathbf{w}}\|_2^2.
+$$
+\end{lemma}
+
+\subsection{Theoretical Results}
+
+\begin{defi}[Assumptions on $f$ in Eq. \ref{eqn:our_obj}]\label{defi:assumption}
+Let $f_1(\tilde{\mathcal{U}})\stackrel{\Delta}{=}f(\tilde{\mathcal{U}}, \cdot, \cdot), f_2(\mathbf{V})\stackrel{\Delta}{=}f(\cdot, \mathbf{V}, \cdot), f_3(\tilde{\mathcal{W}})\stackrel{\Delta}{=}f(\cdot, \cdot, \tilde{\mathcal{W}})$ be the objectives of the three sub-problems, respectively. Then we assume that $f$ is lower-bounded and $f_1, f_2, f_3$ are Lipschitz continuous with constants $L_{f_1}, L_{f_2}, L_{f_3}$, respectively.
+% \begin{itemize}
+% \item $f_1, f_2, f_3$ are Lipschitz continuous with constants $L_{f_1}, L_{f_2}, L_{f_3}$, respectively;
+% \item The gradients of $f_1, f_2, f_3$, \ie $\nabla f_1, \nabla f_2, \nabla f_3$, are Lipschitz continuous with constants $L_{\nabla f_1}, L_{\nabla f_2}, L_{\nabla f_3}$, respectively.
+% \end{itemize}
+\end{defi}
+
+\begin{prop}\label{prop:1}
+Let $x,y,\hat{x}\in\mathcal{X}$ and $y=(1-\theta)x+\theta\hat{x}$. Then $\frac{1}{2}\|\hat{x}-y\|_2^2 = \frac{1}{2}\left(1-\theta\right)^2\|\hat{x}-x\|_2^2.$
+\end{prop}
+
+\begin{lemma}\label{lem:phi}
+Let $\mathcal{X}$ be a nonempty closed convex set, function $\phi:\mathcal{X}\rightarrow \mathbb{R}$ is convex and Lipschitz continuous with constant $L$, and scalar $0\leq\theta\leq 1$. Suppose that $\forall x\in\mathcal{X}, \hat{x}=\arg\min_{z\in\mathcal{X}}\phi(z)+\frac{1}{2}\|z-z_0\|_2^2$ and $z_0=y=(1-\theta)x+\theta\hat{x}$. Then we have
+$$\frac{1-\theta}{\theta}\|y-x\|_2^2 \leq \phi(x)-\phi(y) \leq L\|y-x\|_2 \Rightarrow \|y-x\|_2\leq \frac{L\theta}{1-\theta}.$$
+\end{lemma}
+\begin{proof}
+Based on the convexity of $\phi$, Prop. \ref{prop:1}, and Lemma \ref{lem:3-point}, we have
+\begin{align}
+& \phi(x)-\phi(y) \geq\phi(x)-\left[\left(1-\theta\right)\phi(x)+\theta\phi(\hat{x})\right]=\theta\left[\phi(x) - \phi(\hat{x})\right] \nonumber \\
+&\geq \theta\left[\frac{1}{2}\|x-\hat{x}\|_2^2 + \frac{1}{2}\|\hat{x} - z_0\|_2^2 - \frac{1}{2}\|x-z_0\|_2^2\right] = \theta\left(1-\theta\right)\|x-\hat{x}\|_2^2 = \frac{1-\theta}{\theta}\|y-x\|_2^2, \nonumber 
+\end{align}
+where $\|y-x\|_2^2=0$ if and only if $\hat{x}=x$ (equivalently $\phi(x)=\phi(y)$); otherwise $\|y-x\|_2^2$ is lower-bounded from 0 provided that $\theta\neq 1$.
+
+Based on Def. \ref{defi:Lipschitz}, we have $\phi(x)-\phi(y) \leq L\|y-x\|_2$.
+\end{proof}
+
+% \begin{cor}\label{cor:f}
+% Given $\left(\tilde{\mathcal{U}}^{(t)}, \mathbf{V}^{(t)}, \tilde{\mathcal{W}}^{(t)}\right)$ and $\left(\tilde{\mathcal{U}}^{(t+1)}, \mathbf{V}^{(t+1)}, \tilde{\mathcal{W}}^{(t+1)}\right)$ generated by Alg. \ref{alg:bcd}, then
+% $$
+% g_{t,t+1} = \sum_{\mathbf{u}\in\tilde{\mathcal{U}}}\|\mathbf{u}^{(t)}-\mathbf{u}^{(t+1)}\|_2^2 + \|\mathbf{V}^{(t)}-\mathbf{V}^{(t+1)}\|_F^2 + \sum_{\mathbf{W}\in\tilde{\mathcal{W}}}\|\mathbf{W}^{(t)}-\mathbf{W}^{(t+1)}\|_F^2 \leq O\left(\frac{\theta_t^2}{1-\theta_t}\right). $$
+% \end{cor}
+% \begin{proof}
+% Since $f\left(\tilde{\mathcal{U}}^{(t-1)}, \mathbf{V}^{(t-1)}, \tilde{\mathcal{W}}^{(t-1)}\right) - f\left(\tilde{\mathcal{U}}^{(t)}, \mathbf{V}^{(t)}, \tilde{\mathcal{W}}^{(t)}\right)=f\left(\tilde{\mathcal{U}}^{(t-1)}, \mathbf{V}^{(t-1)}, \tilde{\mathcal{W}}^{(t-1)}\right) - f\left(\tilde{\mathcal{U}}^{(t)}, \mathbf{V}^{(t-1)}, \tilde{\mathcal{W}}^{(t-1)}\right) + f\left(\tilde{\mathcal{U}}^{(t)}, \mathbf{V}^{(t-1)}, \tilde{\mathcal{W}}^{(t-1)}\right) - f\left(\tilde{\mathcal{U}}^{(t)}, \mathbf{V}^{(t)}, \tilde{\mathcal{W}}^{(t-1)}\right) + f\left(\tilde{\mathcal{U}}^{(t)}, \mathbf{V}^{(t)}, \tilde{\mathcal{W}}^{(t-1)}\right) - f\left(\tilde{\mathcal{U}}^{(t)}, \mathbf{V}^{(t)}, \tilde{\mathcal{W}}^{(t)}\right)$, based on Lemma~\ref{lem:phi}, we can easily prove this corollary.
+% \end{proof}
+
+\begin{thm}\label{thm:BCD}
+Let $\left\{\left(\tilde{\mathcal{U}}^{(t)}, \mathbf{V}^{(t)}, \tilde{\mathcal{W}}^{(t)}\right)\right\}_{t=1}^{\infty}\subseteq\mathcal{U}\times\mathcal{V}\times\mathcal{W}$ be an arbitrary sequence from a closed convex set that is generated by Alg. \ref{alg:bcd}. Suppose that $0\leq\theta_t\leq 1, \forall t$ and the sequence $\left\{\sum_{k=t}^{\infty}\frac{\theta_k}{1-\theta_k}\right\}_{t=1}^{\infty}$ converges to zero. Then we have
+\begin{enumerate}
+\item $\left(\tilde{\mathcal{U}}^{(\infty)}, \mathbf{V}^{(\infty)}, \tilde{\mathcal{W}}^{(\infty)}\right)$ is a stationary point;
+\item $\left\{\left(\tilde{\mathcal{U}}^{(t)}, \mathbf{V}^{(t)}, \tilde{\mathcal{W}}^{(t)}\right)\right\}_{t=1}^{\infty}$ will converge to $\left(\tilde{\mathcal{U}}^{(\infty)}, \mathbf{V}^{(\infty)}, \tilde{\mathcal{W}}^{(\infty)}\right)$ globally with R-linear convergence rate.
+% 			\item Our objective $f(\tilde{\mathcal{U}}, \mathbf{V}, \tilde{\mathcal{W}})$ in Eq. \ref{eqn:our_obj} can monotonically decrease with rate $O\left(\frac{1}{t^2}\right)$, % provided that $\mathcal{W}, \mathcal{Z}$ are both closed convex sets, 
+% 			namely,
+% 			$$
+% 			0 \leq f(\tilde{\mathcal{U}}^{(t-1)}, \mathbf{V}^{(t-1)}, \tilde{\mathcal{W}}^{(t-1)}) - f(\tilde{\mathcal{U}}^{(t)}, \mathbf{V}^{(t)}, \tilde{\mathcal{W}}^{(t)}) \leq O\left(\frac{1}{t^2}\right), \; \forall t.
+% 			$$
+\end{enumerate}
+\end{thm}
+\begin{proof}
+
+1. Suppose that for $\tilde{\mathcal{U}}^{(\infty)}$ there exists a $\triangle\tilde{\mathcal{U}}\neq \emptyset$ so that $f_1(\tilde{\mathcal{U}}^{(\infty)}+\triangle\tilde{\mathcal{U}}) = f_1(\tilde{\mathcal{U}}^{(\infty)})$ (otherwise, it conflicts with the fact of $\tilde{\mathcal{U}}^{(\infty)}$ being the limit point). From Lemma \ref{lem:phi}, $f_1(\tilde{\mathcal{U}}^{(\infty)}+\triangle\tilde{\mathcal{U}}) = f_1(\tilde{\mathcal{U}}^{(\infty)})$ is equivalent to $\tilde{\mathcal{U}}^{(\infty)}+\triangle\tilde{\mathcal{U}} = \tilde{\mathcal{U}}^{(\infty)}$, and thus $\triangle\tilde{\mathcal{U}}=\emptyset$, which conflicts with the assumption of $\triangle\tilde{\mathcal{U}}\neq \emptyset$. Therefore, there is no direction that can decrease $f_1(\tilde{\mathcal{U}}^{(\infty)})$, \ie $\nabla f_1(\tilde{\mathcal{U}}^{(\infty)})=\mathbf{0}$. Similarly we have $\nabla f_2(\mathbf{V}^{(\infty)})=\mathbf{0}$ and $\nabla f_3(\tilde{\mathcal{W}}^{(\infty)})=\mathbf{0}$. Therefore, $\left(\tilde{\mathcal{U}}^{(\infty)}, \mathbf{V}^{(\infty)}, \tilde{\mathcal{W}}^{(\infty)}\right)$ is a stationary point.
+
+2. Based on Def. \ref{defi:assumption} and Lemma \ref{lem:phi}, we have
+\begin{align}
+&\sqrt{\sum_{\mathbf{u}_{i,n}\in\tilde{\mathcal{U}}}\left\|\mathbf{u}_{i,n}^{(t)}-\mathbf{u}_{i,n}^{(\infty)}\right\|_2^2 + \left\|\mathbf{V}^{(t)}-\mathbf{V}^{(\infty)}\right\|_F^2 + \sum_{\mathbf{W}_{n,m}\in\tilde{\mathcal{W}}}\left\|\mathbf{W}_{n,m}^{(t)}-\mathbf{W}_{n,m}^{(\infty)}\right\|_F^2} \nonumber \\
+\leq & \sum_{\mathbf{u}_{i,n}\in\tilde{\mathcal{U}}}\left\|\mathbf{u}_{i,n}^{(t)}-\mathbf{u}_{i,n}^{(\infty)}\right\|_2 + \left\|\mathbf{V}^{(t)}-\mathbf{V}^{(\infty)}\right\|_F + \sum_{\mathbf{W}_{n,m}\in\tilde{\mathcal{W}}}\left\|\mathbf{W}_{n,m}^{(t)}-\mathbf{W}_{n,m}^{(\infty)}\right\|_F \nonumber \\
+= & \hspace{0mm}\sum_{\mathbf{u}_{i,n}\in\tilde{\mathcal{U}}}\left\|\sum_{k=t}^{\infty}\mathbf{u}_{i,n}^{(k)}-\mathbf{u}_{i,n}^{(k+1)}\right\|_2 + \left\|\sum_{k=t}^{\infty}\mathbf{V}^{(k)}-\mathbf{V}^{(k+1)}\right\|_F + \hspace{0mm} \sum_{\mathbf{W}_{n,m}\in\tilde{\mathcal{W}}}\left\|\sum_{k=t}^{\infty}\mathbf{W}_{n,m}^{(k)}-\mathbf{W}_{n,m}^{(k+1)}\right\|_F \nonumber \\
+\leq & \sum_{k=t}^{\infty}\left[\sum_{\mathbf{u}_{i,n}\in\tilde{\mathcal{U}}}\left\|\mathbf{u}_{i,n}^{(k)}-\mathbf{u}_{i,n}^{(k+1)}\right\|_2 + \left\|\mathbf{V}^{(k)}-\mathbf{V}^{(k+1)}\right\|_F + \sum_{\mathbf{W}_{n,m}\in\tilde{\mathcal{W}}}\left\|\mathbf{W}_{n,m}^{(k)}-\mathbf{W}_{n,m}^{(k+1)}\right\|_F\right] \nonumber \\
+\leq & \sum_{k=t}^{\infty}\left[\sum_{\mathbf{u}_{i,n}\in\tilde{\mathcal{U}}} \frac{L_{f_1}\theta_k}{1-\theta_k} + \frac{L_{f_2}\theta_k}{1-\theta_k} + \sum_{\mathbf{W}_{n,m}\in\tilde{\mathcal{W}}}\frac{L_{f_3}\theta_k}{1-\theta_k}\right] = O\left(\sum_{k=t}^{\infty}\frac{\theta_k}{1-\theta_k}\right). \nonumber
+\end{align}
+By combining this with Def.~\ref{def:gl_conv} and Def. \ref{defi:rate} we can complete the proof.
+\end{proof}
+
+\begin{cor}
+Let $\theta_t=\left(\frac{1}{t}\right)^p, \forall t$. Then when $p>1$, Alg. \ref{alg:bcd} will converge globally with order one.
+\end{cor}
+\begin{proof}
+\begin{align}
+\sum_{k=t}^{\infty}\frac{\theta_k}{1-\theta_k} = \sum_{k=t}^{\infty}\frac{1}{k^p-1} & \leq \int_{t^p-1}^{\infty}\frac{1}{x}d(x+1)^{\frac{1}{p}}=\frac{1}{p}\int_{t^p-1}^{\infty}\frac{1}{x}(x+1)^{\frac{1}{p}-1}dx \nonumber \\
+& \stackrel{\because p>1}{\leq}\frac{1}{p}\int_{t^p-1}^{\infty}x^{\frac{1}{p}-2}dx = (p-1)^{-1}(t^p-1)^{\frac{1}{p}-1}.
+\end{align}
+Since the sequence $\left\{(t^p-1)^{\frac{1}{p}-1}\right\}_{t=1}^{\infty}, \forall p>1$ converges to zero sublinearly with order one, by combining these with Def.~\ref{defi:rate} and Thm.~\ref{thm:BCD} we can complete the proof.
+% $$\sum_{k=t}^{\infty}\frac{\theta_k}{1-\theta_k} = \sum_{k=t}^{\infty}\frac{1}{k^2-1} \leq \int_{t}^{\infty}\frac{1}{2}\left[\frac{1}{k-1} - \frac{1}{k+1}\right] dk = \frac{1}{2}\int_{t-1}^{t+1} \frac{1}{k} dk = \frac{1}{2}\log\frac{t+1}{t-1} \leq \frac{1}{t-1}$$ and the sequence $\left\{\frac{1}{t}\right\}_{t=1}^{\infty}$ converges to zero sublinearly with order one, by combining these with Def.~\ref{defi:rate} and Thm.~\ref{thm:BCD} we can complete the proof.
+\end{proof}
+
+    
+\section{Conclusion}
+In this paper we first propose a novel Tikhonov regularization for training DNNs with ReLU as the activation functions. The Tikhonov matrix encodes the network architecture as well as parameterization. With its help we reformulate the network training as a block multi-convex minimization problem. Accordingly we further propose a novel block coordinate descent (BCD) based algorithm, which is proven to converge globally to stationary points with R-linear converge rate of order one. Our empirical results suggest that our algorithm does converge, is suitable for learning both dense and sparse networks, and may work better than traditional SGD based deep learning solvers. 
+    
+	
+\newpage{\small
+\bibliographystyle{ieee}
+\bibliography{egbib}
+}  
+	
+\end{document}

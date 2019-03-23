@@ -1,0 +1,481 @@
+\pdfoutput=1
+\documentclass{article}
+
+% if you need to pass options to natbib, use, e.g.:
+% \PassOptionsToPackage{numbers, compress}{natbib}
+% before loading nips_2018
+
+% ready for submission
+%\usepackage{nips_2018}
+
+% to compile a preprint version, e.g., for submission to arXiv, add
+% add the [preprint] option:
+% \usepackage[preprint]{nips_2018}
+% \usepackage{arxiv}
+% to compile a camera-ready version, add the [final] option, e.g.:
+% \usepackage[final]{nips_2018}
+
+% to avoid loading the natbib package, add option nonatbib:
+ \usepackage[nonatbib,preprint]{nips_2018}
+\usepackage{graphicx}
+\graphicspath{{figure/}}
+\usepackage{algorithm}
+\usepackage[noend]{algpseudocode}
+\usepackage{multirow}      
+\usepackage{multicol} 
+\usepackage{subfigure}
+\usepackage{amsmath}
+\usepackage[utf8]{inputenc} % allow utf-8 input
+\usepackage[T1]{fontenc}    % use 8-bit T1 fonts
+
+\usepackage{url}            % simple URL typesetting
+\usepackage{booktabs}       % professional-quality tables
+\usepackage{amsfonts}       % blackboard math symbols
+\usepackage{nicefrac}       % compact symbols for 1/2, etc.
+\usepackage{microtype}      % microtypography
+%\usepackage{floatrow}
+\usepackage{capt-of}
+\usepackage{hyperref}       % hyperlinks
+%\setcitestyle{square}
+\title{Hybrid Pruning: Thinner Sparse Networks for Fast Inference on Edge Devices}
+
+% The \author macro works with any number of authors. There are two
+% commands used to separate the names and addresses of multiple
+% authors: \And and \AND.
+%
+% Using \And between authors leaves it to LaTeX to determine where to
+% break the lines. Using \AND forces a line break at that point. So,
+% if LaTeX puts 3 of 4 authors names on the first line, and the last
+% on the second line, try using \AND instead of \And before the third
+% author name.
+
+\author{
+  Xiaofan Xu\thanks{Equal contribution}\qquad Mi Sun Park\footnotemark[1] \qquad Cormac Brick\\
+  Movidius, AIPG, Intel\\
+  \texttt{xu.xiaofan@intel.com\qquad mi.sun.park@intel.com} \\
+  %% examples of more authors
+  %% Address \\
+  %% \texttt{email} \\
+  %% \And
+  %% Coauthor \\
+  %% Affiliation \\
+  %% Address \\
+  %% \texttt{email} \\
+  %% \And
+  %% Coauthor \\
+  %% Affiliation \\
+  %% Address \\
+  %% \texttt{email} \\
+}
+
+\begin{document}
+% \nipsfinalcopy is no longer used
+
+\maketitle
+
+\begin{abstract}
+We introduce hybrid pruning which combines both coarse-grained channel and fine-grained weight pruning to reduce model size, computation and power demands with no to little loss in accuracy for enabling modern networks deployment on resource-constrained devices, such as always-on security cameras and drones. Additionally, to effectively perform channel pruning, we propose a \textit{fast sensitivity test} that helps us quickly identify the sensitivity of within and across layers of a network to the output accuracy for target multiplier–accumulators (MACs) or accuracy tolerance. Our experiment shows significantly better results on ResNet50 on ImageNet compared to existing work, even with an additional constraint of channels be hardware-friendly number.
+\end{abstract}
+\vspace{-5mm}
+\section{Introduction}
+Recently, with the increasing size of large-scale datasets and high-end GPUs, lots of unprecedented large DNN models were developed. Although these modern networks, such as VGG\cite{simonyan2014very}, GoogleNet\cite{szegedy2015going}, DenseNet\cite{huang2017densely} and ResNets\cite{he2016deep} show outstanding classification performance on ImageNet (even better than human), they are not easily deployable on resource-constrained inference devices due to large demands for memory, compute and power. 
+
+Network Pruning is to remove some redundant weights (or channels) which don’t contribute a lot to the output of a network. As a result, it reduces model size and helps preventing over-fitting, and eventually generate sparse (or thinner) model. %It is also known that network compression techniques like pruning and quantization helps preventing over-fitting, especially useful for transfer learning on small custom data. In this work, we focus on network pruning with combination of difference granularity of sparsity. 
+Weight pruning \cite{han2015learning}\cite{guo2016dynamic} show high compression rate on AlexNet (9 to 17.7$\times$) by pruning redundant weight or additionally allowing splicing of previously pruned weights. %Furthermore, these pruned/sparse models can give speed-up and consume less power on the custom hardware with high compression rate \cite{han2016eie}.
+Channel-pruning work \cite{Li2016PruningFF}\cite{Molchanov2016PruningCN}\cite{luo2017thinet}\cite{He_2017_ICCV}\cite{Liu2017learning} naively prune equal percentage of number of channels based on their own calculation of importance of channels. Although the one goal of identifying importance of channels, remove those that are relatively less important and fine-tune the pruned network is the same for all these works, none of these work has considered the fact that each network has different sensitivity within and across layers to output accuracy. Therefore, evenly prune 50\% of channels in all the layers results in significant accuracy drop.  
+%that not same percentage of channels within layer and across layers have equal influence on output. %Existing works evenly prune each layer with same target sparsity regardless of their sensitivity to pruning (e.g. evenly prune 50\% of channels in each layer). 
+To overcome the limitation, we propose a fast sensitive test for identifying corresponding number of channels in each layer for a given accuracy tolerance or target MACs. We also apply weight pruning on channel pruned thinner model to further reduce model size and computation. This hybrid pruning eventually generates thinner sparse model. To the best of our knowledge, this is the first to show that the coexistence of multi granularity of sparsity can help significantly reduce resource demands with no significant loss in accuracy, and gives SOTA result on thinner ResNet50 on ImageNet, with channels be multiple of 8. %even with an additional constraint of channels be multiple of 8 for optimal hardware utilization.
+
+%Our experiment shows better result on thin ResNet50 compared to existing works and it is in fact the first work that combined both channel and weight pruning.   
+
+\section{Hybrid Pruning}
+\label{sec:hybrid}
+In this work, we applied both coarse-grained channel and fine-grained weight pruning on convolutional layers for various types of neural networks. We call this combination hybrid pruning. Figure \ref{fig:overview} illustrates the process for one convolutional layer using hybrid pruning resulting in a thinner sparse model.
+
+\begin{figure*}[!htbp]
+\vspace{-2mm}
+\begin{center}
+\includegraphics[width=0.5\linewidth,height=15mm]{hybrid.png}
+\end{center}
+\caption{Pictorial view of our proposed hybrid pruning}
+\label{fig:overview}
+\vspace{-2mm}
+\end{figure*} 
+
+\textbf{Sensitivity-aware channel pruning:} %Figure\ref{fig:overview} shows the pictorial view of our proposed hybrid pruning where weight pruning is applied on channel pruned thinner network. 
+In general, one big challenge in channel pruning is that if we naively decide the number of channels to prune away based on target sparsity, it will leads to significant loss in accuracy as shown in  \cite{Li2016PruningFF}\cite{Molchanov2016PruningCN}\cite{luo2017thinet}\cite{He_2017_ICCV}\cite{Liu2017learning} regardless of their filter or channel selection. For ResNet50 on ImageNet, \cite{He_2017_ICCV} and \cite{luo2017thinet} reported that for 50\% compression in parameters gives 1.4 to 1.1 drop @top5 which is significant loss considering this is top5, not even top1. 
+%\cite{luo2017thinet} use naive channel pruning technique for ResNet50 (i.e. evenly prune 50\% of the channels on each target layer), this method introduces huge accuracy drop for the initial pruned model by overkill too much information without knowing which layer is more sensitive to pruning than others, therefore a heavy fine-tuning process is required to recover the accuracy, or it may not be able to fully recover it at all. Moreover, some redundant layers can prune more than 50\% of the channels without any or very little accuracy drop, but naive pruning cannot take this into account. Furthermore, each network (i.e. VGG, ResNet, MobileNet, etc) has different network-wise and layer-wise sensitivity for pruning. 
+As Algorithm \ref{alg:sensitiveytest} shows, our proposed fast sensitivity test helps us quickly identify the sensitivity of each layer in a network for a given accuracy tolerance. The basic idea is to find the upper bound in the percentage of the number of intact output channels in each layer with potential recoverable loss in accuracy with fine-tuning. This was inspired by the observation that when we damage the network too much by pruning more than acceptance, it becomes more difficult to recover its accuracy. From our experiments, accuracy tolerance of 3 to 5\% works well for ResNet50 on ImageNet. %Furthermore, based on the layer-wise sensitivity from the test and target MACs, the final \# of channels are calculated with an additional constraint of channels be hardware-friendly number. 
+Furthermore, since we know number of channels and required MACs in an original network and the relative sensitivity of each layer from the test, we can calculate the final number of channels for target MACs by multiplying the pruning percentage with the original channel number, with an additional constraint of channels be hardware-friendly number.
+It should be also noted that the sensitivity test itself does not require any training and it only takes 8.86 minutes on 1-CPU Intel Core i7-6850K CPU and 3.38 seconds on GPU GTX-1080-Ti Pascal for conducting this test on ResNet50 on ImageNet. Unlike the existing works AutoML\cite{he2018amc} and\cite{chin2018layer}, our method doesn't require any extra training for new models or meta-learning, and it is compatible with any frameworks. It can help users to quickly identify the pruning channels without large GPU resources.
+
+
+
+
+%, therefore it gives us final must-have channels in the form of hardware-friendly numbers (e.g multiple of 8 in our ResNet50 case) for target MACs. Our proposed sensitivity test is summarized in as Algorithm \ref{alg:sensitiveytest}. Base on the percentage value for each layer achieved from the algorithm and target MACs, each layer in the model can be efficiently pruned and then fine-tuned with few epochs to fully recover the original accuracy for a thinner dense network. 
+
+
+
+
+%Our channel mask based fast sensitivity test does not require training to determine important channels in each layer and across layers. It can be done during inference time and only requires few minutes to run
+
+%Therefore we introduce sensitivity test for each layer in the model in order to efficiently prune our models with minimum accuracy drop before the fine-tuning start. 
+
+%Our sensitivity test does not require any training procedure and it takes only 8.86 minutes on 1-CPU Intel Core i7-6850K CPU and 3.38 seconds on GPU GTX-1080-Ti Pascal for all layers in the whole ResNet50 architecture. The Algorithm\ref{alg:sensitiveytest} shows the steps required for performing the sensitivity test. Base on the percentage value achieved from the algorithm, each layer in the model can be efficiently pruned, moreover the fine-tuning stage will be much less compare to the naive pruning method.
+
+
+\vspace{-2mm}
+\begin{algorithm}
+\caption{Fast sensitivity test for channel pruning}
+\scriptsize
+\textbf{Input:} Validation data and a dense model $M$.
+
+\textbf{Output:} Pruning percentage for each layer in the model $M$. %Or, compact \# of channels of each layer for channel pruning
+\begin{algorithmic}[1]
+\State Threshold accuracy = original dense accuracy - accuracy tolerance (e.g. 3 - 5\%)
+\For{each layer in the model $M$}
+\State sort output channels based on the sum of absolute weight values % in each output channel
+\For{sparsity percentage in between 30\% - 80\%}
+\State channel-wise mask is created based on the current sparsity percentage
+\State accuracy = \textbf{Forward} the network with $channel \times mask$
+\If{accuracy > Threshold accuracy}
+\State continue;
+\Else 
+\State Record the \textbf{per-layer} percentage and exit the for loop
+\EndIf
+\EndFor
+\State \textbf{end for}
+\EndFor
+\State \textbf{end for}
+\end{algorithmic}
+\textbf{Note:} Final number of channels per-layer = round((100\% - pruning \% per-layer) $\times$ original number of channels per-layer), with round(.) to be multiple of 8 or 4. 
+
+\label{alg:sensitiveytest}
+\end{algorithm}
+\vspace{-2mm}
+
+
+\textbf{Statistics-aware weight pruning:} %It is observed that different granularity of sparsity can coexist in a network for maximum reduction in model size as well as computation. While channel pruning generates thinner dense model, weight pruning generates sparse model. 
+After generating thinner dense model from sensitivity-aware channel pruning, we apply statistics-aware weight pruning on the thinner model for further reduction in model size and computation. The basic idea is to compute layer-wise weight threshold based on the current statistical distribution of full dense weights in each layer and mask out those weights that are less than the threshold. To do so, we use layer-wise $mask_{l}^{n}$ to represent the binary mask for $l^{th}$ layer at $n^{th}$ iteration, shown in Equation \ref{eq:mask}. This binary mask is dynamically updated in each iteration of training based on the threshold that is computed based on the mean and standard deviation of the weights in each layer with sparsity level controlling factor $\sigma$ ($\sigma$ is the same for all the layers). Since we sparsify weights in forward pass and update full dense weights with the gradients computed with sparse weights during training, it allows previously pruned weights back if it becomes more important ($ |W_{l}^{n}(i,j)| > t_{l}^{n}$), similar to \cite{guo2016dynamic}. Our experiment shows that our statistics-aware method works better than sparsifying all the layers with the same sparsity level.
+
+%As shown in Equation \ref{eq:threshold}, the threshold $t_{l}^{n}$ is computed based on the mean and standard deviation of weights in each layer, and $\sigma$ which control the sparsity level ($\sigma$ is the same for all the layers). Since each layer has different weight distribution, our statistics-aware method works better than sparsifying all the layers with the same sparsity level. 
+
+
+
+%Threshold $t_{l}^{n}$ has significant impact on the compression rate. Equation \ref{eq:threshold} illustrate the formula where $\sigma$ is a parameter to control the sparsity level. This method can ensure the important connections always remain in the network, wrongly pruned connections can recover back during training. Furthermore, it makes the model more robust and loss much less accuracy after pruning.
+
+%and moreover we have a copy of the $W_{l}^{n}$ saved in the model during training, any pruned weights can come back alive if it becomes more important (i.e., $ |W_{l}^{n}(i,j)| > t_{l}^{n}$ where $t_{l}^{n}$ indicates the threshold for the $l^{th}$ layer at $n^{th}$ iteration). Threshold $t_{l}^{n}$ has significant impact on the compression rate. Equation \ref{eq:threshold} illustrate the formula where $\sigma$ is a parameter to control the sparsity level. This method can ensure the important connections always remain in the network, wrongly pruned connections can recover back during training. Furthermore, it makes the model more robust and loss much less accuracy after pruning.
+
+%The goal for our work is to apply hybrid pruning which the weight pruning is applied after the channel pruning is performed. We introduce a binary mask to represent the part of the model connections are pruned away. 
+%We use $mask_{l}^{n}$ to represent the binary mask for $l^{th}$ layer at $n^{th}$ iteration shown in Equation\ref{eq:mask}. This binary mask is dynamic which illustrate it is changing during the training with different iteration $n$ similar as \cite{guo2016dynamic} and moreover we have a copy of the $W_{l}^{n}$ saved in the model during training, any pruned weights can come back alive if it becomes more important (i.e., $ |W_{l}^{n}(i,j)| > t_{l}^{n}$ where $t_{l}^{n}$ indicates the threshold for the $l^{th}$ layer at $n^{th}$ iteration). Threshold $t_{l}^{n}$ has significant impact on the compression rate. Equation\ref{eq:threshold} illustrate the formula where $\sigma$ is a parameter to control the sparsity level. This method can ensure the important connections always remain in the network, wrongly pruned connections can recover back during training. Furthermore, it makes the model more robust and loss much less accuracy after pruning.
+
+% Threshold $t_{l}^{n}$ is the key for measuring importance and it has significant impact on the compression rate. We have tried several experiments to find the best and easiest way of generating $t_{l}^{n}$ and we decided to use $t_{l}^{n}$ as shown in Equation\ref{eq:threshold}, $\sigma$ is a parameter to control the sparsity level $s$, when $\sigma = 0$, $t_{l}^{n}$ is the mean of absolute value for $W_{l}^{n}$ (i.e., $t_{l}^{n} = mean(|W_{l}^{n}|)$). From different experiments and studying from the papers\cite{han2015learning}\cite{guo2016dynamic}, we learned large magnitude weights are more important than the smaller ones, therefore we keep the ones that are bigger than current threshold unpruned during the current iteration.
+%as shown in Equation\ref{eq:pruneweights}. 
+
+\begin{equation}
+\vspace{-2mm}
+%\scriptsize
+mask_{l}^{n}(i,j) = \begin{cases}
+0 & \text{ if } \left | W_{l}^{n}(i,j) \right|   <   t_{l}^{n} \\ 
+1 & \text{ if } \left | W_{l}^{n}(i,j) \right|  \geq  t_{l}^{n}
+\end{cases}
+\label{eq:mask}
+, \quad  t_{l}^{n} = mean(|W_{l}^{n}|) + std(|W_{l}^{n}|)\times \sigma
+\vspace{-2mm}
+\end{equation}
+
+%\begin{equation}
+%t_{l}^{n} = mean(|W_{l}^{n}|) + std(|W_{l}^{n}|)\times \sigma
+%\label{eq:threshold}
+%\vspace{-2mm}
+%\end{equation}
+
+%\begin{equation}
+%SW_{l}^{n}(i,j) = \begin{cases}
+%0 & \text{ if }  mask_{l}^{n}(i,j) = 0 \\ 
+%W_{l}^{n}(i,j) & \text{ if }  mask_{l}^{n}(i,j) = 1
+%\end{cases}
+%\label{eq:pruneweights}
+%\end{equation}
+
+
+\section{Experiments}
+%In order to analyze the performance of our methods, we have conducted several experiments covering small dataset Cifar10\cite{krizhevsky2009learning} and large dataset ImageNet\cite{deng2009imagenet} on the state of the art networks including ResNets50\cite{he2016deep} and ResNet56 for Cifar10. Furthermore, we compared our methods with the existing methods and our results outperforming most of them.
+
+%We have conducted several experiments on ResNet56 and ResNet50 for different granularity of sparsity on Cifar10 and ImageNet respectively. 
+In this section, we show the effectiveness of our proposed fast sensitivity test for channel pruning that can give instant speedup on existing hardware, and moreover demonstrate the coexistence of multi granularity of sparsity can help significantly reduce resource demands for fast inference on edge devices. % which we have validated on multiple hardware devices. It is also shown that the coexistence of multi granularity can help to further reduce resource demands for edge devices. % which we have validated on multiple hardware devices. And it also demonstrate that (2) different granularity can coexist to further reduce resource demands for edge devices.
+For fair comparison, similar to previous work \cite{Li2016PruningFF}\cite{luo2017thinet}, we do not prune the first Conv, the last FC layer and the last layer in each residual block. 
+
+
+\textbf{ResNet56 on Cifar10:} 
+Table\ref{tab:hybridcifar} shows the result of our hybrid pruning on (bottleneck based) ResNet56. %The original output \# of channels in each layer as well as the survived channels after channel pruning. 
+Our hybrid pruning contains the channel pruning shown in Figure\ref{fig:channelprune56}, it should be noted that in Figure\ref{fig:channelprune56} and \ref{fig:channelprune50}, the first Conv, the last FC and the last layer in each residual block are omitted for clarity, since these layers are intact and have no reduction in output channels, compared to original network (blue dots). The number of survived channels (red dots) in each layer are predetermined from the sensitivity test with accuracy tolerance of 2\% to be conservative in accuracy loss. Furthermore, we added an additional constraint of channels be multiple of 4 for optimal hardware utilization. %It is observed that most of the layers are pruned up to 60\% and \textbf{few particular layers where \# of output channels are doubled up, are more sensitive than the others}. 
+As a result, most of the layers can be pruned up to 75\% with no significant loss in accuracy. It is also observed that those few layers that have increased output channels (compared to previous layer) are more sensitive. 
+After achieving 2.4$\times$ instant speedup based on channel pruning, our hybrid pruning gives final 4.5$\times$ reduction in parameters (additional 1.8$\times$ reduction on thinner ResNet56) with less than 1\% accuracy drop. Hybrid pruning is only applied on the convolutional layers to boost the model to 78\% sparsity and it can be further pruned by applying weight pruning on the FC layer.  
+
+
+
+%Experiments are being performed on Cifar10 using hybrid pruning. The results are shown in Table\ref{tab:hybridcifar}. Figure\ref{fig:channelprune56} shows the number of channels in the original ResNet56 and networks after coarse grained-pruning. The red line shows the channels for layers in the pruned layers which they are determined by the sensitivity test. 
+
+%It can be seen that most of the layers are pruned around 80\%. This leads the parameters in the pruned model after coarse grained dropped from 0.87M to 0.27M with in 2\% accuracy loss. Details are shown in Table\ref{tab:hybridcifar}. We further boost the model to 90.75\% for hybrid pruning by using weight pruning for all the convolutional layers in the model. This reduced almost 50\% of the weights again on top of the coarse-grained pruning model.
+
+
+
+
+
+\begin{table*}[!htbp]
+\vspace{-3mm}
+	\resizebox{\columnwidth}{!}{%
+
+	\resizebox{0.5\columnwidth}{!}{%
+\begin{minipage}[b]{0.5\linewidth}
+\centering
+\includegraphics[ width=65mm,height=25mm]{plotresnet56_new.png}
+\captionof{figure}{Number of output channels in ResNet56}
+\label{fig:channelprune56}
+\end{minipage}\hfill
+}
+\resizebox{0.5\columnwidth}{!}{%
+\begin{minipage}[H]{0.65\linewidth}
+\centering
+\vspace{-40mm}
+\caption{Hybrid pruning on ResNet56 on Cifar10 with comparison to other works}
+\scriptsize 
+\begin{tabular}{cccc}
+\hline
+ & \begin{tabular}[c]{@{}c@{}}Top 1 (\%)\\ Baseline $\rightarrow$Pruned\end{tabular} & \begin{tabular}[c]{@{}c@{}}No. of Params\\ Baseline$\rightarrow$Pruned\end{tabular} & \begin{tabular}[c]{@{}c@{}}Sparsity (\%)\\ Baseline$\rightarrow$Pruned\end{tabular} \\ \hline
+PF\cite{Li2016PruningFF} & 93.04$\rightarrow$91.31 & 0.73M$\rightarrow$- & 0$\rightarrow$13.7 \\ \hline
+SFP\cite{he2018soft} & 93.59$\rightarrow$92.26 & - & - \\ \hline
+CP\cite{He_2017_ICCV} & 92.8$\rightarrow$91.8 & - & - \\ \hline
+\begin{tabular}[c]{@{}c@{}}Our\\ Channel Pruning\end{tabular} & 93.27$\rightarrow$92.67 & 0.59M$\rightarrow$0.24M & 0$\rightarrow$59 \\ \hline
+\begin{tabular}[c]{@{}c@{}}Our\\ Hybrid Pruning\end{tabular} & 93.27$\rightarrow$\textbf{92.48} & 0.59M$\rightarrow$\textbf{0.13M} & 0$\rightarrow$\textbf{78} \\ \hline
+\end{tabular}
+ 
+   \label{tab:hybridcifar}
+\end{minipage}
+}
+\vspace{-5mm}
+}
+%\caption{Hybrid pruning on ResNet56 using Cifar10.}
+\end{table*}
+
+
+%\begin{tabular}{cccc}
+%\hline
+%\multicolumn{1}{|c|}{} & \multicolumn{1}{c|}{Top 1 (\%)} & \multicolumn{1}{c|}{\#Params} & \multicolumn{1}{c|}{Sparsity(\%)}\\ \hline
+%\multicolumn{1}{|c|}{Baseline} & \multicolumn{1}{c|}{93.27} & \multicolumn{1}{c|}{0.59M}  & \multicolumn{1}{c|}{0}\\ \hline
+%\multicolumn{1}{|c|}{Coarse-grained Pruning} & \multicolumn{1}{c|}{92.67} & \multicolumn{1}{c|}{0.24M}
+%& \multicolumn{1}{c|}{59}\\ \hline
+%\multicolumn{1}{|c|}{Hybrid Pruning} & \multicolumn{1}{c|}{92.48} & \multicolumn{1}{c|}{0.13M} 
+%& \multicolumn{1}{c|}{78}\\ \hline
+%\end{tabular}
+ 
+
+
+
+%\begin{figure}[!htbp]
+%\begin{center}
+%\includegraphics[width=0.65\linewidth,height=60mm]{plots}
+%\end{center}
+%\caption{Number of output channels for layers in ResNet56 before and after pruning.}
+%\label{fig:channelprune}
+%\end{figure}
+
+
+%\begin{figure}[!htbp]
+%	\vspace{-5mm}
+%	\begin{center}
+%    \subfigure[]{
+%  \includegraphics[width=0.45\linewidth,height=45mm]{plotresnet56.png}
+ % \caption{Samples from Semi-Synthetic dataset.}
+%  \label{fig:channelprune56}}
+%  \subfigure[]{  
+%  \includegraphics[width=0.45\linewidth,height=45mm]{plotresnet50.png}
+%  \caption{Samples from Semi-Synthetic dataset.}
+%  \label{fig:channelprune50}}
+%   \subfigure[]{  
+%  \includegraphics[width=0.45\linewidth,height=45mm]{plotresnet50precent.png}
+%  \caption{Samples from Semi-Synthetic dataset.}
+%  \label{fig:channelprune50precent}}
+%  \end{center}
+ % 	\vspace{-3mm}
+ % \caption{Number of output channels for layers in ResNet before and after pruning using sensitivity test: (a) ResNet56 on Cifar10; (b) ResNet50 on ImageNet (c) Pruning \% for sensitivety test and ThiNet\cite{luo2017thinet}.}
+ % \label{fig:channelprune}
+%\end{figure}
+
+
+
+
+%\begin{table}[htb]
+%	\vspace{-3mm}
+%\caption{Hybrid Pruning on ResNet56 on Cifar10. \label{tab:hybridcifar}}
+%	\resizebox{\columnwidth}{!}{%
+%\begin{center}
+%\begin{tabular}{|c|c|c|c|}
+%\hline
+%\multirow{2}{*}{}  & \multicolumn{3}{c|}{Our Hybrid Pruning} \\ \cline{2-4} 
+%& Top 1 (\%) & \# Params & Sparsity (\%)\\ \hline
+%Baseline  &92.34 & 0.87M &0 \\ \hline
+%Channel Pruning  &90.49 & 0.27M & 69\\ \hline
+%Hybrid Pruning (thinner + sparse) &90.75 & 0.14M &84\\ \hline
+%\end{tabular}
+%\end{center}
+%	}
+%\end{table}
+
+
+
+%\iffalse
+%\begin{table}[htb]
+%	\vspace{-3mm}
+%\caption{Hybrid Pruning on ResNet56 on Cifar10. \label{tab:hybridcifar}}
+%	\resizebox{\columnwidth}{!}{%
+%\begin{center}
+%\begin{tabular}{|c|c|c|c|c|c|c|}
+%\hline
+%\multirow{2}{*}{} & \multicolumn{3}{c|}{ResNet56\cite{Li2016PruningFF}} & \multicolumn{3}{c|}{ResNet56 Our Methods} \\ \cline{2-7} 
+%& Top 1 (\%) & \# Params & Sparsity (\%) & Top 1 (\%) & \# Params & Sparsity (\%)\\ \hline
+%Baseline & 93.04 & 0.85M & 0 &92.34 & 0.87M &0 \\ \hline
+%Coarse-grained Pruning & 93.06 (+0.02) & 0.73M &14 &90.49 (-1.85) & 0.27M & 69\\ \hline
+%Hybrid Pruning (thinner + sparse) & -& -& -&90.75 (-1.59) & 0.14M &84\\ \hline
+%\end{tabular}
+%\end{center}
+%	}
+%\end{table}
+%\fi
+
+\textbf{ResNet50 on ImageNet:}
+Figure\ref{fig:channelprune50} shows the output channels of pruned ResNet50 using ImageNet.The experiment was intended for 2$\times$MAC reduction based on the sensitivity test with a constraint of channels be multiple of 8. %\textbf{This coarse-grained pruned model is tested on different devices and achieve$\sim1.5\times$ speedup shown in Table\ref{tab:clocktime}}. 
+It is observed that, similar to ResNet56, those few layers that have increased output channels (compared to previous layer) are more sensitive. Interestingly, unlike ResNet56, the last few layers that have the most number of channels are also sensitive. From this observation, we can infer that although network structure looks similar, it might be safe to assume that each network has different sensitivity and it's also different across layers within a network, therefore it's important to have a such technique that can help us to quickly identify the sensitivity of a network. As Table \ref{tab:imagenet} shows, our sensitivity based channel pruning method outperformed the existing naive methods with large margin. Even our hybrid ResNet50 gives better accuracy with less number of parameters (3.7$\times$ reduction in parameters). In addition to parameter storage and bandwidth savings, both key for edge devices, our hybrid model can further boost the performance on any hardware with sparse matrix support.
+
+\begin{figure}[!htbp]
+\vspace{-6mm}
+\begin{center}
+\includegraphics[width=0.65\linewidth,height=25mm]{plotresnet50_new.png}
+\end{center}
+\vspace{-3.5mm}
+\caption{Number of output channels in ResNet50}
+\vspace{-2mm}
+\label{fig:channelprune50}
+\end{figure}
+
+%\begin{table*}[!htbp]
+%\vspace{-3mm}
+%	\resizebox{\columnwidth}{!}{%
+
+%	\resizebox{0.5\columnwidth}{!}{%
+%\begin{minipage}[b]{0.5\linewidth}
+%\centering
+%\includegraphics[ width=65mm,height=25mm]{plotresnet50_new.png}
+%\captionof{figure}{Number of output channels in ResNet50}
+%\label{fig:channelprune50}
+%\end{minipage}\hfill
+%}
+%\resizebox{0.5\columnwidth}{!}{%
+%\begin{minipage}[H]{0.5\linewidth}
+%\centering
+%\vspace{-40mm}
+%\caption{FPS/Watt analysis for ResNet50 on different devices. Power numbers are taken from each device's official website.}
+%\scriptsize 
+%\begin{tabular}{|c|c|c|}
+%\hline
+%\multirow{2}{*}{Device} & \multicolumn{2}{c|}{FPS/Watt (higher the better)} \\ \cline{2-3} 
+% & Baseline & Our Coarse-grained model \\ \hline
+%Nvidia Titan-X & 0.41 & 0.54 (1.3$\times$) \\ \hline
+%\begin{tabular}[c]{@{}c@{}}Intel® Core$^{TM}$\\  i7-5930K\end{tabular} & 0.08 & 0.13 (1.6$\times$) \\ \hline
+%Intel® Movidius$^{TM}$ NCS & 4.61 & 6.93 (1.5$\times$) \\ \hline
+%\end{tabular}
+ 
+%   \label{tab:clocktime}
+%\end{minipage}
+%}
+%\vspace{-5mm}
+%}
+%\end{table*}
+
+\begin{table}[!htb]
+\vspace{-2mm}
+\centering
+\caption{Hybrid Pruning on ResNet50 on ImageNet with comparison to other works\label{tab:imagenet}}
+\resizebox{\columnwidth}{!}{%
+%\begin{center}
+\begin{tabular}{cccccccccc}
+\hline
+ & \begin{tabular}[c]{@{}c@{}}Top 1 (\%)\\ Baseline\end{tabular} & \begin{tabular}[c]{@{}c@{}}Top 1 (\%)\\ Channel Pruning\end{tabular} & \begin{tabular}[c]{@{}c@{}}Top 1 (\%)\\ Hybrid Pruning\end{tabular} & \begin{tabular}[c]{@{}c@{}}Top 5 (\%)\\ Baseline\end{tabular} & \begin{tabular}[c]{@{}c@{}}Top 5 (\%)\\ Channel Pruning\end{tabular} & \begin{tabular}[c]{@{}c@{}}Top 5 (\%)\\ Hybrid Pruning\end{tabular} & Original No. of Params & \begin{tabular}[c]{@{}c@{}}No. of Params\\ (Coarse-grained Pruning)\end{tabular} & \begin{tabular}[c]{@{}c@{}}No. of Params\\ (Hybrid Pruning)\end{tabular} \\ \hline
+CP\cite{He_2017_ICCV} & - & - & - & 92.2 & 90.8 & - & - & 2$\times$ reduction & - \\ \hline
+NISP\cite{yu2017nisp} & - & 0.21\% reduction & - & - & - & - & - & 27.12\% reduction & - \\ \hline
+SPP\cite{wang2017structured} & - & - & - & 91.2 & 90.4 & - & - & 2$\times$ reduction & - \\ \hline
+ThiNet\cite{luo2017thinet} & 72.88 & 71.01 & - & 91.14 & 90.02 & - & 25.5M & 12.38M & - \\ \hline
+SFP\cite{he2018soft} & 76.15 & 74.61 & - & 92.87 & 92.06 & - & - & 30\% reduction & - \\ \hline
+Ours & 76.01 & \textbf{74.87} & \textbf{74.32} & 92.93 & \textbf{92.43} & \textbf{92.05} & 25.5M & \begin{tabular}[c]{@{}c@{}}17.2M \\ (32.5\% reduction)\end{tabular} & \textbf{\begin{tabular}[c]{@{}c@{}}6.9M \\ (72.9\% reduction)\end{tabular}} \\ \hline
+\end{tabular}
+%\end{center}
+}
+\vspace{-4mm}
+\end{table}
+%We further conduct our experiments using ResNet50 on ImageNet dataset and Table\ref{tab:imagenet} shows the results of our fine-grained, coarse-grained and hybrid pruning. After hybrid pruning our top 1 and top 5 accuracy only drop 1.69\% and 0.88\% respectively from the baseline accuracy. Moreover, the number of parameters reduce from 25.5 million to 6.9 million which introduce 73\% sparsity in the final model. Our coarse-grained method outperforming \cite{luo2017thinet} based on our method explained in Section\ref{sec:hybrid} and require much less epochs of fine-tuning. The coarse-grained model reduce the number of FLOPS from 7.66G to 3.83G, resulting in an instant speedup of  $\sim1.5\times$ which we have validated on multiple hardware devices. In addition to parameter storage and bandwidth savings, both key for edge devices, our hybrid model can further boost the performance on any hardware with sparse matrix support.
+
+
+
+%\begin{table}[htb]
+%	\vspace{-2mm}
+%\centering
+%\caption{Hybrid Pruning on ResNet50 on ImageNet \label{tab:imagenet}}
+%\resizebox{\columnwidth}{!}{%
+%\begin{center}
+%\begin{tabular}{|c|c|c|c|c|c|c|c|c|c|}
+%\hline
+%\multirow{2}{*}{} & \multicolumn{3}{c|}{CP\cite{He_2017_ICCV}} & \multicolumn{3}{c|}{ThiNet\cite{luo2017thinet}} & \multicolumn{3}{c|}{Our Hybrid Pruning} \\ \cline{2-10} 
+% & Top 1 (\%) & Top 5 (\%) & \#Params & Top 1 (\%) & Top 5 (\%) & \#Params & Top 1 (\%) & Top 5 (\%) & \#Params \\ \hline
+%Baseline & - & 92.2 & - & 72.88 & 91.14 & 25.5M & 76.01 & 92.93 & 25.5M \\ \hline
+%%Fine-grained Pruning & 76.35 & 93.15 & 7.47M & - & - & - & 75.68 & 92.72 & 5.1M \\ \hline
+%Coarse-grained Pruning & - & 90.8 & 2x reduction & 71.01 & 90.02 & 12.38M & 74.87 & 92.43 & 17.2M \\ \hline
+%Hybrid Pruning (thinner + sparse) & - & - & - & - & - & - & 74.32 & 92.05 & 6.9M \\ \hline
+%\end{tabular}
+%\end{center}
+%}
+%	\vspace{-3mm}
+%\end{table}
+
+
+
+\iffalse
+\begin{table}[htb]
+	\vspace{-2mm}
+\centering
+\caption{Comparsion of ResNet50 on ImageNet using different methods. \label{tab:imagenet}}
+\resizebox{\columnwidth}{!}{%
+\begin{center}
+\begin{tabular}{|c|c|c|c|c|c|c|c|c|c|}
+\hline
+\multirow{2}{*}{} & \multicolumn{3}{c|}{Han's thesis\cite{han2017efficient}} & \multicolumn{3}{c|}{ThiNet\cite{luo2017thinet}} & \multicolumn{3}{c|}{Our Methods} \\ \cline{2-10} 
+ & Top 1 (\%) & Top 5 (\%) & No. Param & Top 1 (\%) & Top 5 (\%) & No. Param & Top 1 (\%) & Top 5 (\%) & No. Param \\ \hline
+Baseline & 76.15 & 92.87 & 25.5M & 72.88 & 91.14 & 25.5M & 76.01 & 92.93 & 25.5M \\ \hline
+Fine-grained Pruning & 76.35 & 93.15 & 7.47M & - & - & - & 75.68 & 92.72 & 5.1M \\ \hline
+Coarse-grained Pruning & - & - & - & 71.01 & 90.02 & 12.38M & 74.87 & 92.43 & 17.2M \\ \hline
+Hybrid Pruning (thinner + sparse) & - & - & - & - & - & - & 74.32 & 92.05 & 6.9M \\ \hline
+\end{tabular}
+\end{center}
+}
+	\vspace{-3mm}
+\end{table}
+\fi
+
+
+\section{Conclusion}
+In this paper, we introduced hybrid pruning that combined both coarse-grained and fine-grained pruning to enable modern networks deployment on edge devices. To the best of our knowledge, this work is the first to show that the coexistence of multi granularity of sparsity can help significantly reduce resource demands with no significant loss in accuracy. 
+We also proposed a new \textit{fast sensitivity test} technique, which helps us quickly identify the sensitivity of a network to the output accuracy for a given accuracy tolerance or target MACs.  
+
+%It only takes 3.38 seconds on GPU for the complete test. 
+
+
+%In this work we, introduced a new \textit{fast sensitivity test} technique that helps ones to quickly determine the percentage of must-have channels for coarse-grained pruning given target MACs. It only takes 3.38 seconds on GPU for the test. Furthermore, we combined coarse-grained pruning with fine-grained pruning and tested using both ImageNet and Cifar10 on ResNet50 and ResNet56 respectively. Our hybrid ResNet50 contains only 6.9M parameters and achieves 74.32\% top1 accuracy on ImageNet.
+\bibliographystyle{ieee}
+\bibliography{egbib}
+%\input{nips_2018.bbl}
+
+
+
+
+
+\end{document}

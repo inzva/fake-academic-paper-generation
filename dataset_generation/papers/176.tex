@@ -1,0 +1,818 @@
+\documentclass{article}
+
+% if you need to pass options to natbib, use, e.g.:
+% \PassOptionsToPackage{numbers, compress}{natbib}
+% before loading nips_2018
+
+% ready for submission
+%\usepackage[final]{nips_2018}
+
+% to compile a preprint version, e.g., for submission to arXiv, add
+% add the [preprint] option:
+% \usepackage[preprint]{nips_2018}
+
+% to compile a camera-ready version, add the [final] option, e.g.:
+% \usepackage[final]{nips_2018}
+
+% to avoid loading the natbib package, add option nonatbib:
+% \usepackage[nonatbib]{nips_2018}
+\usepackage{geometry}
+    %\usepackage{showframe} %This line can be used to clearly show the new margins
+
+\newgeometry{vmargin={15mm}, hmargin={35mm,35mm}}   % set the margins
+
+\usepackage[utf8]{inputenc} % allow utf-8 input
+\usepackage[T1]{fontenc}    % use 8-bit T1 fonts
+\usepackage{hyperref}       % hyperlinks
+\usepackage{url}            % simple URL typesetting
+\usepackage{booktabs}       % professional-quality tables
+\usepackage{amsfonts}       % blackboard math symbols
+\usepackage{nicefrac}       % compact symbols for 1/2, etc.
+\usepackage{microtype}      % microtypography
+
+\usepackage{amsmath,amsthm}
+\usepackage{color}
+\usepackage{graphicx}
+\usepackage{ulem}
+\usepackage{accents}
+\usepackage{soul}
+
+\newcommand\xmod[1]{{\textcolor{blue}{#1}}}
+\newcommand{\dx}{\dot \mathbf{x}}
+\newcommand{\w}{\mathbf{w}}
+\newcommand{\vi}{\mathbf{v}}
+\newcommand{\g}{\mathbf{g}}
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\I}{\mathcal{I}}
+\newcommand{\Ll}{\mathcal{L}}
+\newcommand{\ubar}[1]{\underaccent{\bar}{#1}}
+
+\newtheorem{thm}{Theorem}
+\newtheorem{prop}{Proposition}
+\newtheorem{remark}{Remark}
+
+\usepackage{algorithm}
+\usepackage[noend]{algpseudocode}
+
+%\title{Smeared Gradient Descent}
+\title{Deep Neural Nets with Interpolating Function as Output Activation}
+
+% The \author macro works with any number of authors. There are two
+% commands used to separate the names and addresses of multiple
+% authors: \And and \AND.
+%
+% Using \And between authors leaves it to LaTeX to determine where to
+% break the lines. Using \AND forces a line break at that point. So,
+% if LaTeX puts 3 of 4 authors names on the first line, and the last
+% on the second line, try using \AND instead of \And before the third
+% author name.
+
+\author{
+  Bao Wang \\
+  Department of Mathematics\\
+  University of California, Los Angeles\\
+   \texttt{wangbaonj@gmail.com} \\
+  \and
+  Xiyang Luo \\
+  Department of Mathematics\\
+  University of California, Los Angeles\\
+   \texttt{xylmath@gmail.com} \\
+  \and
+  Zhen Li \\
+  Department of Mathematics\\
+  Hong Kong University of Science and Technology\\
+   \texttt{zli12@mails.tsinghua.edu.cn} \\
+\and
+  Wei Zhu \\
+  Department of Mathematics\\
+  Duke University\\
+  \texttt{zhu@math.duke.edu} \\
+\and
+  Zuoqiang Shi \\
+  Yau Mathematical Science center\\
+  Tsinghua University\\
+  \texttt{zqshi@math.tsinghua.edu.cn}\\
+  \and
+  Stanley Osher \\
+  Department of Mathematics\\
+  University of California, Los Angeles\\
+  \texttt{sjo@math.ucla.edu}\\
+%   Beijing, China\\
+%   \texttt{xylmath@gmail.com} \\
+%% Affiliation \\
+  %% Address \\
+  %% \texttt{email} \\
+  %% \AND
+  %% Coauthor \\
+  %% Affiliation \\
+  %% Address \\
+  %% \texttt{email} \\
+  %% \And
+  %% Coauthor \\
+  %% Affiliation \\
+  %% Address \\
+  %% \texttt{email} \\
+  %% \And
+  %% Coauthor \\
+  %% Affiliation \\
+  %% Address \\
+  %% \texttt{email} \\
+}
+
+\begin{document}
+% \nipsfinalcopy is no longer used
+
+\maketitle
+
+\begin{abstract}
+We replace the output layer of deep neural nets, typically the softmax function, by a novel interpolating function. And we propose end-to-end training and testing algorithms for this new architecture. Compared to classical neural nets with softmax function as output activation, the surrogate with interpolating function as output activation combines advantages of both deep and manifold learning. The new framework demonstrates the following major advantages: First, it is better applicable to the case with insufficient training data. Second, it significantly improves the generalization accuracy on a wide variety of networks. The algorithm is implemented in PyTorch, and code will  be made publicly available.
+\end{abstract}
+
+\section{Introduction}
+Generalizability is crucial to deep learning, and many efforts have been made to improve the training and generalization accuracy of deep neural nets (DNNs) \cite{GreedyTraining:2007,DBN:2006}. Advances in network architectures such as VGG networks \cite{VGG:2014}, deep residual networks (ResNets)\cite{DRN:2016,IdentityMap:2016} and more recently DenseNets \cite{Huang:2017CVPR} and many others \cite{Chen:2017NIPS}, together with powerful hardware make the training of very deep networks with good generalization capabilities possible. Effective regularization techniques such as dropout and maxout \cite{hinton2012improving, wan2013regularization, goodfellow2013maxout}, as well as data augmentation methods \cite{krizhevsky2012imagenet,VGG:2014, Zhu:2017DeepLearning} have also explicitly improved generalization for DNNs. 
+
+A key component of neural nets is the activation function. Improvements in designing of activation functions such as the rectified linear unit (ReLU) \cite{glorot2011deep}, have led to huge improvements in performance in computer vision tasks \cite{nair2010rectified, krizhevsky2012imagenet}. More recently, activation functions adaptively trained to the data such as the adaptive piecewise linear unit (APLU) \cite{agostinelli2014learning} and parametric rectified linear unit (PReLU) \cite{he2015delving} have lead to further improvements in performance of DNNs. For output activation, support vector machine (SVM) has also been successfuly applied in place of softmax\cite{Tang:2013}. Though training DNNs with softmax or SVM as output activation is effective in many tasks, it is possible that alternative activations that consider manifold structure of data by interpolating the output based on both training and testing data can boost performance of the network. In particular, ResNets can be reformulated as solving control problems of a class of transport equations in the continuum limit \cite{ResNet:PDE, chang2017multi}. Transport theory suggests that by using an interpolating function that interpolates terminal values from initial values can dramatically simplify the control problem compared to an ad-hoc choice. This further suggests that a fixed and data-agnostic activation for the output layer may be suboptimal.
+
+To this end, based on the ideas from manifold learning, we propose a novel output layer named weighted nonlocal Laplacian (WNLL) layer for DNNs. The resulted DNNs achieve better generalization and are more robust for problems with a small number of training examples. On CIFAR10/CIFAR100, we achieve on average a 30\%/20\% reduction in terms of test error on a wide variety of networks. These include VGGs, ResNets, and pre-activated ResNets. The performance boost is even more pronounced when the model is trained on a random subset of CIFAR with a low number of training examples. We also present an efficient algorithm to train the WNLL layer via an auxiliary network. Theoretical motivation for the WNLL layer is also given from the viewpoint of both game theory and terminal value problems for transport equations.
+
+This paper is structured as follows: In Section \ref{sec:Network-Architecture}, we introduce the motivation and practice of using the WNLL interpolating function in DNNs. In Section \ref{sec:Train-Test}, we explain in detail the algorithms for training and testing DNNs with WNLL as output layer. Section \ref{sec:Theory} provides insight of using an interpolating function as output layer from the angle of terminal value problems of transport equations and game theory. Section \ref{Experiments} demonstrates the effectiveness of our method on a variety of numerical examples. 
+
+
+\section{Network Architecture}
+\label{sec:Network-Architecture}
+In coarse grained representation, training and testing DNNs with softmax layer as output are illustrated in Fig. \ref{fig:DNN-Structure} (a) and (b), respectively. In $k$th iteration of training, given a mini-batch training data $(\mathbf{X}, \mathbf{Y})$, we perform:
+
+{\it Forward propagation:} Transform $\mathbf{X}$ into deep features by DNN block (ensemble of conv layers, nonlinearities and others), and then activated by softmax function to obtain the predicted labels $\tilde{\mathbf{Y}}$:
+$$
+\tilde{\mathbf{Y}} = {\rm Softmax}({\rm DNN}(\mathbf{X}, \Theta^{k-1}), \mathbf{W}^{k-1}).
+$$
+Then compute loss (e.g., cross entropy) between $\mathbf{Y}$ and $\tilde{\mathbf{Y}}$:
+$\mathcal{L} = {\rm Loss}(\mathbf{Y}, \tilde{\mathbf{Y}})$.
+
+{\it Backpropagation:} Update weights ($\Theta^{k-1}$, $\mathbf{W}^{k-1}$) by gradient descent (learning rate $\gamma$):
+$$\mathbf{W}^{k} = \mathbf{W}^{k-1} - \gamma \frac{\partial \mathcal{L}}{\partial \tilde{\mathbf{Y}}}\cdot \frac{\partial \tilde{\mathbf{Y}}}{\partial \mathbf{W}}, \ \ \Theta^{k} = \Theta^{k-1} - \gamma \frac{\partial \mathcal{L}}{\partial \tilde{\mathbf{Y}}}\cdot \frac{\partial \tilde{\mathbf{Y}}}{\partial \tilde{\mathbf{X}}}\cdot \frac{\partial \tilde{\mathbf{X}}}{\partial \Theta}.$$
+
+
+\begin{figure}[h]
+\centering
+\begin{tabular}{cc}
+\includegraphics[width=0.105\columnwidth]{DNN_training.png}&
+\includegraphics[width=0.15\columnwidth]{DNN_testing.png}\\
+(a)&(b)\\
+\end{tabular}
+\caption{Training (a) and testing (b) procedures of DNNs with softmax as output activation layer.}
+\label{fig:DNN-Structure}
+\end{figure}
+
+Once the model is optimized, for testing data $\mathbf{X}$, the predicted labels are:
+$$
+\tilde{\mathbf{X}} = {\rm Softmax}({\rm DNN}(\mathbf{X}, \Theta), \mathbf{W}),
+$$
+for notational simplicity, we still denote the test set and optimized weights as $\mathbf{X}$, $\Theta$, and $\mathbf{W}$, respectively.
+In essence the softmax layer acts as a linear model on the space of deep features $\tilde{\mathbf{X}}$, which does not take into consideration the underlying manifold structure of $\tilde{\mathbf{X}}$. The WNLL interpolating function, which will be introduced in the following subsection, is an approach to alleviate this deficiency.
+
+%% XY/BW
+
+%Namely, given $\tilde{\mathbf{X}}$, and some external data pairs ($\tilde{\mathbf{X}}^{tc}, \tilde{\mathbf{Y}^{tc}})$ from the same distribution as the original problem, the output $\tilde{\mathbf{Y}}$ is given by interpolating $\tilde{\mathbf{Y}^{tc}}$ onto $\tilde{\mathbf{X}}$ on the point cloud $\tilde{\mathbf{X}} \cup \tilde{\mathbf{X}}^{tc}$.  We give an introduction to the manifold interpolation problem in the section below.
+
+%\xmod{In essence the softmax layer acts as a linear model on the space of deep features $\tilde{\mathbf{X}}$, and does not take into consideration the underlying manifold structure for $\tilde{\mathbf{X}}$. The WNLL method utilizes this structure by solving an interpolation problem in the space of deep features. Namely, given $\tilde{\mathbf{X}}$, and some external data pairs ($\tilde{\mathbf{X}}^{tc}, \tilde{\mathbf{Y}^{tc}})$ from the same distribution as the original problem, the output $\tilde{\mathbf{Y}}$ is given by interpolating $\tilde{\mathbf{Y}^{tc}}$ onto $\tilde{\mathbf{X}}$ on the point cloud $\tilde{\mathbf{X}} \cup \tilde{\mathbf{X}}^{tc}$.  We give an introduction to the manifold interpolation problem in the section below. }
+
+
+% Essentially, the softmax function plays role as a linear classifier on deep features which, however, does not utilize the manifold structure of the deep feature space sufficiently. Instead, we consider to replace the softmax function by an interpolating function that includes feature space's manifold structure. In general, interpolation in high dimensional space is challenging, we will describe one way to interpolating in high dimensional space in the following subsection.
+
+
+
+%\xmod{\textit{Remark:  I think we should follow up here immediately by a description of WNLL. To me, it is not immediately clear what Sec 2.1 has to do with DNNs. At the very least, mention that we are doing the interpolation on the deep features $\tilde{\mathbf{X}}$.  }}
+
+%\xmod{Remark: Overall the algorithm (train and test) still reads very unclear to me at the moment. We need something simple, just how testing (or just call it forward pass) works at the very beginning. E.g, Given $X^{tc}$, $Y^{tc}$, $X$, compute deep features $\hat{X}$, and $\hat{X}^{tc}$, and interpolate $Y$ on $X$ given the point cloud $X \cup X^{tc}$. We can say this and then introduce the actual WNLL algorithm in Sec 2.1 }
+
+
+
+\subsection{Manifold Interpolation - An Harmonic Extension Approach}
+%Consider the manifold interpolation problem: 
+Let $\mathbf{X} = \{\mathbf{x}_1, \mathbf{x}_2, \cdots, \mathbf{x}_n\}$ be a set of points in a high dimensional manifold $\mathcal{M}\subset\mathbb{R}^d$ and $\mathbf{X}^{\rm te} = \{\mathbf{x}^{\rm te}_1, \mathbf{x}^{\rm te}_2, \cdots, \mathbf{x}^{\rm te}_m\}$ be a subset of $\mathbf{X}$. Suppose we have a (possibly vector valued) label function $g(\mathbf{x})$ defined on $\mathbf{X}^{\rm te}$, and we want to interpolate a function $u$ that is defined on the entire manifold and can be used to label the entire dataset $\mathbf{X}$. Interpolation by using basis function in high dimensional space suffers from the curse of dimensionality. Instead, an harmonic extension is a natural and elegant approach to find such an interpolating function, which is defined by minimizing the following Dirichlet energy functional:
+\begin{equation}
+\label{DirichletEnergy}
+\mathcal{E}(u)=\frac{1}{2}\sum_{\mathbf{x}, \mathbf{y}\in \mathbf{X}} w(\mathbf{x}, \mathbf{y})\left(u(\mathbf{x})-u(\mathbf{y})\right)^2,
+\end{equation}
+with the boundary condition:
+$$
+u(\mathbf{x})=g(\mathbf{x}), \ \mathbf{x}\in \mathbf{X}^{\rm te},
+$$
+where $w(\mathbf{x}, \mathbf{y})$ is a weight function, typically chosen to be Gaussian: $w(\mathbf{x}, \mathbf{y})=\exp(-\frac{||\mathbf{x}-\mathbf{y}||^2}{\sigma^2})$ with $\sigma$ a scaling parameter. The Euler-Lagrange equation for Eq.\eqref{DirichletEnergy} is:
+\begin{equation}
+\label{EL-Equation}
+\begin{cases}
+\sum_{\mathbf{y}\in \mathbf{X}} \left(w(\mathbf{x}, \mathbf{y})+w(\mathbf{y}, \mathbf{x})\right)\left(u(\mathbf{x})-u(\mathbf{y})\right)=0 & \mathbf{x}\in \mathbf{X}/\mathbf{X}^{\rm te}\\
+u(\mathbf{x})=g(\mathbf{x}) &\mathbf{x}\in \mathbf{X}^{\rm te}.
+\end{cases}
+\end{equation}
+By solving the linear system Eq.(\ref{EL-Equation}), we get the interpolated labels $u(\mathbf{x})$ for unlabeled data $\mathbf{x}\in \mathbf{X}/\mathbf{X}^{\rm te}$. This interpolation becomes invalid when labeled data is tiny, i.e., $|\mathbf{X}^{\rm te}|\ll |\mathbf{X}
+/\mathbf{X}^{\rm te}|$. There are two solutions to resolve this issue: one is to replace the $2$-Laplacian in Eq.(\ref{DirichletEnergy}) by a $p$-Laplacian \cite{Calder:2018}; the other is to increase 
+the weights of the labeled data in the Euler-Lagrange equation \cite{WNLL:2017}, which gives the following weighted nonlocal Laplacian (WNLL) interpolating function:
+\begin{equation}
+\label{WNLL}
+\begin{cases}
+\sum_{\mathbf{y}\in \mathbf{X}} \left(w(\mathbf{x}, \mathbf{y})+w(\mathbf{y}, \mathbf{x})\right)\left(u(\mathbf{x})-u(\mathbf{y})\right)+\\
+\left(\frac{|\mathbf{X}|}{|\mathbf{X}^{\rm te}|}-1\right)\sum_{\mathbf{y}\in \mathbf{X}^{\rm te}}w(\mathbf{y}, \mathbf{x})\left(u(\mathbf{x})-u(\mathbf{y})\right)=0 & \mathbf{x}\in \mathbf{X}/\mathbf{X}^{\rm te}\\
+u(\mathbf{x})=g(\mathbf{x}) &\mathbf{x}\in \mathbf{X}^{\rm te}.
+\end{cases}
+\end{equation}
+For notational simplicity, we name the solution $u(\mathbf{x})$ to Eq.\ref{WNLL} as ${\rm WNLL}(\mathbf{X}, \mathbf{X}^{\rm te}, \mathbf{Y}^{\rm te})$.
+For classification tasks, $g(\mathbf{x})$ is the one-hot labels for the example $\mathbf{x}$. To ensure accuracy of WNLL, the labeled data should cover all classes of data in $\mathbf{X}$. We give a necessary condition in Theorem \ref{Rep-Thm}.
+\begin{thm}\label{Rep-Thm}
+Suppose we have a data pool formed by $N$ classes of data uniformly, with the number of instances of each class be sufficiently large. If we want all classes of data to be sampled at least once, on average at least $N\left(1+\frac{1}{2}+\frac{1}{3}+\cdots +\frac{1}{N}\right)$ data is need to be sampled from the data pool. In this case, the number of data sampled, in expectation for each class, is $1+\frac{1}{2}+\frac{1}{3}+\cdots +\frac{1}{N}$.
+\end{thm}
+
+\subsection{WNLL Activated DNNs and Algorithms} \label{sec:Train-Test}
+In both training and testing of the WNLL activated DNNs, we need to reserve a small portion of data/label pairs denoted as $(\mathbf{X}^{\rm te}, \mathbf{Y}^{\rm te})$, to interpolate the label $Y$ for new data. We name $(\mathbf{X}^{\rm te}, \mathbf{Y}^{\rm te})$ as the preserved template. Directly replacing softmax by WNLL (Fig. \ref{fig:WNLL-DNN-Structure}(a)) has difficulties in back propagation, namely, the true gradient $\frac{\partial \mathcal{L}}{\partial \Theta}$ is difficult to compute since WNLL defines a very complex implicit function. Instead, to train WNLL activated DNNs, we propose a proxy via an auxiliary neural nets (Fig. \ref{fig:WNLL-DNN-Structure}(b)). On top of the original DNNs, we add a buffer block (a fully connected layer followed by a ReLU), and followed by two parallel layers, WNLL and the linear (fully connected) layers. The auxiliary DNNs can be trained by alternating between the following two steps (training DNNs with linear and WNLL activations, respectively):
+
+{\bf Train DNNs with linear activation: } Run $N_1$ steps of the following forward and back propagation, where in $k$th iteration, we have:
+
+{\it Forward propagation: } The training data $\mathbf{X}$ is transformed, respectively, by DNN, Buffer and Linear blocks to the predicted labels $\tilde{\mathbf{Y}}$:
+$$\tilde{\mathbf{Y}} = {\rm Linear}({\rm Buffer}({\rm DNN}(\mathbf{X}, \Theta^{k-1}), \mathbf{W}_B^{k-1}), \mathbf{W}_L^{k-1}).$$
+Then compute loss between the ground truth labels $\mathbf{Y}$ and predicted ones $\tilde{\mathbf{Y}}$, denoted as $\mathcal{L}^{\rm Linear}$ (e.g., cross entropy loss, and the same as following $\mathcal{L}^{\rm WNLL}$).
+
+{\it Backpropagation: } Update weights ($\Theta^{k-1}$, $\mathbf{W}_B^{k-1}$, $\mathbf{W}_L^{k-1}$) by gradient descent:
+$$
+\mathbf{W}_L^k = \mathbf{W}_L^{k-1} - \gamma \frac{\partial \mathcal{L}^{\rm Linear}}{\partial \tilde{\mathbf{Y}}}\cdot \frac{\partial \tilde{\mathbf{Y}}}{\partial \mathbf{W}_L},\ \ \mathbf{W}_B^k = \mathbf{W}_B^{k-1} - \gamma \frac{\partial \mathcal{L}^{\rm Linear}}{\partial \tilde{\mathbf{Y}}}\cdot \frac{\partial \tilde{\mathbf{Y}}}{\partial \hat{\mathbf{X}}}\cdot \frac{\partial \hat{\mathbf{X}}}{\partial \mathbf{W}_B},
+$$
+$$
+\Theta^k = \Theta^{k-1} - \gamma \frac{\partial \mathcal{L}^{\rm Linear}}{\partial \tilde{\mathbf{Y}}}\cdot \frac{\partial \tilde{\mathbf{Y}}}{\partial \hat{\mathbf{X}}}\cdot \frac{\partial \hat{\mathbf{X}}}{\partial \tilde{\mathbf{X}}}\cdot \frac{\partial \tilde{\mathbf{X}}}{\partial \Theta}.
+$$
+
+
+{\bf Train DNNs with WNLL activation: } Run $N_2$ steps of the following forward and back propagation, where in $k$th iteration, we have:
+
+{\it Forward propagation: } The training data $\mathbf{X}$, template $\mathbf{X}^{\rm te}$ and $\mathbf{Y}^{\rm te}$ are transformed, respectively, by DNN, Buffer, and WNLL blocks to get predicted labels $\hat{\mathbf{Y}}$:
+$$\hat{\mathbf{Y}} = {\rm WNLL}({\rm Buffer}({\rm DNN}(\mathbf{X}, \Theta^{k-1}), \mathbf{W}_B^{k-1}), \hat{\mathbf{X}}^{\rm te}, \mathbf{Y}^{\rm te}).$$
+Then compute loss, $\mathcal{L}^{\rm WNLL}$, between the ground truth labels $\mathbf{Y}$ and predicted ones $\hat{\mathbf{Y}}$.
+
+{\it Backpropagation: } Update weights $\mathbf{W}_B^{k-1}$ only, $\mathbf{W}_L^{k-1}$ and $\Theta^{k-1}$ will be tuned in the next iteration in training DNNs with linear activation, by gradient descent. 
+%For the sake of notation simplicity, we still denote the updated weights as $\mathbf{W}_B^k$: \xmod{(Why not just $\mathbf{W}_B^{k+1}$?)  }
+
+%{\color{blue}
+%\begin{equation}
+%\mathbf{W}_B^k = \mathbf{W}_B^{k} - \gamma \frac{\partial \mathcal{L}}{\partial \hat{\mathbf{Y}}}\cdot \frac{\partial \hat{\mathbf{Y}}}{\partial \hat{\mathbf{X}}}\cdot \frac{\partial \hat{\mathbf{X}}}{\partial \mathbf{W}_B} \approx \mathbf{W}_B^{k} - \gamma \frac{\partial \mathcal{L}}{\partial \hat{\mathbf{Y}}}\cdot \frac{\partial \tilde{\mathbf{Y}}}{\partial \hat{\mathbf{X}}}\cdot \frac{\partial \hat{\mathbf{X}}}{\partial \mathbf{W}_B}.
+%\label{eq:bp-wnll}
+%\end{equation}}
+
+%(Comment: I suggest writing it like below:)
+%{\color{blue}
+%\begin{equation}
+%\mathbf{W}_B^{k+1} :=  \mathbf{W}_B^{k} - \gamma \frac{\partial \mathcal{L}}{\partial \hat{\mathbf{Y}}}\cdot \frac{\partial \tilde{\mathbf{Y}}}{\partial \hat{\mathbf{X}}}\cdot \frac{\partial \hat{\mathbf{X}}}{\partial \mathbf{W}_B} \approx \mathbf{W}_B^{k} - \gamma \frac{\partial \mathcal{L}}{\partial \hat{\mathbf{Y}}}\cdot \frac{\partial \hat{\mathbf{Y}}}{\partial \hat{\mathbf{X}}}\cdot \frac{\partial \hat{\mathbf{X}}}{\partial \mathbf{W}_B} =\mathbf{W}_B^{k} - \gamma \frac{\partial \mathcal{L}}{\partial \hat{\mathbf{W}_B}}.
+%\label{eq:bp-wnll}
+%\end{equation}
+%}
+
+%\begin{equation}
+%\mathbf{W}_B^{k+1} =  \mathbf{W}_B^{k} - \gamma \frac{\partial \mathcal{L}}{\partial \hat{\mathbf{Y}}}\cdot \frac{\partial \tilde{\mathbf{Y}}}{\partial \hat{\mathbf{X}}}\cdot \frac{\partial \hat{\mathbf{X}}}{\partial \mathbf{W}_B} \approx \mathbf{W}_B^{k} - \gamma \frac{\partial \mathcal{L}}{\partial \hat{\mathbf{Y}}}\cdot \frac{\partial \hat{\mathbf{Y}}}{\partial \hat{\mathbf{X}}}\cdot \frac{\partial \hat{\mathbf{X}}}{\partial \mathbf{W}_B}.
+%\label{eq:bp-wnll}
+%\end{equation}
+
+\begin{equation}
+\mathbf{W}_B^{k} =  \mathbf{W}_B^{k-1} - \gamma \frac{\partial \mathcal{L}^{\rm WNLL}}{\partial \hat{\mathbf{Y}}}\cdot \frac{\partial \hat{\mathbf{Y}}}{\partial \hat{\mathbf{X}}}\cdot \frac{\partial \hat{\mathbf{X}}}{\partial \mathbf{W}_B} \approx \mathbf{W}_B^{k-1} - \gamma \frac{\partial \mathcal{L}^{\rm Linear}}{\partial \tilde{\mathbf{Y}}}\cdot \frac{\partial \tilde{\mathbf{Y}}}{\partial \hat{\mathbf{X}}}\cdot \frac{\partial \hat{\mathbf{X}}}{\partial \mathbf{W}_B}.
+\label{eq:bp-wnll}
+\end{equation}
+
+%$$
+%\mathbf{W}_B^k = \mathbf{W}_B^{k} - \gamma \frac{\partial \mathcal{L}}{\partial \hat{\mathbf{Y}}}\cdot \frac{\partial \hat{\mathbf{Y}}}{\partial \hat{\mathbf{X}}}\cdot \frac{\partial \hat{\mathbf{X}}}{\partial \mathbf{W}_B} \approx \mathbf{W}_B^{k} - \gamma \frac{\partial \mathcal{L}}{\partial \tilde{\mathbf{Y}}}\cdot \frac{\partial \tilde{\mathbf{Y}}}{\partial \hat{\mathbf{X}}}\cdot \frac{\partial \hat{\mathbf{X}}}{\partial \mathbf{W}_B}.
+%$$
+Here we use the computational graph of the left branch (linear layer) to retrieval the approximated gradients for WNLL. For a given loss value of $\mathcal{L}^{\rm WNLL}$, we adopt the approximation
+%$\frac{\partial \hat{\mathbf{Y}}}{\partial \hat{\mathbf{X}}} \approx \frac{\partial \tilde{\mathbf{Y}}}{\partial \hat{\mathbf{X}}}$.
+$\frac{\partial \mathcal{L}^{\rm WNLL}}{\partial \hat{\mathbf{Y}}}\cdot \frac{\partial \hat{\mathbf{Y}}}{\partial \hat{\mathbf{X}}} \approx \frac{\partial \mathcal{L}^{\rm Linear}}{\partial \tilde{\mathbf{Y}}}\cdot \frac{\partial \tilde{\mathbf{Y}}}{\partial \hat{\mathbf{X}}}$ where the right hand side is also evaluated at this value.
+%$\frac{\partial \mathcal{L}}{\partial \hat{\mathbf{Y}}} \cdot \frac{\partial \hat{\mathbf{Y}}}{\partial \hat{\mathbf{X}}} \approx \frac{\partial \mathcal{L}}{\partial \tilde{\mathbf{Y}}}\cdot \frac{\partial \tilde{\mathbf{Y}}}{\partial \hat{\mathbf{X}}}$.
+%$\frac{\partial \mathcal{L}}{\partial \tilde{\mathbf{Y}}}$ and $\frac{\partial \tilde{\mathbf{Y}}}{\partial \hat{\mathbf{X}}}$. 
+The main heuristic behind this approximation is the following: WNLL defines a harmonic function implicitly, and a linear function is the simplest nontrivial explicit harmonic function. Empirically, we observe this simple approximation works well in training the network. The reason why we freeze the network in the DNN block is mainly due to stability concerns. 
+
+%Since the algorithm is not a true gradient descent but instead a proxy, further back-proping to the convolutional layers results in sub-optimal performance.
+
+%Therefore it is reasonable to expect that the harmonic function $\hat{\mathbf{Y}}$ is approximated by $\tilde{\mathbf{Y}}$ since the training is done in an alternating fashion.
+
+%\xmod{(Comment: I still think the explanation is somewhat ad-hoc, and we may want to say that we empirically see the WNLL loss decreasing in our training procedure.)}
+%is the reason that we use linear function to approximate WNLL in backpropagation. 
+
+
+\begin{figure}[h]
+\centering
+\begin{tabular}{ccc}
+\includegraphics[width=0.18\columnwidth]{WNLL_DNN_direct_training.png}&
+\includegraphics[width=0.29\columnwidth]{WNLL_DNN_training_2.pdf}&
+\includegraphics[width=0.25\columnwidth]{WNLL_DNN_testing.png}\\
+(a)&(b)&(c)\\
+\end{tabular}
+\caption{Training and testing procedure of the deep neural nets with WNLL as the last activation layer.(a): Direct replacement of the softmax by WNLL, (b): An alternating training procedure. (c): Testing.}
+\label{fig:WNLL-DNN-Structure}
+\end{figure}
+
+
+
+The above alternating scheme is an algorithm of a greedy fashion. During training, WNLL activation plays two roles: on one hand, the alternating between linear and WNLL activations benefits each other which enables the neural nets to learn features that is appropriate for both linear classification and WNLL based manifold interpolation. On the other hand, in the case where we lack sufficient training data, the training of DNNs usually gets stuck at some bad local minima which cannot generalize well on new data. We use WNLL interpolation which provides a perturbation to the trained sub-optimal weights and can help to arrive at a local minima with better generalizability. At test time, we remove the linear classifier from the neural nets and use the DNN block together with WNLL to predict new data (Fig. \ref{fig:WNLL-DNN-Structure} (c)). The reason for using WNLL instead of a linear layer is because WNLL is superior to the linear classifier and this superiority is preserved when applied to deep features (which will be shown in Section. \ref{Experiments}). Moreover, WNLL utilizes both the learned DNNs and the preserved template at test time which seems to be more stable to perturbations on the input data.
+
+
+We summarize the training and testing procedures for the WNLL activated DNNs in Algorithms \ref{alg-Train} and \ref{alg-Test}, respectively. In each round of the alternating procedure i.e., each outer loop in Algorithm. \ref{alg-Train}, the entire training set $(\mathbf{X}, \mathbf{Y})$ is first used to train the DNNs with linear activation. We randomly separate a template, e.g., half of the entire data, from the training set which will be used to perform WNLL interpolation in training WNLL activated DNNs. In practice, for both training and testing, we use minibatches for both the template and the interpolated points when the entire dataset is too large. The final predicted labels are obtained by a majority voted across interpolation results from all the template minibatches. 
+%Finally we vote for the interpolation results from all batches to get the predicted label.
+
+\begin{remark}
+In Algorithm. \ref{alg-Train}, the WNLL interpolation is also performed in mini-batch manner (as shown in the inner iteration). Based on our experiments, this does not reduce the interpolation accuracy significantly.
+\end{remark}
+
+% Without abuse of notation, we let X, X^tr, X^te, Y, Y^tr, Y^te represents
+
+% Explain the outer and inner loop.
+
+\begin{algorithm}
+\caption{DNNs with WNLL as Output Activation: Training Procedure.}\label{alg-Train}
+\begin{algorithmic}
+\State \textbf{Input: } Training set: (data, label) pairs $(\mathbf{X}, \mathbf{Y})$.
+\State \textbf{Output: } An optimized DNNs with WNLL as output activation, denoted as ${\rm DNN}_{\rm WNLL}$.
+\For{${\rm iter} = 1, $\dots$, N$ (where $N$ is the number of alternating steps.)}
+% Train Fig 2(b) and then prune.
+\State //Train the left branch: DNNs with linear activation.
+\State Train DNN $+$ Linear blocks, and denote the learned model as ${\rm DNN}_{\rm Linear}$.
+\State //Train the right branch: DNNs with WNLL activation.
+\State Split $(\mathbf{X}, \mathbf{Y})$ into training data and template, i.e., $(\mathbf{X}, \mathbf{Y}) \doteq (\mathbf{X}^{\rm tr}, \mathbf{Y}^{\rm tr}) \bigcup (\mathbf{X}^{\rm te}, \mathbf{Y}^{\rm te})$.
+\State Partition the training data into $M$ mini-batches, i.e., $(\mathbf{X}^{\rm tr}, \mathbf{Y}^{\rm tr}) = \bigcup_{i=1}^M (\mathbf{X}_i^{\rm tr}, \mathbf{Y}_i^{\rm tr})$.
+\For{$i = 1, 2, \cdots, M$}
+\State Transform $\mathbf{X}_i^{\rm tr}\bigcup \mathbf{X}^{\rm te}$ by ${\rm DNN}_{\rm Linear}$, i.e.,  $\tilde{\mathbf{X}}^{\rm tr} \bigcup \tilde{\mathbf{X}}^{\rm te} = {\rm DNN}_{\rm Linear}(\mathbf{X}_i^{\rm tr}\bigcup \mathbf{X}^{\rm te})$.
+\State Apply WNLL (Eq.(\ref{WNLL})) on $\{\tilde{\mathbf{X}}^{\rm tr} \bigcup \tilde{\mathbf{X}}^{\rm te}, \mathbf{Y}^{\rm te}\}$ to interpolate label $\tilde{\mathbf{Y}}^{\rm tr}$.
+%\State Freeze all layers except the buffer block $W_B$. Backpropagate via Eq. (\ref{eq:bp-wnll}) the error 
+%\State between $\mathbf{Y}^{\rm tr}$ and $\tilde{\mathbf{Y}}^{\rm tr}$ \xmod{on the buffer block only}. 
+\State Backpropagate the error between $\mathbf{Y}^{\rm tr}$ and $\tilde{\mathbf{Y}}^{\rm tr}$ via Eq.(\ref{eq:bp-wnll}) to update $\mathbf{W}_B$ only.
+\EndFor
+\EndFor
+%\State Prune the linear function from the auxiliary network (Fig.\ref{fig:WNLL-DNN-Structure} (b)) to get the final ${\rm DNN}_{\rm WNLL}$.
+%\xmod{(Comment: Why do we need to remove the final linear layer? We have already trained the weights of the DNN. What activation to choose at test time is not relevant. I think we can just remove this line.) }
+\end{algorithmic}
+\end{algorithm}
+
+%In practice, Template can be split into minibatches, and then voting.
+
+
+\begin{algorithm}
+\caption{DNNs with WNLL as Output Activation: Testing Procedure.}\label{alg-Test}
+\begin{algorithmic}
+\State \textbf{Input: } Testing data $\mathbf{X}$, template $(\mathbf{X}^{\rm te}, \mathbf{Y}^{\rm te})$. Optimized model ${\rm DNN}_{\rm WNLL}$.
+\State \textbf{Output: } Predicted label $\tilde{\mathbf{Y}}$ for $\mathbf{X}$.
+\State Apply the DNN block of ${\rm DNN}_{\rm WNLL}$ to $\mathbf{X}\bigcup \mathbf{X}^{\rm te}$ to get the representation $\tilde{\mathbf{X}}\bigcup \tilde{\mathbf{X}}^{\rm te}$.
+\State Apply WNLL (Eq.(\ref{WNLL})) on $\{\tilde{\mathbf{X}} \bigcup \tilde{\mathbf{X}}^{\rm te}, \mathbf{Y}^{\rm te}\}$ to interpolate label $\tilde{\mathbf{Y}}$.
+\end{algorithmic}
+\end{algorithm}
+
+\section{Theoretical Explanation}
+\label{sec:Theory}
+In training WNLL activated DNNs, the two output activation functions in the auxiliary networks are, in a sense, each competing to minimize its own objective where, in equilibrium, the neural nets can learn better features for both linear and interpolation-based activations. This in flavor is similar to generative adversarial nets (GAN) \cite{GAN}.
+Another interpretation of our model is the following: As noted in  \cite{ResNet:PDE}, in the continuum limit, ResNet can be modeled as the following control problem for a transport equation:
+\begin{equation}
+\label{Linear-Transport}
+\begin{cases}
+\frac{\partial u(\mathbf{x}, t)}{\partial t}+\mathbf{v}(\mathbf{x}, t)\cdot \nabla u(\mathbf{x}, t)=0 & \mathbf{x}\in \mathbf{X}, t\geq 0\\
+u(\mathbf{x}, 1)=f\left(\mathbf{x}\right) &\mathbf{x}\in \mathbf{X}.
+\end{cases}
+\end{equation}
+Here $u(\cdot, 0)$ is the input of the continuum version of ResNet, which maps the training data to the corresponding label. $f(\cdot)$ is the terminal value which analogous to the output activation function in ResNet which maps deep features to the predicted label. Training ResNet is equivalent to tuning $\mathbf{v}(\cdot, t)$, i.e., continuous version of the weights, s.t. the predicted label $f(\cdot)$ matches that of the training data. If $f(\cdot)$ is a harmonic extension of $u(\cdot, 0)$, the corresponding weights $v(\mathbf{x}, t)$ would be close to zero. This results in a simpler model and may generalize better from a model selection point of view.
+
+%the competition between generator and discriminator can improve the quality of the generated images.
+
+%{\color{blue} From the WNLL point of view, we are trying to learning a good metric using DNN. In the original WNLL, the simple metric induced from the ambient Eucledian space is used. This may not be the best choice. Ideally, the metric should be given by the "features" of the data. DNN is thought to he capable to map the data to the feature space  which gives us a good way to learn the metric. However, as we mentioned earlier, WNLL is hard to compute the derivatives. So we use a simple linear layer to approximate WNLL and backpropagate the error. 
+
+%From DNN point of view, WNLL provides a better output function for DNN, such that the accuracy of the whole network is improved.
+%%If we restrict our focus to ResNets \cite{ResNet,IdentityMap:2016} by WNLL interpolation, an alternative explanation comes from the theory of control problem of transport equation.
+%This can be seen very clear in ResNets \cite{ResNet,IdentityMap:2016}.} 
+
+%\xmod{with $u(\mathbf{x}, 0)$ as the output from the continuum version of ResNet.} Here $u(\mathbf{x}, t)$ is a function used to model the data flow in DNNs, $\mathbf{v}(\mathbf{x}, t)$ is the velocity field that models the weights of the DNN, $f(\mathbf{x})$ is the terminal value analogous to the output activation function in the DNNs, with the input data $\mathbf{x}$ in $\mathbb{R}^d$. 
+%\xmod{Initially for training set, data is mapped to label through $u(\cdot, 0)$, finally the label of test data is inferred by $f(\cdot)$. (Comments: I find the sentence above hard to read but I don't know how to properly revise it. Also, why is u(., 0) for the training set and f for the test set?  )} 
+%If $f(\cdot)$ is a harmonic extension of $u(\cdot, 0)$, the corresponding weights $v(\mathbf{x}, t)$ would be close to identity \xmod{(Comment: Shouldn't they be close to 0?  The network weights are close to identity, but $v$ is close to $0$.)} which makes model simple, and therefore may generalize better from a model selection point of view.
+
+%\xmod{(My attempt starting from line 130): Here $u(\mathbf{x}, 0)$ is the output of the continuum version of ResNet, $f(x)$ is the terminal value dependent on the output layer of the network,  $u(x, t)$ the transport map between $f$ and $u(\mathbf{x}, 0)$, and $v(x,t)$ is the velocity field representing the weights of the ResNet. In training, the velocity field $v$ is tuned so that the output $u(\mathbf{x}, 0)$ matches the labels $y$ on the training set $\mathbf{X}' \subset \mathbf{X}$. If $f(\cdot)$ is a harmonic extension of $u(\cdot, 0)$, the corresponding weights $v(\mathbf{x}, t)$ would be close to the identity. This results in a simpler model and therefore may generalize better from a model selection point of view. }
+
+
+
+\section{Numerical Results} \label{Experiments}
+To validate the classification accuracy, efficiency and robustness of the proposed framework, we test the new architecture and algorithm on CIFAR10, CIFAR100 \cite{Cifar:2009}, MNIST\cite{MNIST:1998} and SVHN datasets \cite{SVHN:2011}.
+In all experiments, we apply standard data augmentation that is widely used for the CIFAR datasets \cite{DRN:2016,Huang:2017CVPR,Zagoruyko:2016}. For MNIST and SVHN, we use the raw data without any augmentation. We implement our algorithm on the PyTorch platform \cite{paszke2017automatic}. All computations are carried out on a machine with a single Nvidia Titan Xp graphics card.
+
+%\xmod{(Comment: 1. For SVM here, you use an RBF kernel which is non-linear and very expensive to train. But softmax is linear. The performance gap is from the kernel and most likely not from the SVM loss/activation itself. So we cannot conclude SVM is superior to Softmax. 2.Also in the deep experiments, SVM is (I assume) linear, and you don't use RBF kernel for the deep features. So if that's the case, it is hardly fair to say SVM cannot carry over.   Personally, I think based on many confused reviewers last time, we are better off deleting SVMs from this table and the experiments. If not, we should replace the RBF SVM here by linear SVM.   }
+
+
+Before diving into the performance of DNNs with different output activation functions, we first compare the performance of WNLL with softmax on the raw input images for various datasets. The training sets are used to train the softmax models and interpolate labels for testing set in softmax and WNLL, respectively. Table \ref{Simple-Classifiers} lists the classification accuracies of WNLL and softmax on three datasets.
+%lists performances of $k$-nearest neighbors (KNN) (the optimal $k$ is listed in the table), SVM with RBF kernel, softmax regression and WNLL interpolation. 
+For WNLL interpolation, in order to speed up the computation, we only use 15 nearest neighbors to ensure sparsity of the weight matrix, and the 8th neighbor's distance is used to normalize the weight matrix. The nearest neighbors are searched via the approximate nearest neighbor (ANN) algorithm \cite{ANN:2014}. WNLL outperforms softmax significantly in all three tasks. These results show the potential of using WNLL instead of softmax as the output activation function in DNNs.
+
+%Both KNN and WNLL can be regarded as nonparametric approaches, while SVM and softmax are not. WNLL outperforms the other methods except SVM. KNN, in general, is better than softmax regression which demonstrates the importance of the manifold structure in data classification. These results show the potential of using WNLL instead of softmax as the output activation function in DNNs. In the subsequent part we will show that in DNN, SVM cannot preserve its superiority to softmax in classification, however, WNLL can.
+
+%\begin{table}[!h]
+%\renewcommand{\arraystretch}{1.3}
+%\centering
+%\caption{Accuracy of simple classifiers over different datasets}
+%\label{Simple-Classifiers}
+%\centering
+%\begin{tabular}{ccccc}
+%\hline
+%\textbf{\footnotesize{Dataset}} & \textbf{\footnotesize{KNN}} & \textbf{\footnotesize{Kernel SVM}} & %\textbf{\footnotesize{Softmax}} & \textbf{\footnotesize{WNLL}}\\
+%\hline
+%\footnotesize{Cifar10} 		& \footnotesize{32.77\% (k=5)} & \footnotesize{{\bf 57.14\%}} & %\footnotesize{39.91\%} & \footnotesize{40.73\%}\\
+%\footnotesize{MNIST}   		& \footnotesize{96.40\% (k=1)} & \footnotesize{{\bf 97.79\%}} & %\footnotesize{92.65\%} & \footnotesize{97.74\%}\\
+%\footnotesize{SVHN}         & \footnotesize{41.47\% (k=1)} & \footnotesize{{\bf 70.45\%}} & %\footnotesize{24.66\%} & \footnotesize{56.17\%}\\
+%\hline
+%\end{tabular}
+%\end{table}
+
+\begin{table}[!h]
+\renewcommand{\arraystretch}{1.3}
+\centering
+\caption{Accuracies of softmax and WNLL in classifying some classical datasets.}
+\label{Simple-Classifiers}
+\centering
+\begin{tabular}{cccc}
+\hline
+\footnotesize{Dataset} & \footnotesize{CIFAR10} & \footnotesize{MNIST} & \footnotesize{SVHN}\\
+\hline
+softmax & 39.91\%  & 92.65\%   & 24.66\% \\
+WNLL    & 40.73\%  & 97.74\%   & 56.17\% \\
+%\footnotesize{Cifar10} 		& \footnotesize{32.77\% (k=5)} & \footnotesize{{\bf 57.14\%}} & \footnotesize{39.91\%} & \footnotesize{40.73\%}\\
+%\footnotesize{MNIST}   		& \footnotesize{96.40\% (k=1)} & \footnotesize{{\bf 97.79\%}} & %\footnotesize{92.65\%} & \footnotesize{97.74\%}\\
+%\footnotesize{SVHN}         & \footnotesize{41.47\% (k=1)} & \footnotesize{{\bf 70.45\%}} & \footnotesize{24.66\%} & \footnotesize{56.17\%}\\
+\hline
+\end{tabular}
+\end{table}
+
+For the deep learning experiments below: We take two passes alternating steps, i.e., $N=2$ in Algorithm. \ref{alg-Train}. For the linear activation stage (Stage 1), we train the network for $n=400$ epochs. For the WNLL stage, we train for $n=5$ epochs. In the first pass, the initial learning rate is 0.05 and halved after every 50 epochs in training linear activated DNNs, and 0.0005 when training the WNLL activation. The same Nesterov momentum and weight decay as used in \cite{ResNet,Huang:2016ECCV} are used for CIFAR and SVHN experiments, respectively. In the second pass, the learning rate is set to be one fifth of the corresponding epochs in the first pass. The batch sizes are 128 and 2000 when training softmax/linear and WNLL activated DNNs, respectively. For fair comparison, we train the vanilla DNNs with softmax output activation for 810 epochs with the same optimizers used in WNLL activated ones. All final test errors reported for the WNLL method are done using WNLL activations for prediction on  the test set. In the rest of this section, we show that the proposed framework resolves the issue of lacking big training data and boosts the generalization accuracies of DNNs via numerical results on CIFAR10/CIFAR100. The numerical results on SVHN are provided in the appendix.
+
+
+% SVHN results is provided in appendix.
+
+%In deep learning experiments: For Cifar10/Cifar100, we run 810/400 epochs to train the vanilla DNN (softmax output activation) and DNN with linear activation in the auxiliary nets, respectively. For the auxiliary nets, after training the linear branch, we run 5 epochs SGD to train the WNLL activated DNNs. The initial learning rate being 0.05 and halved after every 50 epochs, and we use the same Nesterov momentum and weight decay parameters as that used in \cite{ResNet}. WNLL activated DNNs is trained by using the same optimizer except that the learning is set to $0.0005$. These two steps are alternated twice, with the learning rate being one fifth of that in the previous alternating stage. In SVHN experiments, we use the same hyperparameters as reported in \cite{Huang:2016ECCV}. The batch sizes in training vanilla and WNLL DNN are 128 and 2000, respectively.
+
+%In deep learning experiments: For Cifar10/Cifar100, we run 810 epochs (for fair comparison with WNLL activated one) of SGD to train vanilla DNN, i.e., DNN with softmax activation. The initial learning rate being 0.05 and halved after every 50 epochs, and we use the same Nesterov momentum and weight decay parameters as that used in \cite{ResNet}. It follows by 5 epochs SGD to train WNLL DNN, i.e., WNLL activated DNN by using the same optimizer except that the learning is set to $0.0005$. These two steps are alternated twice, with the learning rate being one fifth of that in the previous alternating stage. In SVHN experiments, we use the same hyperparameters as reported in \cite{Huang:2016ECCV}. The batch sizes in training vanilla and WNLL DNN are 128 and 2000, respectively.
+
+\subsection{Resolving the Challenge of Insufficient Training Data}
+When we do not have sufficient training data, the generalization accuracy typically degrades as the network goes deeper, as illustrated in Fig.\ref{Degenerate}. The WNLL activated DNNs, with its superior regularization of the parameters and perturbation on bad local minima, are able to overcome this degradation.  The left and right panels plot the cases when the first 1000 and 10000 data in the training set of CIFAR10 are used to train the vanilla and WNLL DNNs. 
+%With suitable regularization techniques, the deep networks can be better parametrized by a small amount of training data. 
+% WNLL activation which involves the information of the data's geometric structures is an appropriate regularizer to better parametrize DNNs. Moreover, training very deep neural nets can stuck at bad local minima without enough generalizability, the alternating between softmax and WNLL activations provides perturbation to circumvent this bad local minima. 
+As shown in Fig. \ref{Degenerate}, by using WNLL activation, the generalization error rates decay consistently as the network goes deeper, in contrast to the degradation for vanilla DNNs. The generalization accuracy between the vanilla and WNLL DNNs can differ up to 10 percent within our testing regime.
+
+
+\begin{figure}[h]
+\centering
+\begin{tabular}{cc}
+\includegraphics[width=0.25\columnwidth]{PreactResNet1000_Degenerate.png}&
+\includegraphics[width=0.25\columnwidth]{PreactResNet10000_Degenerate.png}\\
+(a)&(b)\\
+\end{tabular}
+\caption{Resolving the degradation problem of vanilla DNNs by WNLL activation. Panels (a) and (b) plot the generation errors when 1000 and 10000 training data are used to train the vanilla and the WNLL activated DNNs, respectively. In each plot, we test three different networks: PreActResNet18, PreActResNet34, and PreActResNet50. All tests are done on the CIFAR10 dataset.}
+\label{Degenerate}
+\end{figure}
+
+%\xmod{For experiments in this section, we take two passes of the alternating steps in Algorithm 1 (i.e., $N = 2$). For the linear activation stage (Stage 1), we train the network for $n = 400$ epochs. And for the WNLL stage, we train for $n = 5$ epochs. }
+
+Figure.\ref{Generation-Acc-Evolution} plots the evolution of generalization accuracy during training. We compute the test accuracy per epoch.
+%\xmod{where the test predictions are made by softmax for stage 1 (linear activation), and by WNLL for stage 2.} 
+Panels (a) and (b) plot the test accuracies for ResNet50 with softmax and WNLL activations (1-400 and 406-805 epochs corresponds to linear activation), respectively, with only the first 1000 examples as training data from CIFAR10. Charts (c) and (d) are the corresponding plots with 10000 training instances, using a pre-activated ResNet50. After around 300 epochs, the accuracies of the vanilla DNNs plateau and cannot improve any more. In comparison, the test accuracy for WNLL jumps at the beginning of Stage 2 in first pass; during Stage 1 of the second pass, even though initially there is an accuracy reduction, the accuracy continues to climb and eventually surpasses that of the WNLL activation in Stage 2 of first pass. 
+%\xmod{\st{The generalization accuracy further increases if, at test time, we use the WNLL as the activation function.} (Seems redundant now with the sentence below. )} 
+The jumps in accuracy at epoch 400 and 800 are due to switching from linear activation to WNLL for predictions on the test set. The initial decay when alternating back to softmax is caused partially by the final layer $W_L$ not being tuned with respect to the deep features $\tilde{\mathbf{X}}$, and partially due to predictions on the test set being made by softmax instead of WNLL.  Nevertheless, the perturbation via the WNLL activation quickly results in the accuracy increasing beyond the linear stage in the previous pass.
+
+
+\begin{figure}[h]
+\centering
+\begin{tabular}{cccc}
+\includegraphics[width=0.23\columnwidth]{ResNet50_1000.png}&
+\includegraphics[width=0.23\columnwidth]{ResNet50_1000_Acc_WNLL.png}&
+\includegraphics[width=0.23\columnwidth]{PreActResNet50_10000.png}&
+\includegraphics[width=0.23\columnwidth]{PreResNet50_10000_Acc_WNLL.png}\\
+(a)&(b)&(c)&(d)\\
+\end{tabular}
+\caption{The evolution of the generation accuracies over the training procedure. Charts (a) and (b) are the accuracy plots for ResNet50 with 1000 training data, where (a) and (b) are plots for the epoch v.s. accuracy of the vanilla and the WNLL activated DNNs. Panels (c) and (d) correspond to the case of 10000 training data for PreActResNet50. All tests are done on the CIFAR10 dataset.}
+\label{Generation-Acc-Evolution}
+\end{figure}
+
+%\begin{figure}[h]
+%\centering
+%\begin{tabular}{cc}
+%%\includegraphics[width=0.35\columnwidth]{ResNet50_1000_Acc_Vanilla.png}&
+%\includegraphics[width=0.35\columnwidth]{ResNet50_1000.png}&
+%\includegraphics[width=0.35\columnwidth]{ResNet50_1000_Acc_WNLL.png}\\
+%(a)&(b)\\
+%%\includegraphics[width=0.35\columnwidth]{PreResNet50_10000_Acc_Vanilla.png}&
+%\includegraphics[width=0.35\columnwidth]{PreActResNet50_10000.png}&
+%\includegraphics[width=0.35\columnwidth]{PreResNet50_10000_Acc_WNLL.png}\\
+%(c)&(d)\\
+%\end{tabular}
+%\caption{The evolution of the generation accuracy over the training procedure. Charts (a) and (b) are the accuracy %plots for ResNet50 with 1000 training data, where (a) and (b) are plots for the epoch v.s. accuracy of the vanilla %and the WNLL activated DNN. Panels (c) and (d) correspond to the case of 10000 training data for PreActResNet50. All %tests are done on the Cifar10 dataset.}
+%\label{Generation-Acc-Evolution}
+%\end{figure}
+
+
+\subsection{Improving Generalization Accuracy}
+%In the following experiments, we will show that the superiority of SVM compared to softmax in classification cannot be preserved in DNN, one simple reason is that both SVM and softmax are linear models, DNNs learn features adaptively for both classifiers. However, the advantage of WNLL interpolation is preserved.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Feature is adaptive, both SVM and softmax are linear models, the performance will be essentially the same.
+%However, for manifold interpolation, the superiority can e preserved.
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+We next show the superiority of WNLL activated DNNs in terms of generalization accuracies when compared to their surrogates with softmax or SVM output activations. Besides ResNets, we also test the WNLL surrogate on the VGG networks. In table \ref{Cifar10}, we list the generalization errors for 15 different DNNs from VGG, ResNet, Pre-activated ResNet families on the entire, first 10000 and first 1000 instances of the CIFAR10 training set. We observe that WNLL in general improves more for ResNets and pre-activated ResNets, with less but still significant improvements for the VGGs. Except for VGGs, we can achieve relatively 20$\%$ to $30\%$ testing error rate reduction across all neural nets. All results presented here and in the rest of this paper are the median of 5 independent trials. We also compare with SVM as an alternative output activation, and observe that the results are still inferior to WNLL. Note that the bigger batch-size is to ensure the interpolation quality of WNLL. A reasonable concern is that the performance increase comes from the variance reduction due to increasing the batch size. However, experiments done with a batch size of 2000 for vanilla networks actually deteriorates the test accuracy. 
+
+%and hence we do not report the figures in Table \ref{Cifar10}.
+
+%\xmod{For all experiments, the batch-size for linear activation during training is 128, where in the back propagation step of WNLL, the template size is 2000. Note that the bigger batch-size is to ensure the interpolation quality of WNLL. A reasonable concern is that the performance increase comes from the variance reduction due to increasing the batchsize. However, experiments done with a batchsize of 2000 for vanilla networks actually deteriorates the test accuracy, and hence we do not report the figures in Table \ref{Cifar10}. }
+
+\begin{table*}[!htbp]
+\centering
+\caption{Generalization error rates over the test set of vanilla DNNs, SVM and WNLL activated ones trained over the entire, the first 10000, and the first 1000 instances of training set of CIFAR10. (Median of 5 independent trials)}
+\label{Cifar10}
+\begin{tabular}{cccccccc}
+\toprule
+\footnotesize{Network} &  \multicolumn{3}{c}{\footnotesize{Whole}} &  \multicolumn{2}{c}{\footnotesize{10000}} & \multicolumn{2}{c}{\footnotesize{1000}}\\
+\midrule{}  & \textbf{\footnotesize{Vanilla}} &\textbf{\footnotesize{WNLL}} &\textbf{\footnotesize{SVM}} &\textbf{\footnotesize{Vanilla}}   &\textbf{\footnotesize{WNLL}}   &\textbf{\footnotesize{Vanilla}}   &\textbf{\footnotesize{WNLL}}  \\
+\footnotesize{VGG11} 			&\footnotesize{9.23\%} & \footnotesize{{\bf 7.35\%}}  &\footnotesize{9.28\%}  &\footnotesize{10.37\%}&\footnotesize{{\bf 8.88\%}}   &\footnotesize{26.75\%} &\footnotesize{{\bf 24.10\%}} \\
+\footnotesize{VGG13} 			&\footnotesize{6.66\%} & \footnotesize{{\bf 5.58\%}}  &\footnotesize{7.47\%}  &\footnotesize{9.12\%} &\footnotesize{{\bf 7.64\%}}   &\footnotesize{24.85\%} &\footnotesize{{\bf 22.56\%}} \\
+\footnotesize{VGG16} 			&\footnotesize{6.72\%} & \footnotesize{{\bf 5.69\%}}  &\footnotesize{7.29\%}  &\footnotesize{9.01\%} &\footnotesize{{\bf 7.54\%}}   &\footnotesize{25.41\%} &\footnotesize{{\bf 22.23\%}} \\
+\footnotesize{VGG19} 			&\footnotesize{6.95\%} & \footnotesize{{\bf 5.92\%}}  &\footnotesize{7.99\%}  &\footnotesize{9.62\%} &\footnotesize{{\bf 8.09\%}}   &\footnotesize{25.70\%} &\footnotesize{{\bf 22.87\%}} \\
+\footnotesize{ResNet20} 		&\footnotesize{9.06\%} \footnotesize{(8.75\%\cite{ResNet})} & \footnotesize{{\bf 7.09\%}}  &\footnotesize{9.60\%}  &\footnotesize{12.83\%}&\footnotesize{{\bf 9.96\%}}   &\footnotesize{34.90\%} &\footnotesize{{\bf 29.91\%}} \\
+\footnotesize{ResNet32} 		&\footnotesize{7.99\%} \footnotesize{(7.51\%\cite{ResNet})} & \footnotesize{{\bf 5.95\%}}  &\footnotesize{8.73\%}  &\footnotesize{11.18\%}&\footnotesize{{\bf 8.15\%}}   &\footnotesize{33.41\%} &\footnotesize{{\bf 28.78\%}} \\
+\footnotesize{ResNet44} 		&\footnotesize{7.31\%} \footnotesize{(7.17\%\cite{ResNet})} & \footnotesize{{\bf 5.70\%}}  &\footnotesize{8.67\%}  &\footnotesize{10.66\%}&\footnotesize{{\bf 7.96\%}}   &\footnotesize{34.58\%} &\footnotesize{{\bf 27.94\%}} \\
+\footnotesize{ResNet56} 		&\footnotesize{7.24\%} \footnotesize{(6.97\%\cite{ResNet})} & \footnotesize{{\bf 5.61\%}}  &\footnotesize{8.58\%}  &\footnotesize{ 9.83\%}&\footnotesize{{\bf 7.61\%}}   &\footnotesize{37.83\%} &\footnotesize{{\bf 28.18\%}} \\
+\footnotesize{ResNet110} 		&\footnotesize{6.41\%} \footnotesize{(6.43\%\cite{ResNet})} & \footnotesize{{\bf 4.98\%}}  &\footnotesize{8.06\%}  &\footnotesize{ 8.91\%}&\footnotesize{{\bf 7.13\%}}   &\footnotesize{42.94\%} &\footnotesize{{\bf 28.29\%}} \\
+\footnotesize{ResNet18} 		&\footnotesize{6.16\%} & \footnotesize{{\bf 4.65\%}}  &\footnotesize{6.00\%}  &\footnotesize{8.26\%} &\footnotesize{{\bf 6.29\%}}   &\footnotesize{27.02\%} &\footnotesize{{\bf 22.48\%}} \\
+\footnotesize{ResNet34} 		&\footnotesize{5.93\%} & \footnotesize{{\bf 4.26\%}}  &\footnotesize{6.32\%}  &\footnotesize{8.31\%} &\footnotesize{{\bf 6.11\%}}   &\footnotesize{26.47\%} &\footnotesize{{\bf 20.27\%}} \\
+\footnotesize{ResNet50} 		&\footnotesize{6.24\%} & \footnotesize{{\bf 4.17\%}}  &\footnotesize{6.63\%}  &\footnotesize{9.64\%} &\footnotesize{{\bf 6.49\%}}   &\footnotesize{29.69\%} &\footnotesize{{\bf 20.19\%}} \\
+\footnotesize{PreActResNet18}   &\footnotesize{6.21\%} & \footnotesize{{\bf 4.74\%}}  &\footnotesize{6.38\%}  &\footnotesize{8.20\%} &\footnotesize{{\bf 6.61\%}}   &\footnotesize{27.36\%} &\footnotesize{{\bf 21.88\%}} \\
+\footnotesize{PreActResNet34} 	&\footnotesize{6.08\%} & \footnotesize{{\bf 4.40\%}}  &\footnotesize{5.88\%}  &\footnotesize{8.52\%} &\footnotesize{{\bf 6.34\%}}   &\footnotesize{23.56\%} &\footnotesize{{\bf 19.02\%}} \\
+\footnotesize{PreActResNet50} 	&\footnotesize{6.05\%} & \footnotesize{{\bf 4.27\%}}  &\footnotesize{5.91\%}  &\footnotesize{9.18\%} &\footnotesize{{\bf 6.05\%}}   &\footnotesize{25.05\%} &\footnotesize{{\bf 18.61\%}} \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+
+Tables \ref{Cifar10} and \ref{Cifar100} list the error rates of 15 different vanilla networks and WNLL activated networks on CIFAR10 and CIFAR100 datasets. On CIFAR10, WNLL activated DNNs outperforms the vanilla ones with around 1.5$\%$ to 2.0$\%$ absolute, or 20$\%$ to 30$\%$ relative error rate reduction. The improvements on CIFAR100 are more significant. We independently ran the vanilla DNNs on both datasets, and our results are consistent with the original reports and other researchers' reproductions \cite{DRN:2016,IdentityMap:2016,Huang:2017CVPR}. We provide experimental results of DNNs' performance on SVHN data in the appendix. Interestingly, the improvement are more significant on harder tasks, suggesting potential for our methods to succeed on other tasks/datasets. For example, reducing the sizes of DNNs is an important direction to make the DNNs applicable for generalize purposes, e.g., auto-drive, mobile intelligence, etc. So far the most successful attempt is DNNs weights quantization\cite{BinaryConnect:2015}. Our approach is a new direction for reducing the size of the model: to achieve the same level of accuracy, compared to the vanilla networks, our model's size can be much smaller. 
+
+
+\begin{table}[!h]
+\renewcommand{\arraystretch}{1.3}
+\centering
+\caption{Error rates of the vanilla DNNs v.s. the WNLL activated DNNs over the whole CIFAR100 dataset. (Median of 5 independent trials)}
+\label{Cifar100}
+\centering
+\resizebox{\textwidth}{!}{\begin{tabular}{cccccc}
+\hline
+\textbf{Network} & \textbf{Vanilla DNNs} & \textbf{WNLL DNNs} & \textbf{Network} & \textbf{Vanilla DNNs} & \textbf{WNLL DNNs}\\
+\hline
+VGG11           & 32.68\% & {\bf 28.80\%}  & ResNet110       & 28.86\% & {\bf 23.74\%}\\
+VGG13           & 29.03\% & {\bf 25.21\%}  & ResNet18 	     & 27.57\% & {\bf 22.89\%}\\
+VGG16           & 28.59\% & {\bf 25.72\%}  & ResNet34 	     & 25.55\% & {\bf 20.78\%}\\
+VGG19           & 28.55\% & {\bf 25.07\%}  & ResNet50        & 25.09\% & {\bf 20.45\%}\\
+ResNet20 		& 35.79\% & {\bf 31.53\%}  & PreActResNet18  & 28.62\% & {\bf 23.45\%}\\
+ResNet32 		& 32.01\% & {\bf 28.04\%}  & PreActResNet34  & 26.84\% & {\bf 21.97\%}\\
+ResNet44        & 31.07\% & {\bf 26.32\%}  & PreActResNet50  & 25.95\% & {\bf 21.51\%}\\
+ResNet56        & 30.03\% & {\bf 25.36\%}  &                 &         &        \\
+\hline
+\end{tabular} }
+\end{table}
+
+
+
+\section{Concluding Remarks}
+We are motivated by ideas from manifold interpolation and the connection between ResNets and control problems of transport equations. We propose to replace the classical output activation function, i.e., softmax, by a harmonic extension type of interpolating function. This simple surgery enables the deep neural nets (DNNs) to make sufficient use of the manifold information of data. An end-to-end greedy style, multi-stage training algorithm is proposed to train this novel output layer. On one hand, our new framework resolves the degradation problem caused by insufficient data; on the other hand, it boosts the generalization accuracy significantly compared to the baseline. This improvement is consistent across networks of different types and different number of layers. The increase in generalization accuracy could also be used to train smaller models with the same accuracy, which has great potential for the mobile device applications.
+
+\subsection{Limitation and Future Work}
+There are several limitations of our framework to improve which we wish to remove. Currently, the manifold interpolation step is still a computational bottleneck in both speed and memory. During the interpolation, in order to make the interpolation valid, the batch size needs to be quasilinear with respect to the number of classes. This pose memory challenges for the ImageNet dataset \cite{imagenet_cvpr09}. Another important issue is the approximation of the gradient of the WNLL activation function. Linear function is one option but it is far from optimal. We believe a better harmonic function approximation can further lift the model's performance.
+
+Due to the robustness and generalization capabilities shown by our experiments, we conjecture that by using the interpolation function as output activation, neural nets can become more stable to perturbations and adversarial attacks \cite{Papernot:2015}. The reason for this stability conjecture is because our framework combines both learned decision boundary and nearest neighbor information for classification. 
+
+\clearpage
+\section*{Acknowledgments}
+%Use unnumbered third level headings for the acknowledgments. All
+%acknowledgments go at the end of the paper. Do not include
+%acknowledgments in the anonymized submission, only in the final paper.
+This material is based on research sponsored by the Air Force Research Laboratory and DARPA under agreement number FA8750-18-2-0066. And by the U.S. Department of Energy,
+Office of Science and by National Science Foundation, under Grant Numbers DOE-SC0013838
+and DMS-1554564, (STROBE). And by the NSF DMS-1737770, NSFC 11371220 and 11671005, and the Simons foundation. The U.S. Government is authorized to reproduce and distribute reprints for Governmental purposes notwithstanding any copyright notation thereon.
+
+%\bibliography{references.bib}
+%\bibliographystyle{plain}
+
+\begin{thebibliography}{10}
+
+\bibitem{agostinelli2014learning}
+F.~Agostinelli, M.~Hoffman, P.~Sadowski, and P.~Baldi.
+\newblock Learning activation functions to improve deep neural networks.
+\newblock{\em arXiv preprint arXiv:1412.6830}, 2014.
+
+\bibitem{BinaryConnect:2015}
+M.~Courbariaux~Y. Bengio and J.~David.
+\newblock Binaryconnet: Training deep neural networks with binary weights.
+\newblock{\em NIPS}, 2015.
+
+\bibitem{GreedyTraining:2007}
+Y.~Bengio, P.~Lamblin, D.~Popovici, and H.~Larochelle.
+\newblock Greedy layer-wise training of deep networks.
+\newblock{\em NIPS}, 2007.
+
+\bibitem{Calder:2018}
+J.~Calder.
+\newblock The game theoretic p-laplacian and semi-supervised learning with few
+  labels.
+\newblock{\em ArXiv:1711.10144}, 2018.
+
+\bibitem{chang2017multi}
+Bo~Chang, Lili Meng, Eldad Haber, Frederick Tung, and David Begert.
+\newblock Multi-level residual networks from dynamical systems view.
+\newblock{\em arXiv preprint arXiv:1710.10348}, 2017.
+
+\bibitem{Chen:2017NIPS}
+Y.~Chen, J.~Li, H.~Xiao, X.~Jin, S.~Yan, and J.~Feng.
+\newblock Dual path networks.
+\newblock{\em NIPS}, 2017.
+
+\bibitem{imagenet_cvpr09}
+J.~Deng, W.~Dong., R.~Socher, J.~Li, K.~Li, and F.~Li.
+\newblock{ImageNet: A Large-Scale Hierarchical Image Database}.
+\newblock In {\em CVPR09}, 2009.
+
+\bibitem{glorot2011deep}
+X.~Glorot, A.~Bordes, and Y.~Bengio.
+\newblock Deep sparse rectifier neural networks.
+\newblock In {\em Proceedings of the Fourteenth International Conference on
+  Artificial Intelligence and Statistics}, pages 315--323, 2011.
+
+\bibitem{GAN}
+I.~Goodfellow, J.~Pouget-Abadie, M.~Mirza, B.~Xu, D.~Warde-Farley, S.~Ozair,
+  A.~Courville, and Y.~Bengio.
+\newblock Generative adversarial nets.
+\newblock{\em Advances in Neural Information Processing Systems}, pages
+  2672--2680, 2014.
+
+\bibitem{goodfellow2013maxout}
+I.~Goodfellow, D.~Warde-Farley, M.~Mirza, A.~Courville, and Y.~Bengio.
+\newblock Maxout networks.
+\newblock{\em arXiv preprint arXiv:1302.4389}, 2013.
+
+\bibitem{he2015delving}
+K.~He, X.~Zhang, S.~Ren, and J.~Sun.
+\newblock Delving deep into rectifiers: Surpassing human-level performance on
+  imagenet classification.
+\newblock In {\em Proceedings of the IEEE international conference on computer
+  vision}, pages 1026--1034, 2015.
+
+\bibitem{DRN:2016}
+K.~He, X.~Zhang, S.~Ren, and J.~Sun.
+\newblock Deep residual learning for image recognition.
+\newblock{\em CVPR}, 2016.
+
+\bibitem{ResNet}
+K.~He, X.~Zhang, S.~Ren, and J.~Sun.
+\newblock Deep residual learning for image recognition.
+\newblock{\em CVPR}, pages 770--778, 2016.
+
+\bibitem{IdentityMap:2016}
+K.~He, X.~Zhang, S.~Ren, and J.~Sun.
+\newblock Identity mappings in deep residual networks.
+\newblock{\em ECCV}, 2016.
+
+\bibitem{DBN:2006}
+G.~Hinton, S.~Osindero, and T.~Teh.
+\newblock A fast learning algorithm for deep belief nets.
+\newblock{\em Neural Computation}, 18(7):1527--1554, 2006.
+
+\bibitem{hinton2012improving}
+G.~Hinton, N.~Srivastava, A.~Krizhevsky, I.~Sutskever, and R.~Salakhutdinov.
+\newblock Improving neural networks by preventing co-adaptation of feature
+  detectors.
+\newblock{\em arXiv preprint arXiv:1207.0580}, 2012.
+
+\bibitem{Huang:2017CVPR}
+G.~Huang, Z.~Liu, K.~Weinberger, and L.~van~der Maaten.
+\newblock Densely connected convolutional networks.
+\newblock{\em CVPR}, 2017.
+
+\bibitem{Huang:2016ECCV}
+G.~Huang, Y.~Sun, Z.~Liu, D.~Sedra, and K.~WeinBerger.
+\newblock Deep networks with stochastic depth.
+\newblock{\em ECCV}, 2016.
+
+\bibitem{Cifar:2009}
+A.~Krizhevsky.
+\newblock Learning multiple layers of features from tiny images.
+\newblock 2009.
+
+\bibitem{krizhevsky2012imagenet}
+A.~Krizhevsky, I.~Sutskever, and G.~Hinton.
+\newblock Imagenet classification with deep convolutional neural networks.
+\newblock In {\em Advances in neural information processing systems}, pages
+  1097--1105, 2012.
+
+\bibitem{MNIST:1998}
+Y.~LeCun.
+\newblock The mnist database of handwritten digits.
+\newblock 1998.
+
+\bibitem{ResNet:PDE}
+Z.~Li and Z.~Shi.
+\newblock Deep residual learning and pdes on manifold.
+\newblock{\em arXiv preprint arXiv:1708.05115}, 2017.
+
+\bibitem{ANN:2014}
+M.~Muja and D.~Lowe.
+\newblock Scalable nearest neighbor algorithms for high dimensional data.
+\newblock{\em Pattern Analysis and Machine Intelligence (PAMI)}, 36, 2014.
+
+\bibitem{nair2010rectified}
+V.~Nair and G.~Hinton.
+\newblock Rectified linear units improve restricted boltzmann machines.
+\newblock In {\em Proceedings of the 27th international conference on machine
+  learning (ICML-10)}, pages 807--814, 2010.
+
+\bibitem{SVHN:2011}
+Y.~Netzer, T.~Wang, A.~Coates, A.~Bissacco, B.~Wu, and A.~Ng.
+\newblock Reading digits in natural images with unsupervised features learning.
+\newblock{\em NIPS Workshop on Deep Learning and Unsupervised Feature
+  Learning}, 2011.
+
+\bibitem{Papernot:2015}
+N.~Papernot, P.~McDaniel, S.~Jha, M.~Fredrikson, Z.~Celik, and A.~Swami.
+\newblock The limitations of deep learning in adversarial settings.
+\newblock{\em ArXiv:1511.07528}, 2015.
+
+\bibitem{paszke2017automatic}
+A.~Paszke and {et al}.
+\newblock Automatic differentiation in py{T}orch.
+\newblock 2017.
+
+\bibitem{WNLL:2017}
+Z.~Shi, S.~Osher, and W.~Zhu.
+\newblock Weighted nonlocal {L}aplacian on interpolation from sparse data.
+\newblock{\em Journal of Scientific Computing}, 73:1164--1177, 2017.
+
+\bibitem{VGG:2014}
+K.~Simonyan and A.~Zisserman.
+\newblock Very deep convolutional networks for large-scale image recognition.
+\newblock{\em Arxiv:1409.1556}, 2014.
+
+\bibitem{Tang:2013}
+Y.~Tang.
+\newblock Deep learning using linear support vector machines.
+\newblock{\em ArXiv:1306.0239}, 2013.
+
+\bibitem{wan2013regularization}
+L.~Wan, M.~Zeiler, S.~Zhang, Y.~LeCun, and R.~Fergus.
+\newblock Regularization of neural networks using dropconnect.
+\newblock In {\em International Conference on Machine Learning}, pages
+  1058--1066, 2013.
+
+\bibitem{Zagoruyko:2016}
+S.~Zagoruyko and N.~Komodakis.
+\newblock Wide residual networks.
+\newblock{\em BMVC}, 2016.
+
+\bibitem{Zhu:2017DeepLearning}
+W.~Zhu, Q.~Qiu, J.~Huang, R.~Carderbank, G.~Sapiro, and I.~Daubechies.
+\newblock{LDMN}et: Low dimensional manifold regularized neural networks.
+\newblock{\em UCLA CAM Report: 17-66}, 2017.
+
+\end{thebibliography}
+
+
+\newpage
+\section*{Appendix}
+\begin{proof}[Proof of Theorem \ref{Rep-Thm}]
+Let $X_i, i=1, 2, \cdots, N$, be the number of additional data needed to obtain the $i$-type after $(i-1)$ distinct types have been sampled. The total number of instances needed is:
+$$
+X = X_1+X_2+\cdots+X_N = \sum_{i=1}^N X_i.
+$$
+For any $i$, $i-1$ distinct types of instances have already been sampled. It follows that  the probability of a new instance being of a different type is $1-\frac{i-1}{N}=\frac{N-i+1}{N}$. Essentially, to obtain the $i$-th distinct type, the random variable $X$ follows a geometric distribution with $p=\frac{N-i+1}{N}$ and $E[X_i]=\frac{N}{N-i+1}$. Thus, we have
+$$
+E[X] = \sum_{i=1}^NE[X_i]=\sum_{i=1}^N\frac{N}{N-i+1}.
+$$
+Asymptotically, $E[X]\approx N\ln N$ for sufficiently large $N$.
+\end{proof}
+
+\section*{Results on SVHN data}
+For the SVHN recognition task, we simply test the performance when the full training data are used. Here we only test the performance of the 
+%18 and 34 layers 
+ResNets and pre-activated ResNets. There is a relative 7$\%$-10$\%$ error rate reduction for all these DNNs.
+
+%\vskip -0.8cm
+\begin{table}[!h]
+\renewcommand{\arraystretch}{1.3}
+\centering
+\caption{Error rates of the vanilla DNNs v.s. the WNLL activated DNNs over the whole SVHN dataset. (Median of 5 independent trials)}
+\label{SVHN-Whole}
+\centering
+\begin{tabular}{ccc}
+\hline
+\textbf{Network} & \textbf{Vanilla DNNs} & \textbf{WNLL DNNs}\\
+\hline
+ResNet20        &  3.76\% & {\bf 3.44\%}\\
+ResNet32        &  3.28\% & {\bf 2.96\%}\\
+ResNet44        &  2.84\% & {\bf 2.56\%}\\
+ResNet56        &  2.64\% & {\bf 2.32\%}\\
+ResNet110       &  2.55\% & {\bf 2.26\%}\\
+ResNet18 		&  3.96\% & {\bf 3.65\%}\\
+ResNet34 		&  3.81\% & {\bf 3.54\%}\\
+PreActResNet18 	&  4.03\% & {\bf 3.70\%}\\
+PreActResNet34 	&  3.66\% & {\bf 3.32\%}\\
+\hline
+\end{tabular}
+\end{table}
+\end{document}

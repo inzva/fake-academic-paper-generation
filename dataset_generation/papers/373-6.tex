@@ -1,0 +1,110 @@
+%!TEX root = main.tex
+\documentclass[../main.tex]{subfiles}
+\begin{document}
+
+\section{Implementation Details}
+In this section we outline how we automatically generate explanations, our hypothesis space, and how to efficiently optimize the teaching objective.
+
+%
+%
+%
+\subsection{Image Explanations}
+For each image, we require an explanation $e$ that tells the learner why an image $x$ has a given label $y$.
+How to best generate explanations is still an open question \cite{DoshiKim2017Interpretability}.
+One, time-consuming, way to acquire these explanations would be to ask an expert to manually label the informative regions in each image. 
+Alternatively, they could be crowdsourced, but this may result in very noisy explanations \eg, \cite{deng2016}.
+Instead, we propose to use the ground truth class label provided with each image to automatically generate visual explanations. 
+
+We exploit the fact that modern Convolutional Neural Networks (CNNs) used for image classification often produce semantically meaningful features.   
+We use the Class Activation Mapping approach of \cite{zhou2016learning} to automatically generate explanations for each image, but other existing methods for generating explanations can also be easily used with our model.
+For each pixel location $j$ we computed the weighted sum of the output of the final convolutional layer from a CNN that has been trained on the input data,
+\begin{equation}
+ e(j) = \sum_k w_c^k f^k_{j}(x) + b_c.
+\end{equation}
+Here, $f^k_{j}(x)$ denotes the feature value at pixel location $j$ and output channel $k$ for the CNN $f$.
+The weight values and biases, $w_c$ and $b_c$, from the final fully connected layer associated with the ground truth class are used to weight each feature map. 
+Finally, we normalize the explanations so that each spans the range $[0, 1]$.
+
+We use the entropy of the explanation 
+as a proxy for the difficulty the user may have in interpreting it,
+\begin{equation}
+ \diff(e) = -\frac{1}{J}\sum_{j}e(j)\log(e(j)),
+\end{equation}
+where $J$ is the number of pixels in the explanation.
+This captures our preference for localized and discrete highlighted regions whose values are either $0$ or $1$. 
+In practice, weight regularization applied during the training of the CNN ensures that we do not have explanations that are uniformly high, and the classification training objective ensures that there are some non-zero entries in the feature maps to correctly predict the class label.
+So there is no bias towards classes that have low entropy on average, we subtract the mean difficulty for each class (making sure the final difficulties are $>0$).
+%As a final processing step, we set the difficulty level for the explanation of any image the CNN failed to correctly classify during training to the maximum difficulty value to discourage these examples with incorrect explanations from being selected. 
+
+We use a ResNet18~\cite{he2016deep} trained from scratch on each dataset as our backbone CNN and extract features from the output of the second residual block, resulting in a downsampling factor of $8$.
+To this, we append an additional convolutional layer with $64$ filters of size $3\times3$, and a final fully connected layer with the number of classes as output.
+We finetune the entire model on $128\times128$ image crops with a batch size of $64$ for $60$ epochs using Adam \cite{kingma2014adam}. 
+During training, we use random flips, crops, and color augmentations.
+We start with an initial learning rate of $0.0002$ and decay by a factor of $10$ after $30$ epochs.
+To generate the final explanation map $e$ for each $144\times144$ input image $x$, we extract the explanation for the center $128\times128$ crop and pad and resize it to input resolution.
+
+
+
+%
+%
+%
+\subsection{Hypotheses Space Generation}
+We require access to a representative hypothesis space $\mathcal{H}$ to perform teaching. 
+This space should span the different possible linear classifiers that the learners may be using. 
+It represents the different biases that they may have in relation to the teaching task at hand. 
+However, generating such a space for multiple fine-grained categories is not trivial.
+As an alternative to generating embeddings from crowd annotations \eg \cite{welinder2010multidimensional}, we propose to use the features from our finetuned CNN from the previous section. 
+Extracting the $64$ dimensional penultimate feature vector from our modified ResNet18 gives us a representation that encodes visual similarity.
+While this is unlikely to be the same representation used by our learners it has the advantage that it can be generated with no additional annotation cost. 
+
+We generate a set of candidate linear classifiers using the CNN features by first clustering the features in each class into $2$ subsets and training a linear SVM to separate each from the rest of the data.
+We also train a linear SVM to separate each class from the other classes, representing the best possible hypothesis $h^*$. 
+Next, we group each pair of classes and train additional linear models to separate these from the remaining classes.
+We add all these linear classifiers to the hypothesis set and add an additional random linear classifier to bring the total number of hypotheses to $100$.
+Each dataset is split into $80\%$ training and $20\%$ test sets.
+As in \cite{singla2014near}, images in the training set that are not possible to correctly classify with the optimal hypothesis $h^*$ are removed. 
+
+
+
+%
+%
+%
+\subsection{Efficient Optimization}
+Optimizing \eqnref{eqn:final_selection} involves searching over all unseen images in $\mathcal{X}$ and measuring their reduction in error for each hypothesis in $\mathcal{H}$ across all classes. 
+With the aid of some pre-computation, we can reduce the updates to simple matrix operations.
+For simplicity, we present this in terms of the binary \STRICT model \cite{singla2014near}, but the same formulation holds for our multiclass \EXPLAIN algorithm by including the additional discount factors and classes.
+
+First, we note that as the prior term in \eqnref{eqn:objective} is constant at each time step and can be removed without affecting the selection of $x_{t}$.
+Second, we can re-factor the posterior into the current posterior multiplied by the update
+\begin{equation}
+R(T \cup \{x\}) = - \sum \limits_{h \in \mathcal{H}}\err(h) P(h\given T) \delta(h, x),
+\end{equation}
+where $\delta(h, x) = P(y|h, x)$ if $y \neq \hat{y}^h$ and otherwise it is set to $1$.
+In matrix notation, this can be rewritten as 
+\begin{equation}
+\boldsymbol{r} = -(\boldsymbol{e}\circ\boldsymbol{p}_i) \boldsymbol{L},
+\end{equation}
+where $\circ$ is the element-wise multiplication.
+$\boldsymbol{e}$ is a vector of size $1\times |\mathcal{H}|$ that contains the error associated with each hypothesis, and can be computed once offline.
+$\boldsymbol{p}_i$ is a vector of size $1\times |\mathcal{H}|$ that represents the current posterior over the  hypotheses, which we will update after each time step $i$.
+$\boldsymbol{L}$ is a $|\mathcal{H}|\times |\mathcal{X}|$ matrix that can be computed once offline. 
+Each entry in $\boldsymbol{L}$ encodes the confidence each $h$ places in each example $x$ 
+\begin{equation}
+\boldsymbol{L}_{h,x} =
+\begin{cases}
+  1, & \text{if}\ y = \hat{y}^h \\
+  %P(h\given x), & \text{otherwise}.
+  P(y\given h, x), & \text{otherwise}.
+\end{cases}
+\end{equation}
+Computing the next teaching example, $x_t$ simply amounts to choosing the maximum entry in the $1\times |\mathcal{X}|$ error reduction vector $\boldsymbol{r}$, taking care to only select from the examples not currently in the teaching set. 
+We then update the posterior using 
+\begin{equation}
+\boldsymbol{p}_{i+1} = \boldsymbol{p}_i \circ \boldsymbol{l}_{t}, 
+\end{equation}
+where $\boldsymbol{l}_{t} = \boldsymbol{L}_{:, t}$ is the column vector from $\boldsymbol{L}$ associated with the selected teaching example $x_t$.
+For the multiclass setting, we simply maintain a separate $\boldsymbol{e}^c$, $\boldsymbol{L}^c$, and $\boldsymbol{p}^c$ for each class and choose the next teaching example that results in the biggest reduction across all classes.
+
+
+
+\end{document}

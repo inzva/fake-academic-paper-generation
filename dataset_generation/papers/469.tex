@@ -1,0 +1,397 @@
+
+\documentclass[10pt,twocolumn,letterpaper]{article}
+
+\usepackage{wacv}
+\usepackage{times}
+\usepackage{epsfig}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{hyperref}
+\usepackage{array}
+\usepackage{graphbox}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage[percent]{overpic}
+\usepackage{pdfpages}
+
+% Include other packages here, before hyperref.
+
+% If you comment hyperref and then uncomment it, you should delete
+% egpaper.aux before re-running latex.  (Or just hit 'q' on the first latex
+% run, let it finish, and you should be clear).
+%\usepackage[pagebackref=true,breaklinks=true,letterpaper=true,colorlinks,bookmarks=false]{hyperref}
+
+\wacvfinalcopy % *** Uncomment this line for the final submission
+
+\def\wacvPaperID{***} % *** Enter the wacv Paper ID here
+\def\httilde{\mbox{\tt\raisebox{-.5ex}{\symbol{126}}}}
+
+% Pages are numbered in submission mode, and unnumbered in camera-ready
+\ifwacvfinal\pagestyle{empty}\fi
+\setcounter{page}{1}
+
+% text already.
+\def\eg{\emph{e.g.}}
+\def\Eg{\emph{E.g.}}
+\def\ie{\emph{i.e.}}
+\def\etal{\emph{et al}}
+\newcommand{\todo}[1]{ \color{red} #1 \color{black}}
+\newcommand{\matteoscomments}[1]{ \color{blue} #1 \color{black}}
+\newcommand{\stefanoscomments}[2]{ \color{magenta} #1 \color{black}}
+\newcommand{\alessioscomments}[1]{\color{cyan} #1 \color{black}}
+\newcommand{\luigicomments}[1]{\color{green} #1 \color{black}}
+\newcommand{\fabiocomments}[1]{\color{red} #1 \color{black}}
+
+% Paper specific command
+\def\netname{\emph{MADNet}}
+\def\extendednetname{\underline{M}odularly \underline{AD}aptive \underline{Net}work}
+\def\algoname{\emph{MAD}}
+\def\extendedalgoname{\underline{M}odular \underline{AD}aptation}
+\def\modulename{\emph{Disparity Approximator}}
+\def\kitti{KITTI}
+
+\begin{document}
+
+\title{Real-time self-adaptive deep stereo}
+
+% Authors at the same institution
+%\author{First Author \hspace{2cm} Second Author \\
+%Institution1\\
+%{\tt\small firstauthor@i1.org}
+%}
+% Authors at different institutions
+\author{Alessio Tonioni,  Fabio Tosi, Matteo Poggi, Stefano Mattoccia and Luigi Di Stefano \\
+Department   of   Computer   Science   and   Engineering   (DISI)\\  University  of  Bologna,  Bologna,  Italy \\ \{name.surname\}@unibo.it \\
+}
+
+
+\maketitle
+\ifwacvfinal\thispagestyle{empty}\fi
+
+\begin{abstract}
+
+Deep convolutional neural networks trained end-to-end are the undisputed state-of-the-art methods to regress dense disparity maps directly from stereo pairs. However, such methods suffer from notable accuracy drops when exposed to scenarios significantly different from those seen in the training phase (\eg real vs synthetic images, indoor vs outdoor, etc). As it is unlikely to be able to gather enough samples to achieve effective training/tuning in any target domain, we propose to perform unsupervised and continuous online adaptation of a deep stereo network in order to preserve its accuracy independently of the sensed environment. However, such a strategy can be extremely demanding regarding computational resources and thus not enabling real-time performance. Therefore, we address this side effect by introducing a new lightweight, yet effective, deep stereo architecture \extendednetname{} (\netname{}) and by developing \extendedalgoname{} (\algoname{}), an algorithm to train independently only sub-portions of our model. By deploying \netname{} together with \algoname{} we propose the first ever real-time self-adaptive deep stereo system. 
+
+\end{abstract}
+
+%-------------------------------------------------------------------------
+\section{Introduction}
+\label{sec:intro}
+
+Many key tasks related to prominent application areas such as autonomous vehicles and mobile robotics leverage on the availability of a dense and reliable 3D reconstruction of the sensed environment. Among depth sensing technologies, passive stereo has proven particularly amenable to the above tasks, being potentially able to fulfill such requirements with low latency, at an affordable cost, in indoor and outdoor environments.
+Following the groundbreaking work by Mayer \etal{} that introduced DispNet \cite{mayer2016large}, current state-of-the-art stereo methods rely on learnable deep convolutional neural networks (CNNs) that take as input a pair of left-right frames and directly regress a dense disparity map. In challenging real-world scenarios, like the popular \kitti{} benchmarks \cite{KITTI_2012,KITTI_2015}, this strategy turns out to be faster and more effective than \emph{traditional} (\ie, not learning-based) algorithms. However, as recently highlighted in \cite{Tonioni_2017_ICCV,pang2018zoom}, deep stereo networks experience a huge performance drop when tested on completely unseen scenarios due to the domain shift between training data (often synthetic \cite{mayer2016large}) and testing environment. This domain shift can be partially solved by fine-tuning on \textit{few} annotated samples from the target domain. Yet, obtaining reliable groundtruth data is a challenging task \emph{per se},  which requires  costly active sensors such as LIDARs followed by noise removal by post-processing \cite{Uhrig2017THREEDV} or manual intervention. Although recent works have proposed to overcome the need for groundtruth \cite{Tonioni_2017_ICCV,pang2018zoom,zhou2017unsupervisedStereo,godard2017unsupervised,zhang2018activestereonet}, all of them assume availability of stereo pairs from the target domain beforehand, which inherently limits adaptation ability to the available samples.
+We agree with \cite{Tonioni_2017_ICCV,pang2018zoom} about the importance of addressing the domain shift issue. Nonetheless, we cast \emph{adaptation} as a \emph{continuous learning} process whereby the stereo network evolves \emph{online}  based on the images gathered by the camera during its real deployment. We believe that the ability to continually adapt itself in real-time is key to any deep learning machinery meant to work in relevant practical scenarios, like autonomous driving, where gathering training samples to be deployed offline from all possible surroundings turns out unfeasible. 
+
+\begin{figure*}
+	\setlength{\tabcolsep}{1pt}
+	\center
+	\begin{tabular}{cccc}
+		\vspace{1pt}
+		(a)&
+		\includegraphics[align=c,width=0.30\textwidth]{0.jpg} & 
+		\includegraphics[align=c,width=0.30\textwidth]{150.jpg} & 
+		\includegraphics[align=c,width=0.30\textwidth]{300.jpg} \\
+		
+		\vspace{1pt}
+		(b)&
+		\includegraphics[align=c,width=0.30\textwidth]{synth_C_disparity_0.png} &
+		\includegraphics[align=c,width=0.30\textwidth]{synth_C_disparity_150.png} &
+		\includegraphics[align=c,width=0.30\textwidth]{synth_C_disparity_300.png}\\
+		
+		\vspace{1pt}
+		(c)&
+		\includegraphics[align=c,width=0.30\textwidth]{C_disparity_0.png} &
+		\includegraphics[align=c,width=0.30\textwidth]{C_disparity_150.png} &
+		\includegraphics[align=c,width=0.30\textwidth]{C_disparity_300.png}\\
+		
+		\vspace{1pt}
+		(d)&
+		\includegraphics[align=c,width=0.30\textwidth]{C_disparity_0.png} &
+		\includegraphics[align=c,width=0.30\textwidth]{D_disparity_150.png} &
+		\includegraphics[align=c,width=0.30\textwidth]{D_disparity_300.png}\\
+		
+		\vspace{1pt}
+		&$0^{th}$ frame & $150^{th}$ frame & $300^{th}$ frame\\
+		
+	\end{tabular}
+	\caption{Disparity maps predicted by \netname{} on a \kitti{} sequence  \cite{KITTI_RAW}. Left images (a), no adaptation (b), online adaptation of the \emph{whole} network (c), online adaptation by \algoname{} (d).}
+	\label{fig:teaser}
+\end{figure*}
+
+
+We will show how continuous online adaptation can be achieved by deploying one of the unsupervised losses proposed in \cite{garg2016unsupervised,godard2017unsupervised,Tonioni_2017_ICCV,zhang2018activestereonet}, computing the loss on the current frames, updating the whole network by back-propagation (from now on shortened as \emph{back-prop}) and moving to the next pair of input frames. Adapting, however, comes with the side effect of reducing inference speed to $\sim\frac{1}{3}$ at best, as we will show experimentally, a price far too high to pay for most modern state of the art deep stereo systems. To keep a high enough frame rate we have developed a novel \extendednetname{} (\netname{}) designed to be lightweight, fast and modular. Our architecture exhibits accuracy comparable to DispNetC \cite{mayer2016large} yet use $\frac{1}{10}$ of the parameters, runs at $\sim40FPS$ for disparity inference and performs online adaptation of the whole network at $\sim15FPS$. Moreover, to allow an even higher frame rate during adaptation at the cost of slightly less accuracy, we have developed \extendedalgoname{} (\algoname{}) an algorithm that leverages the modular architecture of \netname{} in order to train sub-portions of the whole network independently. Using \netname{} together with \algoname{} we are able to adapt our system without supervision to unseen environment at $\sim25FPS$. 
+
+\autoref{fig:teaser} shows the disparity maps predicted by \netname{} on three successive frames of a video from the \kitti{} dataset \cite{KITTI_RAW} either without undergoing any adaptation (b) or by adapting online the \emph{whole} network (c) or by our computationally efficient \algoname{} approach  (d). Thus, (c) and (d) show how online adaptation can improve the quality of the predicted disparity maps significantly in as few as 150 frames, \ie with a latency of about 10 and 6 seconds for whole adaption and \algoname{}, respectively. 
+Extensive experimental results on KITTI raw dataset \cite{KITTI_RAW} shall highlight that i) our network is more accurate than models with similar complexity \cite{khamis2018stereonet} ii) it can dramatically boost its accuracy in few seconds reaching accuracy comparable to offline fine-tuning over groundtruth.
+To the best of our knowledge, \netname{} and \algoname{} realize the first-ever real-time, self-adapting, deep stereo system. 
+
+\section{Related Work}
+\label{sec:related}
+
+
+We review here the recent literature of deep stereo models alongside with methods concerned with image reconstruction losses for unsupervised learning.
+%, the other main topic relevant to our work.
+
+\textbf{Machine learning for stereo.} Early attempts to leverage machine learning for stereo matching concerned estimating confidence measures \cite{Poggi_2017_ICCV}, by random forest classifiers \cite{Hausler_2013_CVPR,Spyropoulos_2014_CVPR,Park_2015_CVPR,Poggi_2016_3DV} and -- later -- by CNNs \cite{Poggi_2016_BMVC,Seki_2016_BMVC,TOSI_2018_ECCV}, typically plugged into conventional pipelines to improve accuracy. 
+CNN based matching cost functions \cite{zbontar2016stereo,Chen_2015_ICCV,luo2016efficient} achieved state-of-the-art on both KITTI and Middlebury v3 by replacing conventional cost functions \cite{SCHARSTEIN_COST} within the SGM pipeline  \cite{hirschmuller2005accurate}. Eventually, Shaked and Wolf \cite{Shaked_2017_CVPR} proposed to rely on deep learning both for matching cost computation and disparity selection, while Gidaris and Komodakis \cite{Gidaris_2017_CVPR} for refinement.
+Mayer \etal{} \cite{mayer2016large} proposed the first end-to-end stereo architecture. Although not achieving state-of-the-art accuracy, this seminal work turned out quite disruptive compared to the traditional stereo paradigm outlined in \cite{scharstein2002taxonomy}, highlighting the potential for a totally new approach. Thereby, \cite{mayer2016large} ignited the spread of end-to-end stereo architectures \cite{Kendall_2017_ICCV,Pang_2017_ICCV_Workshops,liang2018learning,chang2018pyramid,jie2018left} that quickly outmatched any other technique on the \kitti{} benchmarks by leveraging on a peculiar training protocol. In particular, the deep network is initially trained on a large amount of synthetic data with groundtruth labels \cite{mayer2016large} and then fine-tuned on the target domain (\eg, \kitti{}) based on stereo pairs with groundtruth. All these contributions focused on accuracy, only recently Khamis et al. \cite{khamis2018stereonet} proposed a deep stereo model with a high enough frame rate to qualify for online usage at the cost of sacrificing accuracy. We will show how in our \netname{} this tradeoff is less disruptive. 
+Unfortunately, all those models are particularly data dependent and their performance dramatically decay when running on environments different from those observed at training time, as shown in \cite{Tonioni_2017_ICCV}. Batsos \etal{} \cite{batsos2018cbmv} partially tackled this weakness by designing a novel matching cost obtained by combining traditional functions and confidence measures \cite{Hu_2012_PAMI,Poggi_2017_ICCV} within a random forest framework, to attain a better generalization compared to CNN-based method \cite{zbontar2016stereo}. 
+
+\textbf{Image reconstruction for unsupervised learning}.
+A recent trend to train deep depth estimation networks in an unsupervised manner relies on image reconstruction losses. In particular, for monocular depth estimation this is achieved by warping different views, coming from stereo pairs or image sequences, and minimizing the reconstruction error \cite{garg2016unsupervised,zhou2017unsupervised,godard2017unsupervised,zhang2018activestereonet,pydnet18,3net18}. This principle has also been used for optical flow \cite{Meister:2018:UUL} and stereo \cite{zhou2017unsupervisedStereo}. For the latter task, alternative unsupervised learning approach consists in deploying traditional stereo algorithms and confidence measures \cite{Tonioni_2017_ICCV} or combining with iterative optimization prediction obtained at multiple resolutions \cite{pang2018zoom}. However, we point out that all these works have addressed offline training only, while we propose to solve the very same problem casting it as online (thus fast) adaptation to unseen environments. 
+Concurrently with our work Zhong \etal{} \cite{zhong2018open} propose to directly train from scratch a (deeper) stereo model on video sequences without supervision, however their proposal does not focus on real time performance requiring 0.8-1.6 seconds for inference from a single frame and several minutes of adaptation to achieve good results. In contrast we maintain the offline training phase on synthetic data and limit the online training to address domain adaptation in the least time possible, making it better suited to adapt in case of sudden context changes.
+
+\section{Online Domain Adaptation}
+\label{sec:online}
+
+Modern machine learning models can suffer from a massive drop in accuracy when tested on data too different from the training one, an issue commonly referred to by the machine learning community as \emph{domain shift problem}. A lot of research work has been done on how to reduce the loose in accuracy and obtain a more general algorithm. However, the most effective practice still relies on additional offline training on samples from the target environments as to get a new system configuration specially adapted for that scenario.  
+As pointed in \cite{Tonioni_2017_ICCV} the domain shift curse is inherently present in a deep stereo network due to the training procedure being mostly performed on synthetic images quite different from real ones. However, the adaptation can be effectively achieved without the need for annotated data fine tuning offline using unsupervised losses \cite{garg2016unsupervised,godard2017unsupervised,Tonioni_2017_ICCV,zhang2018activestereonet}. 
+
+We go one step further and argue that the adaptation can be effectively performed online as soon as new frames are available, thus obtaining a deep stereo system able to adapt itself dynamically. Our online adaptation strategy, to be universally deployable,  can not rely on the availability of groundtruth annotations. Thus, we limit ourselves to use one of the proposed unsupervised losses and perform a single train iteration (forward and backward pass) for each incoming stereo pair. Our model is always in training mode, and thus it is continuously fine-tuning to the actual sensed environment. In \autoref{sec:results} we will show how by performing online adaptation we can achieve results comparable to offline fine-tuning on similar data in as few as $\sim100$ train iterations vouching for the effectiveness of our formulation. 
+
+\section{\netname{} - \extendednetname{}}
+\label{sec:network}
+
+\begin{figure*}[t]
+	\centering
+	\includegraphics[width=0.85\textwidth]{architecture-bmvc.pdf}
+	\caption{Schematic description of the proposed \netname{} architecture (a), each circle between an $F_k$ and the corresponding $D_k$ representing a warp and correlation layer (b).}
+	\label{fig:architecture}
+\end{figure*}
+
+
+We believe that one of the main limitations that have prevented exploration of online adaptation is the computational cost of performing a full train iteration for each incoming frame. Indeed, we will show experimentally how it roughly corresponds to reducing the inference rate of the system to $\sim\frac{1}{3}$, a price far too high to be paid with most modern architectures. To address specifically this issue, we have developed \extendednetname{} (\netname{}), a novel lightweight model for depth estimation inspired by very recent fast, yet accurate, architectures for optical flow \cite{Ranjan_2017_CVPR,sun2018pwc}. We deploy a pyramidal strategy for dense disparity regression for two key purposes: i) maximizing speed and ii) obtaining a modular architecture as depicted in \autoref{fig:architecture}. 
+%Indeed, our \netname{} architecture enables real-time inference alongside with online self-adaptation thank to its lightweight and modular structure enabling to isolate selected portions for dynamic tuning.
+The pyramidal towers extract features from the left and right frames through a cascade of independent modules sharing the same weights. Each module consists of convolutional blocks aimed at reducing the input resolution by deploying two $3 \times 3$ convolutional layers, respectively with stride 2 and 1, followed by Leaky ReLU non-linearities. According to \autoref{fig:architecture}, we count 6 blocks providing  us with feature representations $\mathcal{F}$ from half resolution to $\frac{1}{64}$, namely $\mathcal{F}_1$ to $\mathcal{F}_6$, respectively. These blocks extract  16, 32, 64, 96, 128 and 192 features.
+At the lowest resolution (\ie, level 6), we forward features from left and right images to a correlation layer \cite{mayer2016large}. Then, from the raw matching costs, we deploy a disparity decoder $\mathcal{D}_6$ consisting of 5 additional $3 \times 3$ convolutional layers,  with 128, 128, 96, 64, and 1 output channels. Again, each layer is followed by Leaky ReLU, except the last one, which provides the disparity map at the lowest resolution. 
+Then, $D_6$ is up-sampled to level $5$ by bilinear interpolation and used both for warping right features towards left ones before computing correlations and as input to $\mathcal{D}_{5}$. From this level onwards, the aim of the disparity decoders $\mathcal{D}_{k}$ is to refine and correct the upsampled disparity coming from the lower resolution using as guidance the correlation score obtained by matching convolutional features. All the correlations inside our network are computed along a [-2,2] range of possible shift.
+This process is repeated up to quarter resolution (\ie, level 2), where we add a further refinement module consisting  of $3 \times 3$ dilated convolutions \cite{sun2018pwc}, with, respectively 128, 128, 128, 96, 64, 32, 1 output channels and 1, 2, 4, 8, 16, 1, 1 dilation factors, before bilinearly upsampling to full resolution. Additional details on the \netname{}  architecture are available in the supplementary material.
+
+\netname{} has a smaller memory footprint and delivers disparity maps much more rapidly than other end-to-end networks such as \cite{mayer2016large,Kendall_2017_ICCV}. Moreover, if properly trained or adapted, it turns out more accurate than DispNetC. Concerning efficiency, working at decimated resolutions allows for computing correlations on a small horizontal window \cite{sun2018pwc}, while warping features and forwarding disparity predictions across the different resolutions enables to maintain a small search range and look for residual displacements only. For instance, a search window of 2 corresponds to a 128 displacement at lowest resolution, scaling up to a maximum possible range of 248 by summing the contributions from level 6 to 2, which ends up in a broader search range compared to DispNetC (\ie, 40 at quarter resolution for a maximum range of 160) with a much lower computational cost. With a 1080Ti GPU, the proposed lightweight architecture runs at about 40 FPS and 15 FPS when deploying online adaptation with full back-prop at the full \kitti{} resolution. 
+
+
+\section{\algoname{} - \extendedalgoname{}}
+\label{sec:algoDescription}
+
+
+As we will show, \netname{} is remarkably accurate while performing the online adaptation of the whole network at 15 FPS. However, for some applications, it might be desirable to have a higher frame rate without losing the ability to tune the network to unseen environments automatically. Most of the time needed to perform online adaptation is effectively spent executing back-prop and weights update across the whole network layers. A naive way to speed up the process will be to \textit{freeze} the initial part of the network and fine tune only a subset of $k$ final layers, thus realizing a shorter back-prop that would yeld an higher frame rate. However, there is no guarantee that these last $k$ layers are indeed those that would benefit most from online fine-tuning. One might reasonably guess that other portions of the network should be adapted as well, in particular, the initial layers, which directly interacts with the images from a new, \textit{unseen}, domain. Indeed, we will show in \autoref{ssec:strategy} that training only the final layers is not enough for handling drastic domain changes that typically occur in practical applications. 
+
+Thus, following the key intuition that to keep up with fast inference we should pursue a partial, though effective, online adaptation, we developed  \extendedalgoname{} (\algoname{}) an approximate online adaptation algorithm tailored for \netname{}, but extensible to any multi-scale inference network. The key intuition for our method is to take a network $\mathcal{N}$ and subdivide it into $p$ non-overlapping portions, each referred to as $n$, such that  $\mathcal{N}=[n_1,n_2,..n_p]$. Each portion $n_i$ consists of $k$ connected layers with the last one (the deeper) able to output a disparity estimation $y_i$.  Given as input a couple of stereo frames $x$, $\mathcal{N}$ will output $p+1$ disparity estimation $[y,y_1,\dots,y_p]=forward(\mathcal{N},x)$, with $y$ being the final prediction of the model at full resolution. Due to its modular structure, \netname{} naturally allows such subdivision by assigning to the same $n_i$ layers working at the same resolution both in the convolutional towers and among the disparity estimators (\eg, referring to \autoref{fig:architecture} $n_i=[F_i,D_i]$). Each $n_i$ can be independently trained by computing a loss directly on the disparity $y_i$ and back-prop only across the layers belonging to $n_i$, thereby skipping the costly backward pass through lower resolution layers in between. This process can be figured out as an approximation of the standard full back-prop. In fact, by alternating the portion $n_i$ of the network that is trained, it sequentially allows updating all layers. Such a strategy drastically reduces the time needed to compute and apply gradients without sacrificing too much accuracy as confirmed by experimental results.
+
+\begin{algorithm}
+	\caption{Independent online training of \netname{}}
+	\label{cod:algo}
+	\begin{algorithmic}[1] 
+		\State \textbf{Require:} $\mathcal{N}=[n_1,\dots,n_p]$ 
+		\State $\mathcal{H}=[h_1,\dots, h_p] \gets 0$
+		\While{$not$ $stop$}
+		\State $ x \gets readFrames() $
+		\State $ [y,y_1,\dots,y_p] \gets forward(\mathcal{N},x) $
+		\State $ \mathcal{L}_{t} \gets loss(x,y) $
+		\State $ \theta \gets sample(softmax(\mathcal{H})) $
+		\State $ \mathcal{L}^\theta_t \gets loss(x,y_{\theta}) $
+		\State $ updateWeights(\mathcal{L}^{\theta}_t,n_\theta) $
+		\If{$firstFrame$}
+		\State $ \mathcal{L}_{t-2} \gets \mathcal{L}_t, \mathcal{L}_{t-1} \gets \mathcal{L}_t, \theta_{t-1} \gets \theta $
+		\EndIf
+		\State $ \mathcal{L}_{exp} \gets 2 \cdot \mathcal{L}_{t-1} - \mathcal{L}_{t-2} $
+		\State $ \gamma \gets \mathcal{L}_{exp} - \mathcal{L}_{t} $
+		\State $ \mathcal{H} \gets 0.99 \cdot \mathcal{H} $
+		\State $ \mathcal{H}[\theta_{t-1}] \gets \mathcal{H}[\theta_{t-1}] + 0.01 \cdot \gamma $
+		\State $ \theta_{t-1} \gets \theta_{t}, \mathcal{L}_{t-2} \gets \mathcal{L}_{t-1}, \mathcal{L}_{t-1} \gets \mathcal{L}_{t} $
+		\EndWhile	 
+	\end{algorithmic}
+\end{algorithm}
+
+Offline, we statically subdivide the network into different portions, that with \netname{} correspond to different layers of the pyramids. Online, for each incoming stereo pair, first we perform a forward pass to obtain all the disparity predictions at multiple scales $[y,y_1,\dots,y_p]$, then, we choose a portion $\theta \in [1,\dots,p]$ of the network to train according to some heuristic and update the weights of layers belonging to $n_\theta$ according to a loss computed on $y_\theta$. We consider a valid heuristic any function that outputs a probability distribution among the $p$ trainable portions of $N$ from whom we could perform sampling. 
+%\stefanoscomments{Forse si potrebbe sostituire il termine "euristica" dicendo che identifichiamo la porzione più "bisognosa" di training in accordo a...}
+Among different functions, we obtained effective results using a simple reward/punishment mechanism detailed in Algorithm \autoref{cod:algo}. 
+We start by creating a histogram $\mathcal{H}$ with $p$ bins all initialized at 0. For each stereo pair we perform a forward pass to get the disparity predictions (line 5) and measure the performance of the model by computing the loss $\mathcal{L}_t$ using the full resolution disparity $y$ and potentially the input frames $x$, \eg, reprojection error between left and right frames \cite{godard2017unsupervised} (line 6). Then, we sample the portion to train $\theta \in [1,\dots,p]$ according to the distribution $softmax(\mathcal{H})$ (line 7) and compute one optimization step for layers of $n_\theta$ with respect to the loss $L^{\theta}_t$ computed on the lower scale prediction $y_\theta$ (line 8-9). We have now partially adapted the network to the current environment. Next, we update $\mathcal{H}$ increasing the probability of being sampled for the $n_i$ that have proven effective. To do so, we can compute a noisy expected value for $\mathcal{L}_t$ by linear interpolation of the losses at the previous two time step: $L_{exp} = 2 \cdot \mathcal{L}_{t-1}-\mathcal{L}_{t-2}$ (line 13). By comparing it with the measured $\mathcal{L}_t$ we can assess the impact of the network portion sampled at the previous step ($\theta_{t-1}$) as $\gamma = L_{exp}-\mathcal{L}_t$, and then increase or decrease its sampling probability accordingly (\ie, if the adaptation was effective $\mathcal{L}_{exp}>\mathcal{L}_{t}$, thus $\gamma>0$). We found out that adding a temporal decay to $\mathcal{H}$ helps increasing the stability of the system, so the final update rule for each step is: $\mathcal{H}=0.99\cdot\mathcal{H}, \mathcal{H}[\sigma_{\tau-1}]+=0.01\cdot\gamma$ (lines 15 and 16). 
+We will show how with the proposed \algoname{} we can online adapt \netname{} at $\sim25FPS$ without losing much accuracy.
+
+\section{Experimental Results}
+\label{sec:results}
+
+\subsection{Evaluation Protocol and Implementation}
+\label{ssec:protocol}
+
+To properly address practical deployment scenarios in which there are no groundtruth data available for fine-tuning in the actual testing environments, we train our stereo network using only synthetic data \cite{mayer2016large}. More details regarding the training procedure are available in the supplementary material. 
+%Spostato a supplementary
+%\matteoscomments{In particular, we train \netname{} for 1200000 iterations on the FlyingThings3D dataset using Adam Optimizer and a learning rate of 0.0001, halved after 400k steps and every further 200k until convergence. As loss function, we compute the sum of per-pixel absolute errors between disparity maps estimated at each resolution and downsampled groundtruth labels, summing up the contribution from each resolution according to different weights, respectively 0.005, 0.01, 0.02, 0.08, 0.32 from $\mathcal{F}_1$ to $\mathcal{F}_6$ following \cite{sun2018pwc}.}
+%We then carry out two different kind of evaluation: to compare its performance with other proposed deep stereo architecture we perform fine tuning on the training sets of \kitti{} 2012 and \kitti{} 2015 and measure performance on the \kitti{} 2015 test set.     
+To test the online adaptation we use those weights as a common initialization and carry out an extensive evaluation on the large and heterogeneous \kitti{} multi-view raw dataset \cite{KITTI_RAW} with depth labels \cite{Uhrig2017THREEDV} converted into disparities by knowing the camera parameters. Overall, we assess the effectiveness of our proposal on 43k images. Specifically, according to the \kitti{} classification, we evaluate our framework in four heterogeneous environments, namely \emph{Road}, \emph{Residential}, \emph{Campus} and \emph{City}, obtained by concatenation of the available video sequences resulting in 5674, 28067, 1149 and 8027 frames respectively. Although these sequences are all concerned with driving scenarios, each has peculiar traits that would lead deep stereo model to gross errors without a suitable fine-tuning in the target domain. For example, \emph{City} and \emph{Residential} often depict road surrounded by buildings, while \emph{Road} mostly concern highways and country roads where the most common objects depicted are cars and vegetation. By processing stereo pairs within sequences, we can measure how well the network adapts, either with full back-prop or \algoname{}, to the target domain compared to an offline trained model.
+For all experiments, we analyze both average End Point Error (EPE) and percentage of pixels with disparity error larger than 3 (D1-all). Due to image format being different for each sequence, we extract a central crop of size $320\times1216$ from each frame, which suits to the downsampling factor of our architecture and allows for validating almost all pixels with available groundtruth disparities. 
+Finally, we highlight that for both full back-prop and \algoname{},  we compute the error rate on each frame \emph{before} applying the model adaptation step. That is, we measure performances achieved by the current model on the stereo frame at time $t$ and \emph{then} adapt it according to the current prediction. Therefore, the model update carried out at time $t$ will affect the prediction only from frame $t+1$ and so on. 
+As unsupervised loss for online adaptation we rely on the photometric consistency between the left frame and the right one reprojected according to the predicted disparity. Following \cite{godard2017unsupervised}, to compute the reprojection error between the two images we combine the Structural Similarity Measure (SSIM) and the L1 distance, weighted by 0.85 and 0.15, respectively. We selected this unsupervised loss function as it is the fastest to compute among those proposed in literature \cite{Tonioni_2017_ICCV,pang2018zoom,zhou2017unsupervisedStereo} and does not require additional information besides a couple of stereo pairs. Further details are available in the supplementary material.
+%We use only the re-projection of the right frame to the left one instead of the full left right check consistency loss proposed in \cite{godard2017unsupervised} as it would slow down the network excessively.
+%All our framework is implemented in tensorflow and will be made publicly available together with the trained models of \netname{}.
+
+\begin{figure*}
+	\centering
+	\includegraphics[width=0.24\textwidth]{000001_10.png} 
+	\begin{overpic}[width=0.24\textwidth]{000001_dispnet.png}
+	\put (2,23) {$\displaystyle\textcolor{white}{\textbf{D1-all: 4.70}}$}
+	\end{overpic}
+	\begin{overpic}[width=0.24\textwidth]{000001_stereonet.png}
+	\put (2,23) {$\displaystyle\textcolor{white}{\textbf{D1-all: 3.75}}$}
+	\end{overpic}
+	\begin{overpic}[width=0.24\textwidth]{000001_madnet.png} 
+	\put (2,23) {$\displaystyle\textcolor{white}{\textbf{D1-all: 2.70}}$}
+	\end{overpic}
+	\caption{Qualitative comparison between disparity maps from different architectures. From left to right, reference image from KITTI 2015 online benchmark and disparity map by DispNetC \cite{mayer2016large}, StereoNet \cite{khamis2018stereonet} and \netname{}.
+		\label{fig:dispnet-stereo-vs-mad}
+	}
+\end{figure*}
+
+
+\subsection{MADNet performance}
+\label{sec:expr_network}
+
+\begin{table}[]
+    \centering
+    \begin{tabular}{|c|c|c|}
+        \hline
+        Model & D1-all & Runtime \\
+        \hline
+        DispNetC \cite{mayer2016large} & 4.34 &  0.06 \\  
+        StereoNet \cite{khamis2018stereonet} & 4.83 & 0.02 \\
+        \netname{} (Ours) & 4.66 & 0.02\\ 
+         \hline
+    \end{tabular}
+    \caption{Comparison between fast disparity regression architectures on the \kitti{} 2015 test set without online adaptation.}
+    \label{tab:submission}
+\end{table}
+
+Before assessing the performance obtainable through online adaptation, we test the effectiveness of \netname{} by following the commonly used two-phase training using synthetic \cite{mayer2016large} and real data. Thus, starting from a network trained according to the protocol mentioned above on synthetic data, we perform fine-tuning on the training sets of \kitti{} 2012 and \kitti{} 2015 and submit to the \kitti{} 2015 online benchmark. Additional details on the fine-tuning protocol are provided in the supplementary material. On \autoref{tab:submission} we report our result compared to other (published) fast inference architectures on the leaderboard. At the time of writing, our method ranks 78$^{th}$. Despite the mid-rank achieved in terms of absolute accuracy,  \netname{} compares favorably to StereoNet \cite{khamis2018stereonet} ranked 80$^{th}$, the only other high frame rate proposal on the KITTI leaderboard. Moreover, we get close to the performance of the original DispNetC \cite{mayer2016large} while using $\frac{1}{10}$ of the parameter and running at more than twice the speed. 
+Figure \ref{fig:dispnet-stereo-vs-mad} also reports a qualitative comparison between the output of the three architectures, showing how \netname{} better maintains thin structures compared to StereoNet.
+
+\subsection{Online Adaptation}
+\label{sec:exp_adaptation}
+
+\begin{table*}[t]
+	\center
+	\begin{tabular}{|c|c|cc|cc|cc|cc|c|}
+		\cline{3-10}
+		\multicolumn{2}{c}{} & \multicolumn{2}{|c|}{City} & \multicolumn{2}{c|}{Residential} & \multicolumn{2}{c|}{Campus} & \multicolumn{2}{c|}{Road} \\
+		\hline
+		Model & Adapt. & D1-all(\%) & EPE & D1-all(\%) & EPE & D1-all(\%) & EPE & D1-all(\%) & EPE & FPS\\ 
+		\hline
+		DispNetC & No & 8.31 & 1.49 & 8.72 & 1.55 & 15.63  & 2.14 & 10.76  & 1.75 & 15.85\\ 
+		DispNetC & Full & 4.34  & 1.16  & 3.60 & 1.04 & 8.66  & 1.53 & 3.83 & 1.08 & 5.22 \\
+		%DispNet & \algoname{} & 6.26 & 1.28 & 6.60 & 1.32 & 12.24 & 1.74 & 6.40 & 1.27 & 8.48\\  
+		DispNetC-GT & No & 3.78 & 1.19  & 4.71  & 1.23  & 8.42 & 1.62 & 3.25 & 1.07  & 15.85 \\
+		\hline
+		\netname{} & No & 37.42 & 9.96 & 37.41 & 11.34 & 51.98 & 11.94 & 47.45 & 15.71 & 39.48\\
+		\netname{} & Full & 2.63 & 1.03 & 2.44 & 0.96 & 8.91 & 1.76 & 2.33 & 1.03 & 14.26\\ 
+		\netname{} & \algoname{} & 5.82 & 1.51 & 3.96 & 1.31 & 23.40 & 4.89 & 7.02 & 2.03 & 25.43\\ 
+		\netname{}-GT & No & 2.21 & 0.80 & 2.80 & 0.91 & 6.77 & 1.32 & 1.75 & 0.83 & 39.48\\
+		\hline
+	\end{tabular}
+	\caption{Performance on the \emph{City}, \emph{Residential}, \emph{Campus} and \emph{Road} sequences from KITTI \cite{KITTI_RAW}. For both DispNetC and \netname{} with and without online adaptations.}
+	\label{tab:sequences}
+\end{table*}
+
+We will now show how our online adaptation schema is as effective as offline fine-tuning in recovering good performance in unseen environments. In \autoref{tab:sequences}, we compare the performance yielded by \netname{} when deploying  models trained on synthetic data only \cite{mayer2016large} or adapted online either by full back-prop (which cuts speed down) or \algoname{} (aimed at efficient adaptation) on the different KITTI environments. The three different setups are marked in \autoref{tab:sequences} on the \textit{Adapt.} column as \textit{No, Full, \algoname{}} respectively. Since Algorithm \autoref{cod:algo} has a non-deterministic sampling step, we have run the tests regarding \algoname{} 5 times each and reported here the average performance. We refer the reader to \autoref{ssec:strategy} for analysis on the standard deviation across different runs.  Although we primarily address scenarios in which no groundtruth data are available beforehand, we also report, as a baseline, the results attained by the model fine-tuned offline on groundtruth labels as described in \autoref{sec:expr_network} (those results will be tagged with the suffix \textit{-GT} after the model name). To assess more broadly the effectiveness of online adaptation for deep stereo models, we also report performances obtained by our implementation of the widely used DispNetC \cite{mayer2016large} architecture, trained on synthetic data following authors' guidelines.  
+
+As for DispNetC, focusing on the D1-all metric, we can notice how running full back-prop online to adapt the network decimates the number of outliers on all scenarios compared to the model trained on the synthetic dataset only. In particular, this approach can consistently halve D1-all on \emph{Campus}, \emph{Residential} and \emph{City} and nearly reduce it to one third on \emph{Road}. Alike, the average EPE drops significantly across the four considered environments, with improvement as high as a nearly $40\%$ relative improvement on the Road sequences. These massive gains in accuracy, though, come at the price of slowing the network down to about one third of the original inference rate, \ie{} from nearly 16 to 5.22 FPS. Due to the much higher errors yielded by the model trained on synthetic data only, full online adaptation turns out even more beneficial with \netname{}, leading to a model which is more accurate than DispNetC with Full adaptation in all sequences but \textit{Campus} and can run nearly three times faster (\ie{} at 14.26 FPS compared to the 5.22 FPS of DispNetC-Full). Moreover, \netname{} employing \algoname{} for adaptation allows for effectively and efficiently improving the model online by updating only a portion of the whole network at each inference step. Indeed, \algoname{} provides a significant improvement in all the performance figures reported in the table compared to the corresponding models trained by synthetic data only. 
+Using \algoname{},  \netname{}  can be adapted paying a relatively small computational overhead which results in a remarkably fast inference rate of about 25 FPS. Overall, these results highlight how, whenever one has no access to training data from the target domain beforehand, online adaptation is feasible and definitely worth. Moreover, if the frame rate is something to take into account \netname{} combined with \algoname{} provides a quite favorable trade-off between accuracy and speed.       
+
+%At the bottom of Table \ref{tab:sequences} we report results regarding the proposed \netname{} model highlighting how, training on synthetic data only, the error rate is much higher compared to DispNet
+
+As mentioned above, the Table also reports the performance of the models fine-tuned offline on the 400 stereo pairs with groundtruth disparities from the \kitti{} 2012 and 2015 training dataset \cite{KITTI_2015,KITTI_2012}. It is worth pointing out how, with both architectures, online and unsupervised adaptation by full back-prop turns out competitive with respect to fine-tuning offline by groundtruth, even more accurate in the Residential environment. This fact may hint at training usupervisedly by a more considerable amount of data possibly delivering better models than supervision by fewer data. 
+These results also highlight the inherent effectiveness of the proposed \netname{}. Indeed, as vouched by the rows dealing with  \netname{}-GT and DispNetC-GT, using for both our implementations and training them following the same standard procedure in the field, \netname{} yields better accuracy than DispNetC while running about 2.5 times faster.   
+\autoref{tab:sequences} shows also how adapted models perform significantly worse on \textit{Campus} with respect to the other sequences. We ascribe this mainly to  \textit{Campus} featuring much fewer frames (1149) compared the other sequences (5674, 28067, 8027), which implies a correspondingly lower number of adaptation steps being executed online. Indeed, a key trait of online adaptation is the capability to improve performance as more and more frames are sensed from the environment. This favourable behaviour, not captured by the average error metrics reported in \autoref{tab:sequences}, is highlighted in \autoref{fig:errorSequence}, which plots the D1-all error rate over time for \netname{} models in the four modalities. While without adaptation the error keeps being always large, models adapted online clearly improve overtime such that, after a certain delay, they become as accurate as the model that could have been obtained by offline fine-tuning had groundtruth disparities been available. In particular, full online adaptation achieves performance comparable to fine-tuning by the groundtruth after 900 frames (\ie, about 1 minute) while for \algoname{} it takes about 1600 frames (\ie, 64 seconds) to reach an almost equivalent performance level while providing a substantially higher inference rate ($\sim25$ vs $\sim15$).      
+
+As \autoref{fig:errorSequence} hints at online adaptation delivering better performance when processing a higher number of frames,  in \autoref{tab:overall} we report additional results obtained by concatenating together the four sequences without network resets to simulate a stereo camera traveling across different environments for $\sim43000$ frames. Firstly,  \autoref{tab:overall} shows how both DispNetC and \netname{} models adapted online by full back-prop yield much smaller average errors than in \autoref{tab:sequences}, as small, indeed, as to outperform the corresponding models fine-tuned offline by groundtruth labels. Hence, performing online adaptation through long enough sequences, even across different environments, can lead to more accurate models than offline fine-tuning on few samples with groundtruth, which further highlights the great potential of our proposed \emph{ continuous learning} formulation. Moreover, when leveraging on \algoname{} for the sake of run-time efficiency, \netname{} attains larger accuracy gains through \emph{continuous learning} than before (\autoref{tab:overall} vs.\autoref{tab:sequences}) shrinking the performance gap between \algoname{} and Full back-prop. We believe that this observation confirms the results plotted in \autoref{fig:errorSequence}: \algoname{} needs more frame to adapt the network to a new environment, but given sequences long enough can successfully approximate results obtainable by the costly online adaptation by full back propagation (\ie, 0.20 EPE difference and 1.2 D1-all between the two adaptation modalities on \autoref{tab:overall}).
+
+%Eventually, \autoref{fig:teaser} shows qualitative results dealing with \netname{} models trained by the adaptation techniques discussed throughout the paper.  
+Besides \autoref{fig:teaser}, we report qualitative results in the supplementary material as two video sequences regarding outdoor \cite{KITTI_RAW} and indoor \cite{indoorDataset} environments. 
+
+
+\begin{figure*}
+	\centering
+	\includegraphics[width=1.0\textwidth]{figure3.pdf}
+	\caption{\netname{}: error across frames in the \emph{2011\_09\_30\_drive\_0028\_sync} sequence (\kitti{} dataset, \emph{Residential} environment).
+		\label{fig:errorSequence}
+	}
+\end{figure*}
+
+
+\begin{table}[t]
+	\setlength{\tabcolsep}{5pt}
+	\center
+		\begin{tabular}{c}
+			\begin{tabular}{|c|c|cc|c|}
+				\hline
+				Model & Adapt. & D1-all(\%) & EPE & FPS \\ 
+				\hline
+				DispNetC & No & 9.09 & 1.58  & 15.85 \\
+				DispNetC & Full & 3.45 & 1.04   & 5.22  \\
+				%DispNet & \algoname{} & 6.45 & 1.29 & 8.48 \\
+				DispNetC-GT & No & 4.40 & 1.21 & 15.85 \\
+				\hline
+				\netname{} & No & 38.84 & 11.65 & 39.48 \\
+				\netname{} & Full & 2.17 & 0.91 & 14.26 \\ 
+				\netname{} & \algoname{} & 3.37 & 1.11 & 25.43\\ 
+				\netname{}-GT & No & 2.67 & 0.89 & 39.48 \\
+				\hline
+			\end{tabular} \\
+	\end{tabular}
+	\caption{Results on the KITTI raw dataset \cite{KITTI_RAW} (\emph{Campus} $\rightarrow$ \emph{City} $\rightarrow$ \emph{Residential}  $\rightarrow $ \emph{Road}).}
+	\label{tab:overall}
+\end{table}
+
+\subsection{Different online adaptation strategies}
+\label{ssec:strategy}
+
+\begin{table}[]
+    \centering
+    \scalebox{0.9}{
+    \begin{tabular}{|c|cc|c|}
+        \hline
+        Adaptation Mode & D1-all(\%) & EPE & FPS  \\
+        \hline
+        No & 38.84 & 11.65 & 39.48 \\
+        Final-1 & 38.33 & 11.45 & 38.25 \\
+        Final-7 & 31.89 & 6.55 & 29.82\\
+        Final-13 & 18.84 & 2.87 & 25.85 \\
+        \algoname{}-SEQ & 3.62 & 1.15 & 25.74\\
+        \algoname{}-RAND & 3.56 ($\pm 0.05$) & 1.13 ($\pm 0.01$) & 25.77\\
+        \algoname{}-FULL & \textbf{3.37 ($\pm 0.1$)} & \textbf{1.11 ($\pm 0.01$)} & 25.43\\        
+        \hline
+    \end{tabular}
+    }
+    \caption{Results on the \kitti{} raw dataset \cite{KITTI_RAW} using \netname{} trained on synthetic data and different fast adaptation strategies}
+    \label{tab:adaptation_strategy}
+\end{table}
+
+To assess the effectiveness of \algoname{} for fast online adaptation we carried out additional tests on the whole \kitti{} RAW dataset \cite{KITTI_RAW} and compare performance obtainable deploying different fast adaptation strategies for \netname{}. Results are reported on \autoref{tab:adaptation_strategy} together with those concerning a network that does not perform any adaptation. First, we compare \algoname{} keeping the weights of the initial portions of the network frozen and training only the final $K$ layers (\textit{Final-K}). Using the notations of \autoref{fig:architecture}, \textit{Final-1} corresponds to training only the last prediction layer, \textit{Final-7} to fine-tuning the last \textit{Refinement} block, \textit{Final-13} to training \textit{Refinement} and \textit{$D_2$}.  Then, since \algoname{} consists in splitting the network in independent portion and choosing which one to train using Algorithm \autoref{cod:algo}, we compare our full proposal (\textit{\algoname{}-FULL}) keeping the split in independent portions and choosing which one to train at each step either randomly (\textit{\algoname{}-RAND}) or using a round-robin schedule (\textit{\algoname{}-SEQ}). Since \textit{\algoname{}-FULL} and \textit{\algoname{}-RAND} feature non-deterministic sampling steps, we report their average performance obtained across 5 independent runs on the whole dataset with the corresponding standard deviations between brackets.
+
+By comparing the \textit{Final} entries with the ones featuring \algoname{} we can clearly see how training only the final layers is not enough to successfully perform online adaptation. Even training as many as 13 last layers (at a comparable computational cost with our proposed \algoname{}) we are at most able to halve the initial error rate, with performance still far from optimal. The three variants of \algoname{} by training the whole network can successfully reduce the D1-all to $\frac{1}{10}$ of the original. Among the three options, our proposed layer selection heuristic provides the best overall performance even taking into account the slightly higher standard deviation caused by our sampling strategy. Moreover, the computational cost to pay to deploy our heuristic is negligible losing only $0.3$ FPS compared to the other two options.
+
+\subsection{Deployment on embedded platforms}
+\label{ssec:mobile}
+
+All the tests reported so far have been executed on a desktop PC equipped with a Nvidia 1080 Ti GPU. Unfortunately for many application like robotics or autonomous vehicles, it is unrealistic to rely on such high end and power-hungry hardware.  One of the key benefits of \netname{}, however, is its lightweight architecture which allows an easy deployment on lower power platform.
+Thus, we benchmarked the same implementation of \netname{} used for the tests on desktop PC, deploying on a Nvidia Jetson TX2 board and measuring execution time for producing disparity estimations on a stereo pair at the full KITTI resolution. Using this setup, we measured an average execution time for \netname{} of $0.26s$. For comparison, we have re-implemented, using the same framework, StereoNet \cite{khamis2018stereonet} and measured its execution time deploying just 1 refinement module, which results in $0.76s$, or using 3 of them, which result in $0.96s$. Indeed, these results show that \netname{} can run faster and more accurately than competing methods, making it an appealing alternative even for embedded applications.  
+
+\section{Conclusion and Future Work}
+\label{sec:conclusion}
+We have shown how the proposed online unsupervised fine-tuning can successfully tackle domain adaptation for deep end-to-end disparity regression networks.
+We believe this to be key to the practical deployment of these potentially ground-breaking deep learning systems in many relevant scenarios. For applications in which inference time is a critical issue we have developed \netname{}, a new network architecture, and \algoname{}, a strategy to effectively adapt it online very efficiently. We have shown how \netname{} together with \algoname{} can adapt to new environments by keeping a high prediction frame rate (\ie, 25FPS) and yielding better accuracy than popular alternatives like DispNetC. 
+As the main topic for future work, we plan to test and eventually extend \algoname{} to any end-to-end stereo system. We would also like to investigate alternative methods to select the portion of the network to be updated online at each step. 
+
+%In particular, we might deploy a small network trained by reinforcement learning to contextually choose which training action to perform based on the current frame and/or current network state.   
+
+	
+{\small
+\bibliographystyle{ieee}
+\bibliography{egbib}
+}
+
+\newpage.
+\includepdf[pages={1}]{supplementary.pdf}
+\includepdf[pages={2}]{supplementary.pdf}
+\includepdf[pages={3}]{supplementary.pdf}
+\end{document}

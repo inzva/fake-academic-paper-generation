@@ -1,0 +1,170 @@
+\documentclass[../main.tex]{subfiles}
+\begin{document}
+
+
+\vspace{-5pt}
+\section{Interpretable Visual Teaching}
+In this section, we outline our model for teaching categorization problems to human learners and present an efficient algorithm for selecting interpretable teaching examples. 
+We discuss our approach in the context of the non-adaptive model of \cite{singla2014near}, but any visual teaching algorithm can benefit from interpretable explanations.
+
+
+
+\subsection{Problem Setup}
+We aim to teach a human learner a target classification function $h^*$ that maps from images $\mathcal{X}$ to their corresponding ground truth class labels $\mathcal{Y}$.
+For instance, a single image $x \in \mathcal{X}$ could be a picture of a bird and the associated label $y$ could be the name of the species. 
+However, we cannot directly impart the parameters of $h^*$ to the human learner, instead we must \emph{teach} them by showing them example images. 
+Given a set of $n$ images, $\examples = \{\ex_1,\dots, \ex_n\}$, with associated labels from $C$ classes $\mathcal{Y} = \{y_1, \dotsc y_C \}$, our goal is to select an informative subset $\tset$, referred to as the teaching set, that will best convey the ground truth, \ie. the human teacher's classification function $h^*$.
+Acknowledging that some images are more informative than others during learning, we do not want to waste effort teaching these unrepresentative images. 
+
+When learning from a human teacher, or even from a textbook, a student not only receives feedback in the form of the correct answer but also an explanation that describes \emph{why} a given answer is correct.
+In addition to the images and labels, we further assume that we (as the teacher) have access to an explanation, $e$, for each image $x$. 
+In the case of images, these explanations could be heatmaps that highlight the informative regions for a particular class in a given image. 
+In non-visual scenarios, this could be a piece of text describing the relationship between $x$ and $y$. 
+
+
+
+\subsection{Image Only Learner Model}
+We adopt the stochastic \STRICT~algorithm of \cite{singla2014near} to model how learners adapt to the images shown by the teacher.
+The model was originally proposed for teaching binary classification functions. 
+Learners are modeled as carrying out a random walk in a finite hypothesis space $\mathcal{H}$. 
+Each element of $\mathcal{H}$ is a function that maps from an image to a score $h: \mathcal{X} \mapsto \mathbb{R}$.
+In the context of binary classification, where $y \in \{-1, 1\}$, the label predicted by a hypothesis $h$ for image $x$ is $\hat{y}^h = \text{sgn}(h(x))$, and the magnitude indicates the confidence that $h$ has in its prediction.
+Concretely, an image $x$ may be represented by a feature vector and a hypothesis $h$ could be a linear classifier, $h(x) = w_h^{\intercal}x$, with weights $w_h$.
+To ensure that it is possible to teach the learner, we assume that $\mathcal{H}$ also contains the ground truth hypothesis $h^*$. 
+
+At the beginning of teaching, the learner randomly picks a hypothesis $ h \in \mathcal{H}$ according to the prior distribution $P(h)$. 
+During teaching, she will be presented with a sequence of images along with the correct class label. 
+After receiving a new image, the learner will stick to her current hypothesis if the ground truth label is consistent with the prediction of the hypothesis.
+Otherwise, she randomly switches to a new $ h \in \mathcal{H}$ according to her current posterior over the hypotheses $P(h\mid \tset)$, where $\tset$ is the set of teaching images and ground truth labels seen so far.
+When updating her posterior $P(h\mid \tset)$ in light of the new information, hypotheses that disagree with the true labels of the images shown by the teacher are less likely to be selected 
+\begin{align}
+% P(h\mid \tset) = \frac{1}{Z_\tset}P(h) \prod\limits_{\substack {x_t\in{} \tset\\y_t \neq \hat{y}^h_t}} P(y_t\mid h, x_t),
+P(h\mid \tset) \propto P(h) \prod\limits_{\substack {x_t\in{} \tset\\y_t \neq \hat{y}^h_t}} P(y_t\mid h, x_t),
+\label{equation:posterior}
+\end{align}
+where %$Z_\tset$ is a normalizing factor and 
+$\hat{y}^h_t$ is the class label predicted by hypothesis $h$ for image $x_t$.
+We model how much the prediction of hypothesis $h$ agrees with the correct label for image $x_t$ using
+\begin{equation}
+    P(y_t\mid h, x_t) = \frac{1}{1 + \exp(-\alpha h(x_t)y_t)},
+\end{equation}
+where  $\alpha > 0$ represents how consistently a learner responds according to her currently adopted hypothesis. 
+In the extreme when $\alpha = \infty$, hypotheses that are inconsistent with the ground truth label are immediately discarded.
+This unrealistic setting represents the perfect learner~\cite{goldman1995complexity}.
+
+
+
+\subsection{Interpretable Feedback}
+The feedback presented to the learner in the \STRICT model is comprised of only the true, ground truth, label of a teaching example. The learner is tasked with learning the mapping between the image and the ground truth label themselves as no other explanations are provided \ie, they must determine which regions or parts in the image are responsible for the given class label. 
+In real-world teaching scenarios, the teacher often has access to much richer information which can be further utilized to accelerate the teaching process.
+%After being presented with an image the learner receives the ground truth class label and updates her posterior. 
+%The learner is tasked with learning the mapping between the image and the ground truth label themselves as no other explanation is provided.  
+%They must determine which regions or parts in the image are responsible for the given class label.
+Our approach, \EXPLAIN, gives feedback to the learner in the form of \emph{explanations} and models how they incorporate this information when updating their belief.
+
+With a slight abuse of notation, we extend $\tset$ to denote the set of labeled teaching images along with their explanations. Our updated model of the learner introduces two additional discount terms that account for the interpretability of an explanation and the representativeness of an image
+\begin{equation}
+P(h\mid \tset) \propto P(h) \prod\limits_{\substack {x_t\in{} \tset\\y_t \neq \hat{y}^h_t}} P(y_t\mid h, x_t) \prod\limits_{x_t\in \tset}\left(E(e_t) D(x_t)\right).
+\end{equation}
+
+
+\subsubsection*{Modeling Explanations}
+Our first new term favors explanations for images that are clear and easy for the learner to understand
+\begin{equation}
+   E(e_t) = \frac{1}{1 + \exp(-\beta\; \diff(e_t))}.
+   \label{eqn:explanation}
+\end{equation}
+Here, $\diff(e_t)$ represents how difficult a given explanation $e_t$ is for image $x_t$, where large values indicate challenging explanations.
+Intuitively, the learner is more confident in discounting inconsistent hypotheses if presented with easier-to-understand explanations.
+This information could be crowdsourced, but later we describe a method by which both the explanations and their interpretability can be automatically generated from image sets with ground truth labels.
+
+%Explanations are note the same as image difficulty.
+Note that the quality of an explanation is not measured in the same way as image difficulty.
+Image difficulty in \STRICT is implicitly encoded by the image's location in the feature space. 
+Images that are close to decision boundaries are assumed to be more ambiguous to the learner compared to those that are far from decision boundaries.
+However, two images of equal difficulty may have very different explanations and our goal is to bias the selection of teaching images towards those that are easier to understand. 
+
+
+\subsubsection*{Modeling Representativeness}
+During teaching, we would like to select \emph{representative} teaching images so that the concept conveyed to the learner can be easily generalized to the remaining, unseen, images. %we would like to select images that are representative of other instances.
+In practice however, we observe that the linear hypothesis space used by \STRICT has a tendency to select outlier images (Fig.~\ref{fig:density}). 
+When selecting the teaching set, \STRICT attempts to greedily optimize the expected reduction in error for the hypothesis set and as a result can end up selecting images that may be optimal for reducing error but not necessarily informative for the learner. 
+To overcome this limitation, inspired by approaches in active learning \cite{settles2012active}, we include an additional discount factor that favors representative examples
+\begin{equation}
+   D(x_t) = \frac{1}{1 + \exp(-\gamma\; \dist(x_t))}.
+\end{equation}
+Here, $\dist(x_t)$ encodes how dissimilar an image $x_t$ is to other images. Again, this could be derived directly from crowdsourcing but a simple alternative is to use the density in the existing feature space
+\begin{equation}
+   \dist(x_t) = \frac{1}{N}\sum_{n=1}^{N}{||x_t -x_n||_2^2}.
+\end{equation}
+In practice, we compute the mean distance for each example to all other examples in the same class.
+The teacher still aims to select informative examples, but this allows us to ensure that they are also representative.
+Setting both $\beta  = \gamma = \infty$ results in the existing \STRICT model. 
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.48\textwidth]{figures/density.pdf}
+\caption{In A) we see that \STRICT is prone to selecting outliers. Here, the numbers represent the order in which examples were selected during teaching. B) By favoring instances that are \emph{representative} of others  we select teaching examples from more dense regions of the feature space. Here, the lines represent different hypotheses, with the red one being the teachers hypothesis. The thickness of the lines represent the probability associated with the hypothesis after showing five teaching examples to the learner.} 
+\label{fig:density}
+\end{figure}
+
+
+\subsection{Multiclass Teaching}
+Many real word teaching problems feature multiple different categories of interest. 
+As presented, \STRICT is limited to the binary class setting.
+One approach for handling multiple classes is to change the hypothesis space so that each individual hypothesis is a multiclass classifier \eg, a softmax classifier where individual hypotheses are one-versus-all classifiers.
+However, generating such a multiclass hypothesis space is challenging.
+For instance, if one has access to a set of linear classifiers $\mathcal{H}^L$ \eg crowdsourced from a system like \cite{welinder2010multidimensional}, one could assume that each multiclass hypothesis is made up of a combination of $C$ of these linear classifiers, where $C$ is the number of classes.
+This results in $|\mathcal{H}^L|! / (|\mathcal{H}^L|-C)!$ possible combinations, which becomes prohibitively large to exhaustively cover for even small numbers of hypotheses and classes.
+
+Instead, we model a separate posterior $P_c(\mathcal{H}\mid \tset)$ for each of the classes.
+This allows us to reuse the same set of hypotheses across the different classes. 
+It naturally enables us to model the situation where a learner can accurately group images based on their visual similarity but are unable to associate the correct class label to the groups as they have yet to learn the correct mapping.
+When teaching binary concepts, this corresponds to the single posterior modeling of the existing \STRICT model.
+
+
+\subsection{Teaching Algorithm}
+Given our model of the learner, we now describe how we select the teaching set $\tset$. %offline that we will show to them.
+The choice of $\tset$ is based on our desire to direct the learner towards a distribution over the possible hypotheses that results in the smallest number of mistakes as possible. In our multiclass setting with $C$ classes, we use a one-versus-all scheme for each class, and maintain $C$ different posterior distributions over the hypotheses $\mathcal{H}$. Intuitively, in order to drive down the learner's error probability in predicting multiclass labels, it is sufficient to make sure that the learner performs well in each of the $C$ binary classification tasks. For any class $c$, we define the error of a one-vs-all hypothesis $h$ over all possible images as
+\begin{align*}
+  \err_c(h) = \frac{|{x: (\hat{y}^h \neq y_c \wedge y=y_c) \vee (\hat{y}^h = y_c \wedge y\neq y_c)}|}{| {\mathcal X} |}.
+\end{align*}
+This is the fraction of images that hypothesis $h$ disagrees with the ground truth when predicting the label $y_c$. After receiving the teaching set $T$, the expected error of the learner for class $c$ is defined as
+\begin{align}
+  \mathbb{E}[\err_c(h)\mid \tset] = \sum \limits_{h \in \mathcal{H}}P_c(h\given T)\err_c(h).
+\end{align}
+% We would like to
+For our multiclass teaching problem, we use the combined error probability, \ie., $\frac1C\sum_c \mathbb{E}[\err_c(h)\mid \tset]$
+% \begin{align}
+  % \err(T) = \frac1C\sum_c \mathbb{E}[\err_c(h)\mid \tset]
+% \end{align}
+as a proxy for the expected error of the learner. Given a teaching budget $b$, we would like to find a teaching set $T^*$, such that upon observing the images, their labels, and associated explanations the learner would achieve the maximal reduction in expected error. Formally, let
+\begin{align}
+  R(\tset) &= \frac1C\sum_c\left(\mathbb{E}[\errate_c(h)] - \mathbb{E}[\errate_c(h)\given \tset] \right)\nonumber \\
+           &=\frac1C\sum_{c \in \mathcal{C}} \sum \limits_{h \in \mathcal{H}}(P_c(h) - P_c(h\given \tset))\err_c(h)\label{eqn:objective}
+\end{align}
+be the expected reduction in the combined error term. We aim to find
+\begin{align}
+  \tset^* = \argmax_{|\tset| \leq b} R(T).
+  \label{eqn:problem}
+\end{align}
+Instead of directly optimizing this challenging combinatorial problem we use the greedy submodular approach outlined in~\cite{singla2014near}. 
+% We define a surrogate objective
+% \begin{align}
+%   S(\tset) = \sum_{c \in \mathcal{C}} \sum \limits_{h \in \mathcal{H}}(P_c(h) - Q_c(h\given \tset))\err_c(h),\label{eqn:surrogate}
+% \end{align}
+% where
+% \begin{equation*}
+%   Q_c(h\mid \tset) = P_c(h) \prod\limits_{\substack {x_t\in{} \tset\\y_t \neq \hat{y}^h_t}} P(y_t\mid h, x_t) \prod\limits_{x_t\in \tset}\left(E(e_t) D(x_t)\right)
+% \end{equation*}
+% denotes the unnormalized posterior of $h$ for class $c$. Note that our objective function $S(\tset)$ is a sum of monotone submodur functions, and hence is also submodular. 
+We start with an empty teaching set $\tset=\emptyset$ and greedily add a single image at a time.
+The selection of the next teaching image to show amounts to choosing the example $x$ from the unseen set ($x\notin \tset$),
+\begin{equation}
+  x_{t} = \argmax_{x} R(\tset \cup \{x\}).
+  \label{eqn:final_selection}
+\end{equation}
+
+
+
+\end{document}

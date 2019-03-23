@@ -1,0 +1,890 @@
+% last updated in April 2002 by Antje Endemann
+% Based on CVPR 07 and LNCS, with modifications by DAF, AZ and elle, 2008 and AA, 2010, and CC, 2011; TT, 2014; AAS, 2016
+
+\documentclass[runningheads]{llncs}
+%\documentclass[10pt,twocolumn,letterpaper]{article}
+%\usepackage{cvpr}
+
+\usepackage{graphicx}
+\usepackage{amsmath,amssymb} % define this before the line numbering.
+%\usepackage{ruler}
+\usepackage{color}
+\usepackage{epsfig}
+\usepackage{comment}
+\usepackage{kevinlin}
+\usepackage[ruled,vlined]{algorithm2e}
+\usepackage{enumitem}
+\usepackage[export]{adjustbox}
+\usepackage{tabularx}
+\usepackage[table]{xcolor}
+\usepackage{colortbl}
+\usepackage{subfig}
+\usepackage{multirow}
+\usepackage{booktabs}
+\usepackage{xr}
+\usepackage{breakcites}
+%\usepackage[font=small,labelfont=bf]{caption}
+
+
+\usepackage[width=122mm,left=12mm,paperwidth=146mm,height=193mm,top=12mm,paperheight=217mm]{geometry}
+
+\begin{document}
+% \renewcommand\thelinenumber{\color[rgb]{0.2,0.5,0.8}\normalfont\sffamily\scriptsize\arabic{linenumber}\color[rgb]{0,0,0}}
+% \renewcommand\makeLineNumber {\hss\thelinenumber\ \hspace{6mm} \rlap{\hskip\textwidth\ \hspace{6.5mm}\thelinenumber}}
+% \linenumbers
+
+\pagestyle{headings}
+\mainmatter
+%\def\ECCV18SubNumber{144}  % Insert your submission number here
+
+\title{Adversarial Learning for Fine-grained Image Search} % Replace with your title
+
+\titlerunning{Adversarial Learning for Fine-grained Image Search}
+
+\authorrunning{K. Lin et al.}
+
+%\author{Anonymous ECCV submission}
+%\institute{Paper ID \ECCV18SubNumber}
+
+\author{Kevin Lin$^1$, Fan Yang$^2$, Qiaosong Wang$^2$, Robinson Piramuthu$^2$}
+\institute{$^1$University of Washington $^2$eBay Inc.\\
+\email{kvlin@uw.edu, \{fyang4, qiaowang, rpiramuthu\}@ebay.com}
+}
+
+\maketitle
+
+\begin{abstract}
+Fine-grained image search is still a challenging problem due to the difficulty in capturing subtle differences regardless of pose variations of objects from fine-grained categories. In practice, a dynamic inventory with new fine-grained categories adds another dimension to this challenge.
+%making model retraining prohibitively expensive and less scalable for real applications.
+In this work, we propose an end-to-end network, called FGGAN, that learns discriminative representations by implicitly learning a geometric transformation from multi-view images for fine-grained image search. 
+We integrate a generative adversarial network (GAN) that can automatically handle complex view and pose variations by converting them to a canonical view without any predefined transformations. 
+Moreover, in an open-set scenario, our network is able to better match  images from unseen and unknown fine-grained categories.
+Extensive experiments on two public datasets and a newly collected dataset have demonstrated the outstanding robust performance of the proposed FGGAN in both closed-set and open-set scenarios, providing as much as 10\% relative improvement compared to baselines.
+
+\keywords{Adversarial learning, generative model, image search}
+\end{abstract}
+
+%%%%%%%%% BODY TEXT
+\section{Introduction}\label{sec:intro}
+
+While image search has been extensively studied, it still remains a challenging problem~\cite{DBLP:conf/iccv/SivicZ03,DBLP:conf/mm/WanWHWZZL14,DBLP:conf/kdd/JingLKZXDT15,DBLP:conf/kdd/YangKBSWKP17}. In particular, it is extremely difficult to identify images at a fine-grained level, where the goal is to find objects belonging to the same fine-grained category as the query, \eg, identifying the make and model of cars. 
+%For example, it is relatively straightforward to find similar images containing cars, while distinguishing them from different make and models is not an easy task. 
+Numerous algorithms using deep neural networks have achieved state-of-the-art performance on fine-grained categorization~\cite{DBLP:conf/cvpr/DengK013,DBLP:conf/icpr/KrauseGDLF14,DBLP:conf/cvpr/KrauseJYL15,DBLP:conf/cvpr/QianJZL15,DBLP:conf/cvpr/XieYWL15,lin2015bilinear,DBLP:conf/cvpr/CuiZLB16,zhou2016fine,cui2017kernel}, but they are not directly applicable to fine-grained image search. 
+Practically, given a dynamic inventory in production, the image search system needs to be sufficiently robust when new products are included.
+While fine-grained \emph{categorization} mainly operates on a closed dataset containing a fixed number of categories, it could not handle unseen categories well.
+Although classifiers can be re-trained to accommodate new categories, frequent re-training becomes prohibitively expensive as new data accumulates.
+In contrast, fine-grained \emph{image search} by design should be aware of unseen categories that are not part of the training set~\cite{DBLP:journals/corr/YaoZZLT17a}. 
+
+\setlength{\textfloatsep}{12pt}\begin{figure}[t]
+\begin{center}
+\includegraphics[width=.7\linewidth]{./figures/ebay17-idea-small.pdf}
+%\includegraphics[width=\linewidth,draft]{screenshot.png}
+\end{center} 
+\vspace{-3mm}
+\caption{The main idea of the proposed approach. 
+We propose to generate image representations with adversarial networks by learning implicit transformations to normalize view and pose. The generated representation generalizes well for fine-grained image search given unseen categories.}
+\label{fig:idea}
+\end{figure}
+
+In addition to emerging categories, view and pose variations of objects make finding correct fine-grained categories even harder. 
+Classic approaches to address pose variations rely on matching local feature points, refining the homography, and inferring an explicit geometric transformation~\cite{DBLP:conf/cvpr/PhilbinCISZ07,DBLP:journals/ijcv/JegouDS10,DBLP:conf/cvpr/LiLH15}, but they are computationally expensive.
+Recent works based on deep neural networks introduce dedicated modules to learn specific geometric transformations for semantic correspondence~\cite{DBLP:conf/nips/JaderbergSZK15,DBLP:conf/nips/ChoyGSC16,DBLP:conf/cvpr/KanazawaJC16,DBLP:journals/corr/RoccoAS17,DBLP:journals/corr/HanRHWCSP17,DBLP:journals/corr/KimMHJLS17}, of which representative works include spatial transformer network~\cite{DBLP:conf/nips/JaderbergSZK15}, universal correspondence network~\cite{DBLP:conf/nips/ChoyGSC16} and WarpNet~\cite{DBLP:conf/cvpr/KanazawaJC16}, \etc. 
+Nevertheless, they require a pre-defined transformation type and a well-initialized transformation matrix beforehand to ensure reasonable performance, and cannot handle complex transformations. Therefore, they are impractical for fine-grained image search given a growing database that contains unknown transformations.
+
+
+To address such problems, we resort to the generative adversarial network (GAN)~\cite{goodfellow2014generative} that shows outstanding performance on generating highly realistic images for various tasks. In this work, rather than generating high-quality images, we integrate GAN into a multi-task network to rectify view and pose variations, and jointly learn discriminative features for search (see Figure~\ref{fig:idea}). 
+Specifically, the proposed network, called FGGAN, consists of two main components: a \emph{generator} and an \emph{evaluator}. While the generator is a fully convolutional network, the evaluator is composed of three sub-modules: a \emph{discriminator}, a \emph{normalizer} and a \emph{semantic embedding}. 
+The generator and discriminator combined are analogous to the architecture of classic GANs. 
+The normalizer learns implicit and class-agnostic geometric transformations to normalize an object in various views/poses to a canonical view without any pre-defined transformation parameters. 
+The semantic embedding module enforces images from the same fine-grained category to have similar feature representations that are further used for retrieval. 
+The three sub-modules of the evaluator are jointly optimized together with the generator, so that they are balanced to contribute to a good representation.
+Our network removes the hassle of explicitly learning a geometric transformation and enables end-to-end training and inference to match objects in various views and poses, thus more flexible for real applications.  
+%Our goal is not to generate high quality images but to learn an implicit transformation and better representations despite of large variations. We also note that our network can handle any images taken under an unconstrained environment, rather than only matching user photos to product photos~\cite{DBLP:conf/mir/WangSZZJ16}. 
+
+Our motivation lies in two aspects. On one hand, GANs capture underlying data distribution without human supervision.
+By traversing on the manifold, we can freely manipulate images to recover different poses from a single pose.
+On the other hand, GANs abstract specific patterns from training images that are generalizable to a broader range of categories. 
+Therefore, given only a small amount of training data, we are able to identify and match objects from categories that the network has never seen before. 
+To the best of our knowledge, this is the first attempt to apply GAN to fine-grained image search in an open-set scenario.
+
+
+Our contribution can be summarized in four-fold. 1) We apply GAN to fine-grained image search by implicitly learning transformations to match objects in various views and poses. 
+2) Our adversarial learning setting only requires a small number of training samples and generalizes well to unseen categories. 
+3) Our approach consistently outperforms its counterparts on several datasets in both closed-set and open-set scenarios. 
+4) We construct and will release a new dataset for fine-grained image search that may benefit future research. 
+\section{Related works}\label{sec:related-works}{\flushleft \textbf{Fine-grained categorization and retrieval}} are two related but different tasks. 
+Fine-grained categorization has been extensively investigated and various algorithms have achieved outstanding performance~\cite{DBLP:conf/cvpr/DengK013,DBLP:conf/icpr/KrauseGDLF14,DBLP:conf/cvpr/KrauseJYL15,DBLP:conf/cvpr/QianJZL15,DBLP:conf/cvpr/XieYWL15,lin2015bilinear,DBLP:conf/cvpr/CuiZLB16,zhou2016fine,cui2017kernel}.
+In contrast, fine-grained image search is under-studied and requires distinguishing subtle differences given a potentially growing database. 
+Some works focus on sketch-based image search for product matching~\cite{DBLP:conf/sigir/HuangCJZZ17,Song_2017_ICCV}. 
+Regarding natural images, Xie~\etal~\cite{DBLP:journals/tmm/XieWZT15} associated visual words with fine-grained semantic attributes learned from hand-crafted features and built a hierarchical database for evaluation. 
+Recently, Wei~\etal~\cite{DBLP:journals/tip/WeiLWZ17} proposed to selectively aggregate convolutional descriptors to obtain more discriminative features. 
+While they are evaluated on a closed dataset, Yao~\etal~\cite{DBLP:journals/corr/YaoZZLT17a} designed a one-shot learning strategy to identify unseen objects by learning with an incomplete auxiliary training set, which is similar to our problem. However, it requires multiple networks with several post-processing steps to achieve good performance, thus not scalable enough.
+
+%{\flushleft \textbf{Zero-shot learning}} refers to the problem of learning to understand a category without using an example. While most works focus on image recognition, image search is a more suitable topic for few-shot learning or zero-shot learning as the database continuously grows to include new categories. Given unlimited number of concepts, it is crucial to generalize the learned models to unseen classes. \textcolor{red}{Add and discuss related papers}{\flushleft \textbf{Generative adversarial networks}}, recently proposed by Goodfellow~\etal~\cite{goodfellow2014generative}, show promising results in generating realistic images from random signals~\cite{radford2015unsupervised,DBLP:journals/corr/ZhangXLZHWM16,DBLP:journals/corr/NguyenYBDC16,DBLP:conf/eccv/ZhuKSE16,DBLP:conf/icml/ReedAYLSL16,DBLP:journals/corr/YangKBP17}. 
+It has been applied to various problems including style transfer~\cite{DBLP:conf/eccv/YooKPPK16,pix2pix2016,DBLP:journals/corr/ZhuPIE17,DBLP:journals/corr/LiuBK17}, image super-resolution~\cite{ledig2016photo,DBLP:journals/corr/Wu0ZH17} and face editing~\cite{DBLP:journals/corr/ShuYHSSS17}, \etc. 
+Very recently, a few works have applied GAN to a retrieval network to facilitate learning better representations. 
+Wang~\etal~\cite{DBLP:conf/sigir/WangYZGXWZZ17} proposed IRGAN that iteratively optimizes a discriminative model and a generative model for information retrieval, where the two models compete with each other in an adversarial way.
+Zheng~\etal~\cite{DBLP:journals/corr/ZhengZY17} applied GAN to generate high-quality images for training data augmentation in a semi-supervised manner for person re-identification.
+Qiu~\etal~\cite{DBLP:conf/sigir/QiuPYM17} and Song~\cite{DBLP:journals/corr/abs-1708-04150} included GAN as an additional module to help learn compact binary features for fast retrieval. 
+Creswell~\etal~\cite{DBLP:conf/eccv/CreswellB16} targeted on sketch retrieval by fine-tuning a conventional GAN and using the discriminator without the final layer as an encoder for feature embedding.
+Our work differs from these methods as we use GAN to learn an implicit transformation to rectify view and pose variations for both closed-set and open-set scenarios, rather than generating images to augment training data. 
+\section{Approach}\label{sec:approach}\begin{comment}
+\begin{figure*}[tb]
+	\centering
+	\includegraphics[width=.5\textwidth]{./figures/proposed.png}
+	\caption{\textcolor{red}{[Draw a new one]} The architecture of the proposed adversarial network for learning discriminative features for fine-grained image retrieval. Our network consists of a generator $G$ and an evaluator $E$. While $E$ aims at distinguish the generated representations from the real images, we train $G$ to generate image representations that can confuse $E$. $G$ and $E$ are trained alternatively in an adversarial manner until convergence.}
+	\label{fig:framework}
+\end{figure*}
+
+
+%%% figure begins %%%
+\begin{figure*}[t]
+	\centering
+	\subfloat{\label{fig:train}\small{(a)}\raisebox{-.95\height}{\includegraphics[height=.2\textwidth]{./figures/train_g.pdf}}}\qquad
+	\subfloat{\label{fig:test}\small{(b)}\raisebox{-.95\height}{\includegraphics[height=.2\textwidth]{./figures/train_e.pdf}}}\qquad
+	\caption{The architecture of the proposed adversarial network for learning discriminative features for fine-grained image retrieval. (a) The training procedure of generator $G$. (b) The training procedure of evaluator $E$.
+}
+	\label{fig:overview}
+\end{figure*}
+%%% figure ends %%%
+\end{comment}%%% figure begins %%%\begin{figure}[t]
+	\centering
+	\includegraphics[width=0.7\columnwidth]{./figures/train_all.pdf}
+	\caption{The architecture of the proposed FGGAN to learn discriminative features for fine-grained image retrieval. $D$, $N$ and $S$ denote discriminator,  normalizer and  semantic embedding, respectively. Alternating optimization is used to train $G$ and $E$.
+}
+	\label{fig:overview}
+\end{figure}%%% figure ends %%%%Unlike previous works~\cite{lin2015bilinear,gao2016compact,cui2017kernel,lin2017bilinear} that extract features by pooling or kernel tricks, %We learn implicit transformations to convert various views to a canonical view, from which discriminative representations are generated for fine-grained image search. %In this section, we give an overview of our approach, followed by the details of each component.\subsection{Overview}
+Figure~\ref{fig:overview} illustrates the overview of our network architecture. 
+%In contrast to the conventional GAN~\cite{goodfellow2014generative} that generates realistic images, we focus on learning discriminative and high-quality image representations in feature space.
+Specifically, the proposed FGGAN consists of a generator $G$ and an evaluator $E$. 
+The generator $G$ is trained to confuse the evaluator $E$ by producing high-quality features, while the evaluator $E$ aims at distinguishing the features generated by the generator $G$ from the real ones by optimizing multiple learning goals. This process can be formulated as
+\begin{equation}
+    \min_{\theta} \max_{\phi} \mathcal{L}(G, E)
+    \label{eq:gan_form}
+\end{equation}
+where $\theta$ and $\phi$ denote the parameters of the generator $G$ and the evaluator $E$, respectively.
+Given a real input image $x_r$ in any views or poses from the fine-grained category $y$, a new representation $x_z$ in feature space is obtained from the generator function $G(x_r)$.
+In addition, given another input image $x_c$ in the canonical view from the same category, the evaluator $E$ evaluates the quality of $x_z$ via the following objective function:
+\begin{equation}
+    \mathop{\mathbb{E}}_{x_r \sim \mathcal{P}_{data}}\left[ \log E(x_r, x_c) \right] + \mathop{\mathbb{E}}_{x_z \sim \mathcal{P}_{G(x_r)}} \left[\log(1-E(x_z,x_c)) \right]
+    \label{eq:e_loss}
+\end{equation}
+where $\mathcal{P}_{data}$ denotes the data distribution of real images in random views, and $\mathcal{P}_{G(x_r)}$ denotes the distribution of generated image representations given $x_r$.
+
+%Given an object image, $\mathcal{I}_{data}$ denotes the image in random view, and $\mathcal{I}_{G_\theta}$ denotes the synthesized image representations in the normalized space, which are produced by the generator $G_\theta$. Note that $x_n$ is the canonical view of the object image, and $y$ is the fine-grained category of the given object image. %In our network architecture, the proposed generator $G_\theta$ is a fully convolutional network, which is designed for synthesizing image representation. 
+
+To jointly learn implicit geometric transformations and generate discriminative image representations, the evaluator $E$ consists of three sub-modules: the discriminator $D$, the normalizer $N$ and the semantic embedding module $S$. 
+The learning objective of $E$ is then written as
+\begin{equation}
+    E(x, x_c) = \gamma_D \mathcal{L}_D(x)+\gamma_N \mathcal{L}_N(x, x_c)+ \gamma_S\mathcal{L}_S(x)
+    \label{eq:evaluator}
+\end{equation}
+where $x$ can be either the real image $x_r$ or the generated representation $x_z$. Additionally, $\gamma_D$, $\gamma_N$ and $\gamma_S$ are the hyper-parameters balancing the effect of each objective and they are set to equal value.
+
+%where $x$ denotes the input image in random view/poses, $x_c$ is the corresponding one in the canonical view, and $y$ indicates the fine-grained category of the input image. %Additionally, we define $\phi_D$, $\phi_N$, and $\phi_S$, which denote the parameters of the discriminator $D$, the normalizer $N$ and the semantic embedding module $S$, respectively.We describe the intuition behind each objective function as below. 
+First, $\mathcal{L}_D(x)$ is defined as a binary classification loss function for the discriminator $D$ to classify the input into real and fake classes. Second, $\mathcal{L}_N(x,x_c)$ verifies whether the input is normalized to the canonical view/pose by computing the normalization error given the input pair $\{x,x_c\}$. Finally, $\mathcal{L}_S(x)$ encourages images from the same fine-grained category to have similar representations. We elaborate on each objective function as below.
+
+%which in turns help the generator $G$ implicitly learn the transformation function converting various views of an object to a canonical view. %The two network models are trained alternatively until they reach an equilibrium.%To evaluate the quality of the synthesized features, the proposed evaluator $E$ consists of three submodules: Discriminator \textbf{(D)}, Normalization module (\textbf{N}) and Semantic embedding module (\textbf{S}).%\begin{itemize}%\item GAN: generator (encoder/decoder) and discriminator%\item Pose normalization branch (orange CNN cross-entropy and feature reconstruction loss)%\item Similarity CNN (cross-entropy)/Siamese CNN (contrastive loss)%\end{itemize}\begin{comment}
+\begin{figure*}[ht]
+\begin{center}
+\includegraphics[draft,height=5cm,width=\linewidth]{screenshot.png}
+\caption{what is this?}
+\end{center}
+\end{figure*}
+\end{comment}\subsection{Discriminator}\label{sec:disc}%Recent studies on GANs~\cite{goodfellow2014generative} have been proved effective on synthesizing images in high-quality by training the generator and the discriminator in an adversarial setting. Inspired by GANs, we proposed to integrate the GAN framework into our network architecture for learning high-quality and discriminative image representations. 
+In the proposed FGGAN, the output of the discriminator \textcolor{black}{$D(x)$} is a scalar probability indicating whether the given input \textcolor{black}{$x$} is the real image or the generated image representation. The higher the probability \textcolor{black}{$D(x)$} is, the more chance $x$ would be the real image.
+Following the definition in~\cite{goodfellow2014generative}, we formulate the following binary cross-entropy loss function to learn the discriminator $D$:
+\begin{equation}
+    \mathcal{L}_D(\textcolor{black}{x}) = 
+        \begin{cases}
+      -\log D(\textcolor{black}{x}), & \textcolor{black}{x} \sim \mathcal{P}_{data} \\
+      -\log(1-D(\textcolor{black}{x})), & \textcolor{black}{x} \sim \mathcal{P}_{G(x)}
+    \end{cases}
+    \label{eq:d}
+\end{equation}
+The objective function tries to distinguish generated image representations from real images by alternating learning goals between the two cases.
+%$\mathcal{P}_{data}$ denotes the real training images in different views, and $\mathcal{P}_{G(x)}$ denotes the image representations synthesized by the generator $G$ given the input image $x$.\subsection{Normalizer}
+One of the challenges in fine-grained image search is that objects in images may appear in high variation of viewpoints and poses. 
+Different from previous works~\cite{DBLP:conf/cvpr/KanazawaJC16,DBLP:journals/corr/HanRHWCSP17,zhang2014part,zhang2013deformable,chai2013symbiotic} that localize part regions or match objects with pre-defined geometric transformations, we propose to implicitly learn the transformation by an end-to-end adversarial network, which normalizes various views and poses to a single view for better matching. 
+While the generator function $G(x_r)$ learns to convert the input image $x_r$ to $x_z$ in the canonical view, we design a normalizer $N$ to distinguish the real canonical image $x_c$ from the generated pose-normalized representation $x_z$. 
+
+Given a pair of input $\{x,x_c\}$, we define it as the positive pair when $x$ is the canonical image $x_c$ and as the negative pair if $x$ is the generated representation $x_z$. We concatenate the inputs $x$ and $x_c$ along the channel, forming a tensor as input for the normalizer $N$. Then, we train the normalizer $N$ as a binary classifier identifying whether the input pair is the positive or negative pair. In this way, the normalizer verifies whether the input $x$ is similar to $x_c$, \ie, how well $x$ is normalized to the canonical view. 
+Accordingly, we train the generator to confuse the normalizer by generating image representation $x_z$ that is similar to the canonical image $x_c$, without any pre-defined transformation parameters. 
+We formulate the normalization loss function as below:
+\begin{equation}
+	\begin{aligned}
+    {\small 
+    \mathcal{L}_N(x,x_{c}) = 
+    \begin{cases}
+    -\log N(x,x_{c}) - \lambda \ell(x, x_c), & x=x_c \\
+    -\log(1-N(x,x_{c})) - \lambda \ell(x, x_c), & x \sim \mathcal{P}_{G(x)}
+    \end{cases}
+    }
+    \label{eq:n}
+    \end{aligned}
+\end{equation}%The output of the normalizer $N(x,x_c)$ indicates the possibility of being the real canonical image given the input $x$. 
+To encourage that the generated representation is close to the real canonical image in feature space rather than forcing them to match exactly, we add a feature reconstruction loss $\ell(x, x_c) = \frac{1}{2}\|\mathbf{f}_x - \mathbf{f}_{x_{c}}\|^2$. 
+%Moreover, we minimize the normalization error in the semantic level. 
+Specifically, given the input pair $\{x, x_c\}$, we vectorize the activations of the intermediate layer of the normalizer to obtain two feature vectors $\mathbf{f}_x$ and $\mathbf{f}_{x_c}$. We minimize the mean square error (MSE) of $\mathbf{f}_x$ and $\mathbf{f}_{x_c}$ during learning. The weighting parameter $\lambda=1$.
+%Note that $m$ indicates the dimension of the feature vector.\subsection{Semantic embedding}
+
+To ensure that features of images from the same fine-grained category are semantically close to each other, we include a convolutional neural network with a classification loss to learn discriminative image representations while preserving semantic similarity.
+\textcolor{black}{The semantic embedding module $S$ is able to evaluate the quality of the generated representations by estimating the classification error. Particularly, we firstly train $S$ with real images to capture the semantics in the feature space. Then, jointly learning with the generator $G$, we feed the generated representation $x_z$ into $S$ and compute the classification error. We then back-propagate the classification error into $G$ to help $G$ learn better.
+%In analogy with the reinforcement learning, the classification error can be seen as the reward for guiding the generator $G$ to generate representations that close to the semantics.
+} 
+The objective function $\mathcal{L}_S$ is defined as a softmax loss: 
+\begin{equation}
+    \mathcal{L}_S(x) = -\log \frac{\exp(p_y(x))}{\sum_{i=1}^{C} \exp(p_i(x))}
+    \label{eq:s}
+\end{equation}
+where $x$ can be the real image $x_r$ or the generated representation $x_z$. In addition, $y$ is the category label, $p_i(x)$ indicates the prediction score of the $i$-th category given the input $x$, and $C$ denotes the total number of categories.
+
+\subsection{Adversarial training}{\flushleft \textbf{Initialization.}} We define $\theta$, $\phi_D$, $\phi_N$, and $\phi_S$ as the parameters of the generator $G$, the discriminator $D$, the normalizer $N$ and the semantic embedding $S$, respectively. In the initialization stage, the network parameters $\theta$, $\phi_D$, and $\phi_N$ are randomly initialized. $\phi_S$ is initialized with the weights pre-trained on ILSVRC12. Following the adversarial training procedure in~\cite{goodfellow2014generative}, we train $G$ and $E$ alternatively as below. 
+{\flushleft \textbf{Evaluator.}} First, we train $D$ with real images and generated representations by minimizing the loss of Eq.~\eqref{eq:d}. Second, $N$ is trained with the positive and negative pairs by minimizing the loss of Eq.~\eqref{eq:n}. 
+%\textcolor{red}{Note that two canonical images (of the same object) form the positive pairs.}%The negative pair consists of the canonical image and the synthesized one. Furthermore, $S$ is trained by optimizing the objective function Eq.~\eqref{eq:s}.
+Finally, we freeze the parameters of the evaluator $E$, and then train the generator $G$.
+{\flushleft \textbf{Generator.}} We optimize the parameters of the generator to \textit{increase} the loss of the evaluator, \ie, we optimize $\mathcal{L}_G(x,x_c) = -E(x, x_c)$ for the generator $G$.
+%We formulate the optimization as the following objective function:%\begin{equation}%    \mathcal{L}_G(x,x_c) = -\gamma_D \mathcal{L}_D(x)-\gamma_N \mathcal{L}_N(x,x_c)- \gamma_S \mathcal{L}_S(x)%    \label{eq:g}%\end{equation}
+Then, we freeze the parameters of the generator $G$, and then train the evaluator $E$. The training procedure will continue alternatively until the generator $G$ and the evaluator $E$ reach an equilibrium. Readers may refer to \textbf{Algorithm 1} for further details of the training procedure. 
+\textcolor{black}{We implement our approach by using open source Torch~\cite{collobert:2011c} with multiple NVIDIA Telsa K80 GPUs. Following~\cite{radford2015unsupervised}, we train FGGAN with the stochastic gradient decent (SGD) with learning rate $0.0002$, mini-batch size $32$, and momentum $0.5$. We set the leak slope of LeakyReLU to $0.2$.
+We multiply the classification error of the semantic embedding module $S$ by a factor of $0.001$ to facilitate training with other modules.
+%Hyper-parameters $\gamma_D$, $\gamma_N$ and $\gamma_S$ are set to $0.5$.
+Further details of the network configuration can be found in the supplementary material.}%\newlength{\textfloatsepsave}\setlength{\textfloatsepsave}{\textfloatsep}\setlength{\textfloatsep}{0pt}\begin{algorithm}[t]
+   \label{agl:algo}
+  \caption{Adversarial training of FGGAN}
+  \KwIn{$N$ pairs of training data $\{x_r^i,x_c^i\}_{i=1}^N$ and corresponding category labels $\{y^i\}_{i=1}^N$; learning rate $\alpha$ and batch size $\beta$.}
+  \KwOut{Network parameters $\theta$,~$\phi_D$,~$\phi_N$,~$\phi_S$}
+  %\BlankLine
+  \textbf{Initialization:} 
+  Initialize parameters~$\theta$,~$\phi_D$,~$\phi_N$,~$\phi_S$\\
+  %\BlankLine
+  \textbf{Optimization:}\\
+  \While{not reach an equilibrium}{
+  \BlankLine
+  Sample $x^i$ uniformly from $\{x_r^i, G(x_r^i)\}$\\
+	Update the network parameters $\phi_D$:\\
+    $\phi_D \leftarrow \phi_D - \alpha \frac{1}{\beta}\sum_{i=1}^{\beta}\frac{\partial \mathcal{L}_D(x^i)}{\partial \phi_D}$\\   
+    Update the network parameters $\phi_N$:\\
+    $\phi_N \leftarrow \phi_N - \alpha \frac{1}{\beta}\sum_{i=1}^{\beta}\frac{\partial \mathcal{L}_N(x^i,x_c^i)}{\partial \phi_N}$\\ 
+    Update the network parameters $\phi_S$:\\
+    $\phi_S \leftarrow \phi_S - \alpha \frac{1}{\beta}\sum_{i=1}^{\beta}\frac{\partial \mathcal{L}_S(x^i)}{\partial \phi_S}$\\     
+    Update the network parameters $\theta$:\\
+    $\theta \leftarrow \theta - \alpha \frac{1}{\beta}\sum_{i=1}^{\beta}\frac{\partial \mathcal{L}_G(x^i,x_c^i)}{\partial \theta}$ 
+  }
+  %\BlankLine
+  %return $W$\;
+\end{algorithm}\subsection{Image retrieval}
+After training, we feed an input image into $G$ and generate the representation in the canonical view (see Figure \ref{fig:idea}), which is further fed into the semantic embedding module $S$. The activations of the last fully-connected layer or compact representations aggregated from the activations of the last pooling layer of $S$ are extracted as feature vectors for image retrieval using Euclidean distance. We evaluate both in the experiments.
+
+\setlength{\textfloatsep}{\textfloatsepsave}
+\section{Experiments}\label{sec:exp}\subsection{Evaluation protocol}
+We adopt \textbf{precision at $k$~(P@$k$)} and \textbf{mean average precision~(mAP)} as evaluation metrics.
+%We measure the performance of different approaches from the following aspects:%{\flushleft \textbf{Precision at $k$~(P@$k$).}} We rank all the images according to their Euclidean distances to the query and compute the P@$k$. 
+P@$k$ indicates the percentage of true positive samples among the top $k$ returned samples. The mAP indicates the mean of the average precision scores given a set of queries.
+Following the common protocol, we select query images from the test set, and retrieve nearest neighbors from the training set. 
+We take the fine-grained class labels as ground truth to compute the metrics by validating whether the query and retrieved images share common labels. 
+
+%%% table begins %%%\begin{table*}[t]
+\renewcommand{\arraystretch}{0.95}
+	\centering
+    \small
+	\caption{Mean average precision (mAP, \%) of different methods evaluated on top $k$ retrieved images on CompCars, eBayCamera10k, and Lookbook datasets.
+    Our full model is better than or comparable with other methods.
+    \emph{ft} denotes the backbone network (VGG16) fine-tuned on the training set of the target dataset.}
+    %\vspace{-2mm}
+	\label{tbl:map-compare}{
+	\begin{tabular*}{\textwidth}{@{}@{\extracolsep{\fill}}lcccc|cccc|ccc@{}}
+	& \multicolumn{3}{c}{CompCars} && \multicolumn{3}{c}{eBayCamera10k} && \multicolumn{3}{c}{Lookbook} \\
+	\hline
+	Method  & $k = 5$ &  $k = 10$ & $k = 20$ && $k = 5$ &  $k = 10$ & $k = 20$ && $k = 5$ & $k = 10$ & $k = 20$\\
+	\hline
+    VGG16~\cite{Simonyan14c} & $47.32$ & $45.04$ & $40.56$ && $78.66$ & $75.21$ & $72.17$ && $52.52$ & $50.52$ & $46.93$\\  
+        VGG16+\emph{ft}~\cite{Simonyan14c} & $63.18$ & $61.64$ & $55.09$ && $84.32$ & $81.45$ & $78.65$ && $76.98$ & $72.60$ & $67.64$\\
+        \hline
+ %MAC~\cite{tolias2015particular,azizpour2015generic} & $60.36$ & $57.27$ & $51.70$ && $85.77$ & $81.87$ & $78.14$ && $54.63$ & $52.78$ & $49.35$\\ 
+   %Sum pooling~\cite{babenko2015aggregating} & $58.30$ & $55.04$ & $50.14$ && $84.07$ & $80.44$ & $76.56$ && $64.25$ & $61.02$ & $57.81$\\ 
+    %CroW~\cite{kalantidis2016cross} & $57.67$ & $54.82$ & $49.30$ && $85.15$ & $81.32$ & $77.58$ && $58.79$ & $56.61$ & $53.12$\\  
+ %SCDA~\cite{DBLP:journals/tip/WeiLWZ17} & $54.46$ & $51.15$ & $45.78$ && $86.05$ & $82.48$ & $78.69$ && $32.43$ & $31.80$ & $30.60$\\
+
+MAC+\emph{ft}~\cite{tolias2015particular,azizpour2015generic} & $67.81$ & $63.41$ & $57.08$ && $86.00$ & $82.56$ & $79.42$ && $79.36$ & $74.79$ & $70.10$\\ 
+    Sum pooling+\emph{ft}~\cite{babenko2015aggregating} & $66.78$ & $63.10$ & $56.91$ && $83.75$ & $80.60$ & $77.52$ && $80.53$ & $\textbf{76.31}$ & $71.65$\\ 
+    CroW+\emph{ft}~\cite{kalantidis2016cross} & $66.22$ & $62.28$ & $56.11$ && $84.93$ & $81.87$ & $78.76$ && $80.48$ & $76.12$ & $\textbf{72.44}$\\  
+ SCDA+\emph{ft}~\cite{DBLP:journals/tip/WeiLWZ17} & $65.69$ & $61.71$ & $55.75$ && $85.22$ & $82.20$ & $79.33$ && $66.03$ & $62.25$ & $58.19$\\
+    \hline
+    FGGAN & $66.47$ & $62.52$ & $56.28$ && $92.16$ & $\textbf{90.34}$ & $\textbf{87.81}$ && $77.00$ & $71.90$ & $66.98$\\
+    FGGAN+MAC & $\textbf{67.86}$ & $\textbf{63.88}$ & $\textbf{57.28}$ && $92.03$ & $89.91$ & $87.70$ && $79.45$ & $74.94$ & $70.11$\\
+    FGGAN+Sum pooling & $67.21$ & $63.07$ & $56.38$ && $91.34$ & $89.30$ & $86.86$ && $78.43$ & $74.00$ & $68.88$\\
+    FGGAN+CroW & $66.58$ & $62.40$ & $56.28$ && $91.90$ & $89.93$ & $87.74$ && $\textbf{80.91}$ & $76.23$ & $71.38$\\
+    FGGAN+SCDA & $66.43$ & $62.67$ & $56.16$ && $\textbf{92.22}$ & $90.05$ & $87.73$ && $71.96$ & $67.62$ & $63.12$\\
+	\hline
+    %\multicolumn{12}{l}{\footnotesize{$\ast$ \emph{ft} denotes fine-tuning the backbone network on the training set of the target dataset.}} \\
+	\end{tabular*}
+    }
+\end{table*}%%% table ends %%%%We conduct experiments on two public benchmark datasets to compare the proposed method to the state-of-the-art methods under both closed-set and open-set scenarios. We also construct a challenging dataset to evaluate different approaches. We first describe the evaluation protocol and then summarize the datasets.\subsection{Dataset}{\flushleft \textbf{CompCars~\cite{yang2015large}}} contains car images in various views including front, side, rear, front-side, and rear-side views, and rich annotations including make, model, and the year of manufacture. 
+It is divided into three parts for fine-grained recognition, attribute prediction and car verification. 
+Here we conduct experiments on the first part that consists of $30,730$ training images and $11,119$ test images from $431$ categories of cars. 
+The year of car manufacture ranges from $2005$ to $2016$.
+
+{\flushleft \textbf{Lookbook}~\cite{DBLP:conf/eccv/YooKPPK16}}~consists of two types of clothings images: street photos and stock images with clean background. 
+Each category contains one stock image associated with multiple street photos.
+Following~\cite{DBLP:conf/eccv/YooKPPK16}, we obtain $68,819$ street photos and $8,726$ stock images. 
+We split them into training and test sets. The training set has $8,726$ stock images and the associated $39,201$ street photos, while the test set has $29,618$ street photos. This contains non-rigid objects.
+
+%$47,927$ training images ($8,726$ stock images and $39,201$ user images).   $29,618$ test images%About the unseen experiments, we split the dataset to $4000$ known categories and $4726$ unseen categories. For the unseen experiments, the training set consists of $4000$ stock images and $17,990$ user images. The test set has $29,618$ user images with $8,726$ categories clothing.{\flushleft \textbf{eBayCamera10k}} is a new fine-grained dataset compiled by us. It consists of $110$ fine-grained types of camera and lens in terms of make and model, including $471$ stock images and $10,720$ user photos downloaded from eBay.com.
+Similar to Lookbook, the stock image and user photos are associated if both of them share a common make and model. 
+The training set includes $471$ stock images and the associated $8,040$ user images. The test set has $2,680$ user images.
+%Figure~\ref{fig:camera-samples} shows some sample images from the eBayCamera10k dataset. %It is challenging to distinguish the subtle differences. 
+Cameras in the user photos may have high view and pose variations, or come with additional accessories, making accurate retrieval challenging. 
+We will release the dataset to benefit future research.
+%~\footnote{Details of the dataset can be found in  supplementary material.}.%% \begin{figure}[t]%  \centering%  \setlength{\tabcolsep}{0pt}%  \setlength{\fboxsep}{0pt}%%  \setlength{\fboxrule}{2pt}%%  \begin{tabular}{cccccccc}%     %first row----------------------------% 	\rotatebox[origin=l]{90}{\hspace{0.4mm}Stock} %     & \ \ & \includegraphics[width=.075\textwidth,height=.075\textwidth]{./figures/camera-samples/002_004_USER_4e1320872719.jpg}%     & \includegraphics[width=.075\textwidth,height=.075\textwidth]{./figures/camera-samples/002_009_STOCK_d10c493fdf92.jpg}%     & \includegraphics[width=.075\textwidth,height=.075\textwidth]{./figures/camera-samples/005_031_STOCK_edfa39788311.jpg}%     & \includegraphics[width=.075\textwidth,height=.075\textwidth]{./figures/camera-samples/005_064_STOCK_d6bdf2e91f06.jpg}%      &%   \includegraphics[width=.075\textwidth,height=.075\textwidth]{./figures/camera-samples/005_041_STOCK_325305d484d5.jpg} %   &%   \includegraphics[width=.075\textwidth,height=.075\textwidth]{./figures/camera-samples/005_010_STOCK_85f714b04bfa.jpg}   %   \\%     	\rotatebox[origin=l]{90}{\hspace{1.6mm} User}%     & \ \ & \includegraphics[width=.075\textwidth,height=.075\textwidth]{./figures/camera-samples/002_004_USER_6c807d165268.jpg}%     & \includegraphics[width=.075\textwidth,height=.075\textwidth]{./figures/camera-samples/002_009_USER_0f4caf7ed4c8.jpg}%     & \includegraphics[width=.075\textwidth,height=.075\textwidth]{./figures/camera-samples/005_031_USER_3d00f8f13d75.jpg}%     & \includegraphics[width=.075\textwidth,height=.075\textwidth]{./figures/camera-samples/005_064_USER_534d0b8ba5e4.jpg}%     & \includegraphics[width=.075\textwidth,height=.075\textwidth]{./figures/camera-samples/005_041_USER_8acab0b5270f.jpg}%          &%   \includegraphics[width=.075\textwidth,height=.075\textwidth]{./figures/camera-samples/005_010_USER_31e0ff8ead06.jpg}  %  \end{tabular}%  \caption{Sample images from the new eBayCamera10k dataset. It has a good mix of high quality images and images in the wild. Upper row shows stock images with clean background. Bottom row shows the associated user images.}% \label{fig:camera-samples}% \end{figure}% --- figure ends --- % %About the unseen experiments, we split the dataset to $50$ known categories and $60$ unseen categories. For the unseen experiments, the training set consists of $50$ stock images and $3,867$ user images. The test set has $2,680$ user images with $110$ categories camera.\begin{comment}
+%%% figure begins %%%
+\begin{figure*}[t]
+	\centering
+        \includegraphics[width=.7\textwidth]{./figures/bar.pdf}\\
+        \vspace{-3mm}
+	\subfloat{\label{fig:compcars-p-at-k}{\includegraphics[height=.15\textwidth]{./figures/comcar-p-at-k.pdf}}}\qquad
+	\subfloat{\label{fig:camera-p-at-k}{\includegraphics[height=.15\textwidth]{./figures/camera-p-at-k.pdf}}}\qquad
+	\subfloat{\label{fig:lookbook-p-at-k}{\includegraphics[height=.15\textwidth]{./figures/lookbook-p-at-k.pdf}}}
+	\caption{Plots of P@$k$ for different methods on  CompCars (left), eBayCamera10k (middle) and Lookbook (right) datasets. Our method consistently outperforms others, given a small $k$. Our method is more effective in finding correct matches and rank them higher. Section \ref{sec:baselines} has details.
+}
+\vspace{-3mm}
+	\label{fig:p-at-k}
+\end{figure*}
+%%% figure ends %%%
+\end{comment}% --- figure begins ---%\begin{figure*}[t]
+ \centering
+ \setlength{\tabcolsep}{0.4pt}
+ \setlength{\fboxsep}{0pt}%
+ \setlength{\fboxrule}{0.7pt}%
+ \begin{tabular}{cccccccccccccccccccccccc}
+ 	%\multicolumn{1}{c}{Query} & &\multicolumn{5}{c}{Retrieved Images} & &\multicolumn{1}{c}{Query}  & &\multicolumn{5}{c}{Retrieved Images} & &\multicolumn{1}{c}{Query}  & &\multicolumn{5}{c}{Retrieved Images}\\ 
+
+%1st row----------------------------
+ \includegraphics[width=.055\textwidth,height=.055\textwidth]{./figures/vis/car/vggft/query631_PID027.jpg}
+ &
+	\rotatebox[origin=l]{90}{\scalebox{0.5}{VGG$_{ft}$}}
+    & \includegraphics[width=.055\textwidth,height=.055\textwidth,cfbox=cyan]{./figures/vis/car/vggft/query631_rank_0_PID027.jpg}
+    & \includegraphics[width=.055\textwidth,height=.055\textwidth,cfbox=cyan]{./figures/vis/car/vggft/query631_rank_1_PID027.jpg}
+    & \includegraphics[width=.055\textwidth,height=.055\textwidth]{./figures/vis/car/vggft/query631_rank_2_PID073.jpg}
+    & \includegraphics[width=.055\textwidth,height=.055\textwidth]{./figures/vis/car/vggft/query631_rank_3_PID073.jpg}
+    & \includegraphics[width=.055\textwidth,height=.055\textwidth]{./figures/vis/car/vggft/query631_rank_4_PID160.jpg}
+    & ~~ 
+    & \includegraphics[width=.055\textwidth,height=.055\textwidth]{./figures/vis/camera/vggft/query5_001.jpg}
+	& \rotatebox[origin=l]{90}{\scalebox{0.5}{VGG$_{ft}$}}
+    & \includegraphics[width=.055\textwidth,height=.055\textwidth,cfbox=cyan]{./figures/vis/camera/vggft/query5_rank_0_001.jpg}
+    & \includegraphics[width=.055\textwidth,height=.055\textwidth]{./figures/vis/camera/vggft/query5_rank_1_005.jpg}    & \includegraphics[width=.055\textwidth,height=.055\textwidth]{./figures/vis/camera/vggft/query5_rank_2_004.jpg}    & \includegraphics[width=.055\textwidth,height=.055\textwidth]{./figures/vis/camera/vggft/query5_rank_3_004.jpg}    & \includegraphics[width=.055\textwidth,height=.055\textwidth]{./figures/vis/camera/vggft/query5_rank_4_015.jpg}
+    & ~~
+    & \includegraphics[height=.055\textwidth]{./figures/vis/lookbook/vggft/query900_PID000109.jpg}
+	& \rotatebox[origin=l]{90}{\scalebox{0.5}{VGG$_{ft}$}}
+    & \includegraphics[height=.055\textwidth,cfbox=cyan]{./figures/vis/lookbook/vggft/query900_rank_0_PID000109.jpg}
+    & \includegraphics[height=.055\textwidth]{./figures/vis/lookbook/vggft/query900_rank_1_PID003567.jpg}    & \includegraphics[height=.055\textwidth]{./figures/vis/lookbook/vggft/query900_rank_2_PID002695.jpg}    & \includegraphics[height=.055\textwidth]{./figures/vis/lookbook/vggft/query900_rank_3_PID000229.jpg}    & \includegraphics[height=.055\textwidth]{./figures/vis/lookbook/vggft/query900_rank_4_PID000830.jpg}\\
+    
+%2nd row----------------------------
+    &
+	\rotatebox[origin=l]{90}{\scalebox{0.5}{MAC$_{ft}$}}
+    & \includegraphics[width=.055\textwidth,height=.055\textwidth,cfbox=cyan]{./figures/vis/car/mac/query631_rank_0_PID027_1068_.jpg}
+    & \includegraphics[width=.055\textwidth,height=.055\textwidth]{./figures/vis/car/mac/query631_rank_1_PID073_0443_.jpg}
+    & \includegraphics[width=.055\textwidth,height=.055\textwidth]{./figures/vis/car/mac/query631_rank_2_PID073_0439_.jpg}
+    & \includegraphics[width=.055\textwidth,height=.055\textwidth]{./figures/vis/car/mac/query631_rank_3_PID028_1889_.jpg}
+    & \includegraphics[width=.055\textwidth,height=.055\textwidth]{./figures/vis/car/mac/query631_rank_4_PID073_0440_.jpg}
+    & ~~
+    &
+	& \rotatebox[origin=l]{90}{\scalebox{0.5}{MAC$_{ft}$}}
+    & \includegraphics[width=.055\textwidth,height=.055\textwidth]{./figures/vis/camera/mac/query5_rank_0_004.jpg}
+    & \includegraphics[width=.055\textwidth,height=.055\textwidth]{./figures/vis/camera/mac/query5_rank_1_005.jpg}    & \includegraphics[width=.055\textwidth,height=.055\textwidth]{./figures/vis/camera/mac/query5_rank_2_004.jpg}    & \includegraphics[width=.055\textwidth,height=.055\textwidth]{./figures/vis/camera/mac/query5_rank_3_004.jpg}    & \includegraphics[width=.055\textwidth,height=.055\textwidth]{./figures/vis/camera/mac/query5_rank_4_004.jpg}
+    & ~~
+    & 
+	& \rotatebox[origin=l]{90}{\scalebox{0.5}{MAC$_{ft}$}}
+    & \includegraphics[height=.055\textwidth,cfbox=cyan]{./figures/vis/lookbook/vggft/query900_rank_0_PID000109.jpg}
+    & \includegraphics[height=.055\textwidth]{./figures/vis/lookbook/mac/query900_rank_1_PID000830.jpg}    & \includegraphics[height=.055\textwidth]{./figures/vis/lookbook/mac/query900_rank_2_PID000229.jpg}    & \includegraphics[height=.055\textwidth]{./figures/vis/lookbook/mac/query900_rank_3_PID000097.jpg}    & \includegraphics[height=.055\textwidth]{./figures/vis/lookbook/mac/query900_rank_4_PID002689.jpg}\\
+
+%3rd row----------------------------
+    &
+	\rotatebox[origin=l]{90}{\scalebox{0.5}{Sum$_{ft}$}}
+    & \includegraphics[width=.055\textwidth,height=.055\textwidth,cfbox=cyan]{./figures/vis/car/sumpool/query631_rank_0_PID027_1068_.jpg}
+    & \includegraphics[width=.055\textwidth,height=.055\textwidth]{./figures/vis/car/sumpool/query631_rank_1_PID073_0443_.jpg}
+    & \includegraphics[width=.055\textwidth,height=.055\textwidth,cfbox=cyan]{./figures/vis/car/sumpool/query631_rank_2_PID027_1068_.jpg}
+    & \includegraphics[width=.055\textwidth,height=.055\textwidth]{./figures/vis/car/sumpool/query631_rank_3_PID073_0446_.jpg}
+    & \includegraphics[width=.055\textwidth,height=.055\textwidth]{./figures/vis/car/sumpool/query631_rank_4_PID077_0126_.jpg}
+    & ~~
+    &
+	& \rotatebox[origin=l]{90}{\scalebox{0.5}{Sum$_{ft}$}}
+    & \includegraphics[width=.055\textwidth,height=.055\textwidth,cfbox=cyan]{./figures/vis/camera/sumpool/query5_rank_0_001.jpg}    & \includegraphics[width=.055\textwidth,height=.055\textwidth]{./figures/vis/camera/sumpool/query5_rank_1_005.jpg}    & \includegraphics[width=.055\textwidth,height=.055\textwidth,cfbox=cyan]{./figures/vis/camera/sumpool/query5_rank_2_001.jpg}    & \includegraphics[width=.055\textwidth,height=.055\textwidth]{./figures/vis/camera/sumpool/query5_rank_3_005.jpg}    & \includegraphics[width=.055\textwidth,height=.055\textwidth]{./figures/vis/camera/sumpool/query5_rank_4_004.jpg}
+    & ~~
+    & 
+	& \rotatebox[origin=l]{90}{\scalebox{0.5}{Sum$_{ft}$}}
+    & \includegraphics[height=.055\textwidth,cfbox=cyan]{./figures/vis/lookbook/sumpool/query900_rank_0_PID000109.jpg}
+    & \includegraphics[height=.055\textwidth,cfbox=cyan]{./figures/vis/lookbook/sumpool/query900_rank_1_PID000109.jpg}    & \includegraphics[height=.055\textwidth]{./figures/vis/lookbook/sumpool/query900_rank_2_PID000420.jpg}    & \includegraphics[height=.055\textwidth]{./figures/vis/lookbook/sumpool/query900_rank_3_PID003547.jpg}    & \includegraphics[height=.055\textwidth]{./figures/vis/lookbook/sumpool/query900_rank_4_PID003567.jpg}\\
+
+
+%4th row----------------------------
+    &
+	\rotatebox[origin=l]{90}{\scalebox{0.5}{Crow$_{ft}$}}
+    & \includegraphics[width=.055\textwidth,height=.055\textwidth,cfbox=cyan]{./figures/vis/car/crow/query631_rank_0_PID027_1068_.jpg}
+    & \includegraphics[width=.055\textwidth,height=.055\textwidth]{./figures/vis/car/crow/query631_rank_1_PID073_0440_.jpg}
+    & \includegraphics[width=.055\textwidth,height=.055\textwidth]{./figures/vis/car/crow/query631_rank_2_PID073_0443_.jpg}
+    & \includegraphics[width=.055\textwidth,height=.055\textwidth,cfbox=cyan]{./figures/vis/car/crow/query631_rank_3_PID027_1068_.jpg}
+    & \includegraphics[width=.055\textwidth,height=.055\textwidth]{./figures/vis/car/crow/query631_rank_4_PID073_0439_.jpg}
+    & ~~
+    &
+	& \rotatebox[origin=l]{90}{\scalebox{0.5}{Crow$_{ft}$}}
+    & \includegraphics[width=.055\textwidth,height=.055\textwidth]{./figures/vis/camera/crow/query5_rank_0_004.jpg}    & \includegraphics[width=.055\textwidth,height=.055\textwidth,cfbox=cyan]{./figures/vis/camera/crow/query5_rank_1_001.jpg}    & \includegraphics[width=.055\textwidth,height=.055\textwidth]{./figures/vis/camera/crow/query5_rank_2_005.jpg}    & \includegraphics[width=.055\textwidth,height=.055\textwidth]{./figures/vis/camera/crow/query5_rank_3_002.jpg}    & \includegraphics[width=.055\textwidth,height=.055\textwidth]{./figures/vis/camera/crow/query5_rank_4_005.jpg}
+    & ~~
+    & 
+	& \rotatebox[origin=l]{90}{\scalebox{0.5}{Crow$_{ft}$}}
+    & \includegraphics[height=.055\textwidth,cfbox=cyan]{./figures/vis/lookbook/crow/query900_rank_0_PID000109.jpg}
+    & \includegraphics[height=.055\textwidth]{./figures/vis/lookbook/crow/query900_rank_1_PID002689.jpg}    & \includegraphics[height=.055\textwidth,cfbox=cyan]{./figures/vis/lookbook/crow/query900_rank_2_PID000109.jpg}    & \includegraphics[height=.055\textwidth]{./figures/vis/lookbook/crow/query900_rank_3_PID000830.jpg}    & \includegraphics[height=.055\textwidth]{./figures/vis/lookbook/crow/query900_rank_4_PID002098.jpg}\\
+
+
+%5th row----------------------------
+    &
+	\rotatebox[origin=l]{90}{\scalebox{0.5}{SCDA$_{ft}$}}
+    & \includegraphics[width=.055\textwidth,height=.055\textwidth,cfbox=cyan]{./figures/vis/car/scda/query631_rank_0_PID027_1068_.jpg}
+    & \includegraphics[width=.055\textwidth,height=.055\textwidth]{./figures/vis/car/scda/query631_rank_1_PID073_0443_.jpg}    & \includegraphics[width=.055\textwidth,height=.055\textwidth]{./figures/vis/car/scda/query631_rank_2_PID073_0440_.jpg}    & \includegraphics[width=.055\textwidth,height=.055\textwidth]{./figures/vis/car/scda/query631_rank_3_PID028_1889_.jpg}    & \includegraphics[width=.055\textwidth,height=.055\textwidth,cfbox=cyan]{./figures/vis/car/scda/query631_rank_4_PID027_1068_.jpg}
+    & ~~
+    &
+	& \rotatebox[origin=l]{90}{\scalebox{0.5}{SCDA$_{ft}$}}
+    & \includegraphics[width=.055\textwidth,height=.055\textwidth]{./figures/vis/camera/scda/query5_rank_0_004.jpg}    & \includegraphics[width=.055\textwidth,height=.055\textwidth]{./figures/vis/camera/scda/query5_rank_1_005.jpg}    & \includegraphics[width=.055\textwidth,height=.055\textwidth]{./figures/vis/camera/scda/query5_rank_2_004.jpg}    & \includegraphics[width=.055\textwidth,height=.055\textwidth]{./figures/vis/camera/scda/query5_rank_3_004.jpg}    & \includegraphics[width=.055\textwidth,height=.055\textwidth,cfbox=cyan]{./figures/vis/camera/scda/query5_rank_4_001.jpg}
+    & ~~
+    & 
+	& \rotatebox[origin=l]{90}{\scalebox{0.5}{SCDA$_{ft}$}}
+    & \includegraphics[height=.055\textwidth,cfbox=cyan]{./figures/vis/lookbook/scda/query900_rank_0_PID000109.jpg}
+    & \includegraphics[height=.055\textwidth]{./figures/vis/lookbook/scda/query900_rank_1_PID001740.jpg}    & \includegraphics[height=.055\textwidth]{./figures/vis/lookbook/scda/query900_rank_2_PID003493.jpg}    & \includegraphics[height=.055\textwidth]{./figures/vis/lookbook/scda/query900_rank_3_PID002689.jpg}    & \includegraphics[height=.055\textwidth]{./figures/vis/lookbook/scda/query900_rank_4_PID003346.jpg}\\
+
+
+%6th row----------------------------
+    &
+	\rotatebox[origin=l]{90}{\scalebox{0.5}{FGGAN}}
+    & \includegraphics[width=.055\textwidth,height=.055\textwidth,cfbox=cyan]{./figures/vis/car/fggan/query631_rank_0_PID027.jpg}
+    & \includegraphics[width=.055\textwidth,height=.055\textwidth]{./figures/vis/car/fggan/query631_rank_1_PID152.jpg}    & \includegraphics[width=.055\textwidth,height=.055\textwidth]{./figures/vis/car/fggan/query631_rank_2_PID073.jpg}    & \includegraphics[width=.055\textwidth,height=.055\textwidth]{./figures/vis/car/fggan/query631_rank_3_PID159.jpg}    & \includegraphics[width=.055\textwidth,height=.055\textwidth,cfbox=cyan]{./figures/vis/car/fggan/query631_rank_4_PID027.jpg}
+    & ~~
+    &
+	& \rotatebox[origin=l]{90}{\scalebox{0.5}{FGGAN}}
+    & \includegraphics[width=.055\textwidth,height=.055\textwidth,cfbox=cyan]{./figures/vis/camera/fggan/query5_rank_0_001.jpg}    & \includegraphics[width=.055\textwidth,height=.055\textwidth,cfbox=cyan]{./figures/vis/camera/fggan/query5_rank_1_001.jpg}    & \includegraphics[width=.055\textwidth,height=.055\textwidth,cfbox=cyan]{./figures/vis/camera/fggan/query5_rank_2_001.jpg}    & \includegraphics[width=.055\textwidth,height=.055\textwidth,cfbox=cyan]{./figures/vis/camera/fggan/query5_rank_3_001.jpg}    & \includegraphics[width=.055\textwidth,height=.055\textwidth,cfbox=cyan]{./figures/vis/camera/fggan/query5_rank_4_001.jpg}
+    & ~~
+    & 
+	& \rotatebox[origin=l]{90}{\scalebox{0.5}{FGGAN}}
+    & \includegraphics[height=.055\textwidth,cfbox=cyan]{./figures/vis/lookbook/fggan/query900_rank_0_PID000109.jpg}
+    & \includegraphics[height=.055\textwidth]{./figures/vis/lookbook/fggan/query900_rank_1_PID000061.jpg}    & \includegraphics[height=.055\textwidth,cfbox=cyan]{./figures/vis/lookbook/fggan/query900_rank_2_PID000109.jpg}    & \includegraphics[height=.055\textwidth,cfbox=cyan]{./figures/vis/lookbook/fggan/query900_rank_3_PID000109.jpg}    & \includegraphics[height=.055\textwidth]{./figures/vis/lookbook/fggan/query900_rank_4_PID000699.jpg}\\
+    
+
+%7th row----------------------------
+    &
+	\rotatebox[origin=l]{90}{\scalebox{0.5}{FG$_{MAC}$}}
+    & \includegraphics[width=.055\textwidth,height=.055\textwidth,cfbox=cyan]{./figures/vis/car/fggan-mac/query631_rank_0_PID027_1068_.jpg}
+    & \includegraphics[width=.055\textwidth,height=.055\textwidth]{./figures/vis/car/fggan-mac/query631_rank_1_PID028_1889_.jpg}    & \includegraphics[width=.055\textwidth,height=.055\textwidth,cfbox=cyan]{./figures/vis/car/fggan-mac/query631_rank_2_PID027_1068_.jpg}    & \includegraphics[width=.055\textwidth,height=.055\textwidth,cfbox=cyan]{./figures/vis/car/fggan-mac/query631_rank_3_PID027_1070_.jpg}    & \includegraphics[width=.055\textwidth,height=.055\textwidth]{./figures/vis/car/fggan-mac/query631_rank_4_PID073_0443_.jpg}
+    & ~~
+    &
+	& \rotatebox[origin=l]{90}{\scalebox{0.5}{FG$_{MAC}$}}
+    & \includegraphics[width=.055\textwidth,height=.055\textwidth,cfbox=cyan]{./figures/vis/camera/fggan-mac/query5_rank_0_001.jpg}    & \includegraphics[width=.055\textwidth,height=.055\textwidth]{./figures/vis/camera/fggan-mac/query5_rank_1_005.jpg}    & \includegraphics[width=.055\textwidth,height=.055\textwidth]{./figures/vis/camera/fggan-mac/query5_rank_2_005.jpg}    & \includegraphics[width=.055\textwidth,height=.055\textwidth,cfbox=cyan]{./figures/vis/camera/fggan-mac/query5_rank_3_001.jpg}    & \includegraphics[width=.055\textwidth,height=.055\textwidth,cfbox=cyan]{./figures/vis/camera/fggan-mac/query5_rank_4_001.jpg}
+    & ~~
+    & 
+	& \rotatebox[origin=l]{90}{\scalebox{0.5}{FG$_{MAC}$}}
+    & \includegraphics[height=.055\textwidth,cfbox=cyan]{./figures/vis/lookbook/fggan-mac/query900_rank_0_PID000109.jpg}
+    & \includegraphics[height=.055\textwidth]{./figures/vis/lookbook/fggan-mac/query900_rank_1_PID000061.jpg}    
+    & \includegraphics[height=.055\textwidth]{./figures/vis/lookbook/fggan-mac/query900_rank_2_PID000061.jpg}    
+    & \includegraphics[height=.055\textwidth]{./figures/vis/lookbook/fggan-mac/query900_rank_3_PID000699.jpg}    
+    & \includegraphics[height=.055\textwidth]{./figures/vis/lookbook/fggan-mac/query900_rank_4_PID000103.jpg}\\
+
+
+%8th row----------------------------
+    &
+	\rotatebox[origin=l]{90}{\scalebox{0.5}{FG$_{Sum}$}}
+    & \includegraphics[width=.055\textwidth,height=.055\textwidth,cfbox=cyan]{./figures/vis/car/fggan-sumpool/query631_rank_0_PID027_1068_.jpg}
+    & \includegraphics[width=.055\textwidth,height=.055\textwidth,cfbox=cyan]{./figures/vis/car/fggan-sumpool/query631_rank_1_PID027_1068_.jpg}    & \includegraphics[width=.055\textwidth,height=.055\textwidth,cfbox=cyan]{./figures/vis/car/fggan-sumpool/query631_rank_2_PID027_1068_.jpg}    & \includegraphics[width=.055\textwidth,height=.055\textwidth,cfbox=cyan]{./figures/vis/car/fggan-sumpool/query631_rank_3_PID027_1068_.jpg}    & \includegraphics[width=.055\textwidth,height=.055\textwidth]{./figures/vis/car/fggan-sumpool/query631_rank_4_PID073_0443_.jpg}
+    & ~~
+    &
+	& \rotatebox[origin=l]{90}{\scalebox{0.5}{FG$_{Sum}$}}
+    & \includegraphics[width=.055\textwidth,height=.055\textwidth,cfbox=cyan]{./figures/vis/camera/fggan-sumpool/query5_rank_0_001.jpg}    & \includegraphics[width=.055\textwidth,height=.055\textwidth]{./figures/vis/camera/fggan-sumpool/query5_rank_1_005.jpg}    & \includegraphics[width=.055\textwidth,height=.055\textwidth]{./figures/vis/camera/fggan-sumpool/query5_rank_2_005.jpg}    & \includegraphics[width=.055\textwidth,height=.055\textwidth,cfbox=cyan]{./figures/vis/camera/fggan-sumpool/query5_rank_3_001.jpg}    & \includegraphics[width=.055\textwidth,height=.055\textwidth,cfbox=cyan]{./figures/vis/camera/fggan-sumpool/query5_rank_4_001.jpg}
+    & ~~
+    & 
+	& \rotatebox[origin=l]{90}{\scalebox{0.5}{FG$_{Sum}$}}
+    & \includegraphics[height=.055\textwidth]{./figures/vis/lookbook/fggan-sumpool/query900_rank_0_PID000061.jpg}
+    & \includegraphics[height=.055\textwidth,cfbox=cyan]{./figures/vis/lookbook/fggan-sumpool/query900_rank_1_PID000109.jpg}    
+    & \includegraphics[height=.055\textwidth,cfbox=cyan]{./figures/vis/lookbook/fggan-sumpool/query900_rank_2_PID000109.jpg}    
+    & \includegraphics[height=.055\textwidth,cfbox=cyan]{./figures/vis/lookbook/fggan-sumpool/query900_rank_3_PID000109.jpg}    
+    & \includegraphics[height=.055\textwidth]{./figures/vis/lookbook/fggan-sumpool/query900_rank_4_PID000103.jpg}\\
+
+
+%9th row----------------------------
+    &
+	\rotatebox[origin=l]{90}{\scalebox{0.5}{FG$_{Crow}$}}
+    & \includegraphics[width=.055\textwidth,height=.055\textwidth,cfbox=cyan]{./figures/vis/car/fggan-crow/query631_rank_0_PID027_1068_.jpg}
+    & \includegraphics[width=.055\textwidth,height=.055\textwidth,cfbox=cyan]{./figures/vis/car/fggan-crow/query631_rank_1_PID027_1068_.jpg}    & \includegraphics[width=.055\textwidth,height=.055\textwidth,cfbox=cyan]{./figures/vis/car/fggan-crow/query631_rank_2_PID027_1068_.jpg}    & \includegraphics[width=.055\textwidth,height=.055\textwidth]{./figures/vis/car/fggan-crow/query631_rank_3_PID028_1889_.jpg}    & \includegraphics[width=.055\textwidth,height=.055\textwidth,cfbox=cyan]{./figures/vis/car/fggan-crow/query631_rank_4_PID027_1068_.jpg}
+    & ~~
+    &
+	& \rotatebox[origin=l]{90}{\scalebox{0.5}{FG$_{Crow}$}}
+    & \includegraphics[width=.055\textwidth,height=.055\textwidth,cfbox=cyan]{./figures/vis/camera/fggan-crow/query5_rank_0_001.jpg}    & \includegraphics[width=.055\textwidth,height=.055\textwidth]{./figures/vis/camera/fggan-crow/query5_rank_1_005.jpg}    & \includegraphics[width=.055\textwidth,height=.055\textwidth]{./figures/vis/camera/fggan-crow/query5_rank_2_005.jpg}    & \includegraphics[width=.055\textwidth,height=.055\textwidth,cfbox=cyan]{./figures/vis/camera/fggan-crow/query5_rank_3_001.jpg}    & \includegraphics[width=.055\textwidth,height=.055\textwidth,cfbox=cyan]{./figures/vis/camera/fggan-crow/query5_rank_4_001.jpg}
+    & ~~
+    & 
+	& \rotatebox[origin=l]{90}{\scalebox{0.5}{FG$_{Crow}$}}
+    & \includegraphics[height=.055\textwidth,cfbox=cyan]{./figures/vis/lookbook/fggan-crow/query900_rank_0_PID000109.jpg}
+    & \includegraphics[height=.055\textwidth]{./figures/vis/lookbook/fggan-crow/query900_rank_1_PID000061.jpg}    
+    & \includegraphics[height=.055\textwidth,cfbox=cyan]{./figures/vis/lookbook/fggan-crow/query900_rank_2_PID000109.jpg}    
+    & \includegraphics[height=.055\textwidth,cfbox=cyan]{./figures/vis/lookbook/fggan-crow/query900_rank_3_PID000109.jpg}    
+    & \includegraphics[height=.055\textwidth]{./figures/vis/lookbook/fggan-crow/query900_rank_4_PID000469.jpg}\\
+
+
+%10th row----------------------------
+    &
+	\rotatebox[origin=l]{90}{\scalebox{0.5}{FG$_{SCDA}$}}
+    & \includegraphics[width=.055\textwidth,height=.055\textwidth,cfbox=cyan]{./figures/vis/car/fggan-scda/query631_rank_0_PID027_1068_.jpg}
+    & \includegraphics[width=.055\textwidth,height=.055\textwidth]{./figures/vis/car/fggan-scda/query631_rank_1_PID028_1889_.jpg}    & \includegraphics[width=.055\textwidth,height=.055\textwidth,cfbox=cyan]{./figures/vis/car/fggan-scda/query631_rank_2_PID027_1068_.jpg}    & \includegraphics[width=.055\textwidth,height=.055\textwidth,cfbox=cyan]{./figures/vis/car/fggan-scda/query631_rank_3_PID027_1070_.jpg}    & \includegraphics[width=.055\textwidth,height=.055\textwidth]{./figures/vis/car/fggan-scda/query631_rank_4_PID152_0412_.jpg}
+    & ~~
+    &
+	& \rotatebox[origin=l]{90}{\scalebox{0.5}{FG$_{SCDA}$}}
+    & \includegraphics[width=.055\textwidth,height=.055\textwidth,cfbox=cyan]{./figures/vis/camera/fggan-scda/query5_rank_0_001.jpg}    & \includegraphics[width=.055\textwidth,height=.055\textwidth]{./figures/vis/camera/fggan-scda/query5_rank_1_005.jpg}    & \includegraphics[width=.055\textwidth,height=.055\textwidth,cfbox=cyan]{./figures/vis/camera/fggan-scda/query5_rank_2_001.jpg}    & \includegraphics[width=.055\textwidth,height=.055\textwidth]{./figures/vis/camera/fggan-scda/query5_rank_3_005.jpg}    & \includegraphics[width=.055\textwidth,height=.055\textwidth,cfbox=cyan]{./figures/vis/camera/fggan-scda/query5_rank_4_001.jpg}
+    & ~~
+    & 
+	& \rotatebox[origin=l]{90}{\scalebox{0.5}{FG$_{SCDA}$}}
+    & \includegraphics[height=.055\textwidth,cfbox=cyan]{./figures/vis/lookbook/fggan-scda/query900_rank_0_PID000109.jpg}
+    & \includegraphics[height=.055\textwidth]{./figures/vis/lookbook/fggan-scda/query900_rank_1_PID000061.jpg}    
+    & \includegraphics[height=.055\textwidth]{./figures/vis/lookbook/fggan-scda/query900_rank_2_PID007584.jpg}    
+    & \includegraphics[height=.055\textwidth]{./figures/vis/lookbook/fggan-scda/query900_rank_3_PID007586.jpg}    
+    & \includegraphics[height=.055\textwidth]{./figures/vis/lookbook/fggan-scda/query900_rank_4_PID000061.jpg}\\
+    
+ \end{tabular}
+ \caption{Top 5 retrieved images from different methods on a sample query from CompCars, eBayCamera10k and Lookbook datasets. Images with blue border are true positive samples.}
+\label{fig:query-retrieved-images-comcars} %% label for entire figure
+\end{figure*}% --- figure ends --- % % % --- figure begins ---%% \begin{figure}[tb]%  \centering%  \setlength{\tabcolsep}{1pt}%  \setlength{\fboxsep}{0pt}%%  \setlength{\fboxrule}{2pt}%%  \begin{tabular}{cccccccccccc}%  	\multicolumn{1}{c}{Query} & &\multicolumn{10}{c}{Retrieved Images from Gallery}\\%     	\includegraphics[height=.05\textwidth]{./figures/lookbook-study2/ours/query150_PID000014.jpg}% 	& \rotatebox[origin=l]{90}{\tiny{$\quad$FGGAN}}% 	& \includegraphics[height=.05\textwidth,cfbox=cyan]{./figures/lookbook-study2/ours/query150_rank_0_PID000014.jpg}% 	& \includegraphics[height=.05\textwidth,cfbox=cyan]{./figures/lookbook-study2/ours/query150_rank_1_PID000014.jpg}% 	& \includegraphics[height=.05\textwidth,cfbox=cyan]{./figures/lookbook-study2/ours/query150_rank_2_PID000014.jpg}% 	& \includegraphics[height=.05\textwidth,cfbox=cyan]{./figures/lookbook-study2/ours/query150_rank_3_PID000014.jpg}% 	& \includegraphics[height=.05\textwidth]{./figures/lookbook-study2/ours/query150_rank_4_PID007893.jpg}% 	& \includegraphics[height=.05\textwidth,width=.04\textwidth]{./figures/lookbook-study2/ours/query150_rank_5_PID003535.jpg}%     & \includegraphics[height=.05\textwidth,width=.04\textwidth]{./figures/lookbook-study2/ours/query150_rank_6_PID000925.jpg}%     & \includegraphics[height=.05\textwidth]{./figures/lookbook-study2/ours/query150_rank_7_PID003624.jpg}%     & \includegraphics[height=.05\textwidth,width=.04\textwidth]{./figures/lookbook-study2/ours/query150_rank_8_PID000925.jpg}%     & \includegraphics[height=.05\textwidth]{./figures/lookbook-study2/ours/query150_rank_9_PID000071.jpg}\\%     & \rotatebox[origin=l]{90}{\tiny{VGG16-ft}}%     & \includegraphics[height=.05\textwidth,cfbox=cyan]{./figures/lookbook-study2/vggft/query150_rank_0_PID000014.jpg}%     & \includegraphics[height=.05\textwidth,cfbox=cyan]{./figures/lookbook-study2/vggft/query150_rank_1_PID000014.jpg}%     & \includegraphics[height=.05\textwidth,cfbox=cyan]{./figures/lookbook-study2/vggft/query150_rank_2_PID000014.jpg}%     & \includegraphics[height=.05\textwidth,cfbox=cyan]{./figures/lookbook-study2/vggft/query150_rank_3_PID000014.jpg}%     & \includegraphics[height=.05\textwidth,cfbox=cyan]{./figures/lookbook-study2/vggft/query150_rank_4_PID000014.jpg}%     & \includegraphics[height=.05\textwidth]{./figures/lookbook-study2/vggft/query150_rank_5_PID000337.jpg}%  	& \includegraphics[height=.05\textwidth]{./figures/lookbook-study2/vggft/query150_rank_6_PID008183.jpg}%  	& \includegraphics[height=.05\textwidth]{./figures/lookbook-study2/vggft/query150_rank_7_PID007893.jpg}%  	& \includegraphics[height=.05\textwidth]{./figures/lookbook-study2/vggft/query150_rank_8_PID001556.jpg}%  	& \includegraphics[height=.05\textwidth]{./figures/lookbook-study2/vggft/query150_rank_9_PID008183.jpg}\\%  \end{tabular}%  \caption{Example where VGG16+\emph{ft} performs better than  FGGAN. It is hard to learn geometric transformations for non-rigid clothing images from Lookbook. }% \label{fig:query-retrieved-images-lookbook2} %% label for entire figure% \end{figure}% --- figure ends --- % \subsection{Baselines comparisons}\label{sec:baselines}{We compare our FGGAN with off-the-shelf VGG16~\cite{Simonyan14c}, VGG16 fine-tuned on the target dataset (VGG16$+$\emph{ft}), several recent state-of-the-arts including MAC~\cite{tolias2015particular,azizpour2015generic}, Sum pooling~\cite{babenko2015aggregating}, CroW~\cite{kalantidis2016cross}, and SCDA~\cite{DBLP:journals/tip/WeiLWZ17} that are designed for fine-grained and generic image retrieval. 
+These approaches aggregate the activations from the last pooling layer to form a compact representation for retrieval. For fair comparison, we apply these aggregation methods to our semantic embedding module $S$ instead of the plain VGG16$+$\emph{ft} network to show the advantages of our adversarial learning scheme.}%Previous studies~\cite{sharif2014cnn,yang2015large,cui2017kernel} show that VGG16 performs better on the fine-grained recognition task, due to that VGG16 captures subtle visual signals with relatively small convolutional kernels. 
+Table~\ref{tbl:map-compare} shows the performance comparison on three datasets in terms of mAP. 
+The proposed FGGAN, using activations from the last fully-connected layer~\emph{fc} as features for search, achieves comparable or better performance than the state-of-the-art methods on the three datasets. 
+By aggregating activations from the last pooling layer, our FGGAN still outperforms most of its rivals, verifying that our trained semantic embedding module is more effective for image search.
+%In addition, Figure~\ref{fig:p-at-k} shows the retrieval precision at different top $k$ retrieved images. 
+Again, our proposed network achieves higher or comparable accuracy than the compared methods. Qualitative results of retrieved images given a query are shown in Figure~\ref{fig:query-retrieved-images-comcars}.
+Specifically, images from the CompCars and eBayCamera10k datasets only contain rigid objects, where the composition of cars and cameras across different views are usually consistent. 
+In contrast, the Lookbook dataset consists of clothing images that are highly non-rigid and deformable under different viewpoints. Therefore, it is challenging to learn geometric transformations universally good for all non-rigid objects. {Although our method performs less favorably than the states-of-the-arts on Lookbook dataset, our FGGAN+Crow still achieve the best mAP at rank 5, showing its effectiveness in discovering correct images at an early stage.}% , which learns the geometric transformation converting multiple views to a single view, %The clothings could have visually different looks while dressed by different people. %The improvement Ours $G$+$D$+$N$+$S$ obtains over the previous state-of-the-art method is about $2.78\%$ and $8.63\%$ mAP on Compcars and eBayCamera10k datasets, respectively.  We notice that our method may have a slightly lower mAP ($0.44\%$) than that of VGG16 + \emph{ft} on the Lookbook dataset. We conjecture that %This could be the reason why DCGAN and Ours $G$+$D$+$N$ perform less favorably against CAE on eBayCamera10k.%VGG, autoencoder, GAN, Variants%Retrieval results%Match year/model/make only for car%%% figure begins %%%\begin{figure*}[t]
+	\centering
+        \includegraphics[width=1.03\textwidth]{./figures/legend.pdf}\\
+        %\vspace{-3mm}
+	\subfloat{\label{fig:unseen-compcars-p-at-k}{\includegraphics[height=.2\textwidth]{./figures/open-set-comcar-bar-map-new-map-5.pdf}}} 
+	\subfloat{\label{fig:unseen-compcars-p-at-k}{\includegraphics[height=.2\textwidth]{./figures/open-set-comcar-bar-map-new-map-10.pdf}}} 
+	\subfloat{\label{fig:unseen-compcars-p-at-k}{\includegraphics[height=.2\textwidth]{./figures/open-set-comcar-bar-map-new-map-20.pdf}}} 
+    %\vspace{-2mm}
+	\caption{mAP (\%) of different methods in the open-set scenario on the CompCars dataset. FGGAN outperforms the states-of-the-art throughout the years even if the database keeps growing in terms of size and contents. Note that all the compared models are trained on the cars appeared before the year of $2010$.
+}
+%\vspace{-4mm}
+	\label{fig:compcars-unseen-p-at-k}
+\end{figure*}%%% figure ends %%%\begin{comment}
+%%% table begins %%%
+\begin{table*}[t]
+\renewcommand{\arraystretch}{0.8}
+	\centering
+	\caption{ \textcolor{red}{Todo: Draw the curve.} Precision at $k$ (P@$k$, \%) of different methods evaluated at top $k$ returned images on the CompCars, eBayCamera10k, and Lookbook dataset.}
+	\label{tbl:p-at-k-compare}
+	\begin{tabular*}{\textwidth}{@{}@{\extracolsep{\fill}}lccccccccccc@{}}
+    \toprule
+	& \multicolumn{3}{c}{CompCars} && \multicolumn{3}{c}{eBayCamera10k} && \multicolumn{3}{c}{Lookbook} \\
+	\toprule
+	Method  & $k = 5$ &  $k = 10$ & $k = 20$ && $k = 5$ &  $k = 10$ & $k = 20$ && $k = 5$ &  $k = 10$ & $k = 20$\\
+	\midrule
+    VGG16~\cite{Simonyan14c} & $22.25$ & $15.74$ & $10.85$ && $67.74$ & $66.72$ & $65.38$ && $21.46$ & $13.23$ & $8.03$\\
+    VGG16 + \emph{ft}~\cite{Simonyan14c} & $39.86$ & $30.43$ & $22.55$ && $75.33$ & $74.09$ & $73.08$ && $\textbf{45.54}$ & $\textbf{27.25}$ & $\textbf{15.52}$\\
+    \midrule
+    CAE~\cite{masci2011stacked} & $6.37$ & $4.61$ & $3.47$ && $62.33$ & $61.15$ & $60.42$ && $1.89$ & $1.14$ & $0.71$\\
+    DCGAN~\cite{radford2015unsupervised} & $6.23$ & $4.46$ & $3.28$ && $57.35$ & $56.47$ & $55.84$ && $2.07$ & $1.31$ & $0.94$\\
+    \midrule
+    Ours $G$+$D$+$N^{\star}$ & $6.56$ & $4.56$ & $3.64$ && $57.84$ & $56.78$ & $56.58$ && $2.04$ & $1.32$ & $0.96$\\ 
+    Ours $G$+$D$+$N$ & $6.61$ & $4.61$ & $3.64$ && $58.22$ & $56.71$ & $56.05$ && $2.77$ & $1.75$ & $1.11$\\
+    Ours $G$+$D$+$N$+$S$& $\textbf{41.17}$ & $\textbf{31.08}$ & $\textbf{22.90}$ && $\textbf{87.38}$ & $\textbf{85.06}$ & $\textbf{82.52}$ && $43.94$ & $27.01$ & $15.42$\\ 
+	\bottomrule
+    \multicolumn{12}{l}{\footnotesize{$\ast$ \emph{ft}, $N$, $N^{\star}$ denote fine-tuning, normalizer with feature reconstruction, and normalizer without feature reconstruction, respectively.}} \\
+	\end{tabular*}
+\end{table*}
+%%% table ends %%%
+\end{comment}\subsection{Unseen image retrieval}\label{sec:unseen-exp}
+In the open-set scenario, initial training set is incomplete while new images and categories accumulate continuously.
+We evaluate the generalization ability of our model trained on a subset of the entire dataset by measuring how well it adapts to new data.
+We conduct experiments on the CompCars dataset as it provides rich annotations including the year of car manufacture.
+%~\footnote{Detailed statistics of CompCars dataset regarding different years can be found in the supplementary material.}.
+Specifically, we train our network only on cars manufactured before the year of $2010$, and then test on new cars from the following years.
+In each year, we take new test images as queries, and retrieve relevant images from the database that contains all known and unseen images so far. 
+%Then, we apply the standard evaluation metric to examine whether the retrieved samples are of correct categories.
+Figure~\ref{fig:compcars-unseen-p-at-k} shows the retrieval precision and mAP of different methods evaluated on top $k$ retrieved samples in the open-set scenario. FGGAN consistently outperforms the state-of-the-art approaches throughout all years even if the database keeps growing in terms of size and content.
+Specifically, FGGAN$+$Sumpool achieve the best performance and improves baselines by a substantial margin.
+%Figure~\ref{fig:compcars-unseen-map} shows that Ours $G$+$D$+$N$+$S$ achieves higher mAP than that of other methods throughout all years. 
+The results suggest that, given a small amount of training data, our network can recognize and retrieve relevant images from unseen categories and is more generalizable.
+
+%%% table begins %%%\begin{table}[t]
+\renewcommand{\arraystretch}{0.95}
+	\centering
+    \footnotesize
+	\caption{Performance comparison (mAP, \%) for the open-set scenario with images from unseen categories in eBayCamera10k and Lookbook. Lookbook has nonrigid objects which are challenging for FGGAN. Section \ref{sec:unseen-exp} has details.}
+	\label{tbl:unseen}
+    %\vspace{-2mm}
+	\begin{tabular}{@{}@{\extracolsep{\fill}}l@{\hspace{2mm}}c@{\hspace{1mm}}c@{\hspace{1mm}}c@{}c|c@{\hspace{1mm}}c@{\hspace{1mm}}c@{}}
+    & \multicolumn{3}{c}{eBayCamera10k} && \multicolumn{3}{c}{Lookbook Dataset} \\
+	\hline
+	Method  & $k = 5$ &  $k = 10$ & $k = 20$ && $k = 5$ &  $k = 10$ & $k = 20$\\
+	\hline
+    VGG16~\cite{Simonyan14c} & $78.66$ & $75.21$ & $72.17$ && $52.52$ & $50.52$ & $46.93$\\
+    VGG16+\emph{ft}~\cite{Simonyan14c} & $82.53$ & $79.29$ & $76.19$ && $77.29$ & $73.37$ & $68.99$ \\
+    \hline
+ MAC+\emph{ft}~\cite{tolias2015particular,azizpour2015generic} & $83.53$ & $80.09$ & $76.98$ && $81.02$ & $76.46$ & $72.06$\\ 
+    Sum pooling+\emph{ft}~\cite{babenko2015aggregating} & $82.89$ & $79.53$ & $76.30$ && $81.36$ & $77.22$ & $73.05$\\ 
+    CroW+\emph{ft}~\cite{kalantidis2016cross} & $83.25$ & $80.03$ & $77.06$ && $\textbf{82.32}$ & $\textbf{77.98}$ & $\textbf{73.53}$\\ 
+ SCDA+\emph{ft}~\cite{DBLP:journals/tip/WeiLWZ17} & $83.88$ & $80.61$ & $77.51$ && $67.60$ & $63.92$ & $59.50$\\  
+    \hline
+    %CAE~\cite{masci2011stacked} & $74.45$ & $69.87$ & $66.15$ && $5.06$ & $5.30$ & $5.31$\\
+    %DCGAN~\cite{radford2015unsupervised} & $72.63$ & $67.50$ & $63.30$ && $8.15$ & $8.42$ & $8.34$ \\
+    %FGGAN $G$+$D$+$N^{\star}$ & $73.10$ & $67.88$ & $63.87$\\ 
+    %FGGAN $G$+$D$+$N$ & $72.80$ & $68.43$ & $64.20$\\
+    FGGAN & $88.37$ & $85.92$ & $83.66$ && $70.79$ & $66.60$ & $61.19$\\ 
+    FGGAN+MAC & $90.38$ & $88.27$ & $85.93$ && $73.48$ & $69.70$ & $65.39$\\ 
+    FGGAN+Sum pooling & $90.21$ & $87.85$ & $85.18$ && $75.29$ & $70.92$ & $66.81$\\ 
+    FGGAN+CroW & $\textbf{90.45}$ & $\textbf{88.40}$ & $\textbf{86.17}$ && $77.14$ & $72.63$ & $68.08$\\ 
+    FGGAN+SCDA & $89.87$ & $87.97$ & $85.64$ && $60.34$ & $57.36$ & $53.84$\\ 
+	\hline
+	\end{tabular}
+    %\vspace{-3mm}
+%\end{table}
+%%% table ends %%%
+%%% table begins %%%
+%\begin{table*}[t]
+%\renewcommand{\arraystretch}{0.95}
+%	\centering
+%    \small
+	\caption{Performance comparison (mAP, \%) of different module combinations.
+    $N^{\star}$ denotes the normalizer without feature reconstruction.}
+	\label{tbl:map-compare2}
+    %\vspace{-3mm}
+    {
+	\begin{tabular*}{\textwidth}{@{}@{\extracolsep{\fill}}lcccc|cccc|ccc@{}}
+	& \multicolumn{3}{c}{CompCars} && \multicolumn{3}{c}{eBayCamera10k} && \multicolumn{3}{c}{Lookbook} \\
+	\hline
+	Method  & $k = 5$ &  $k = 10$ & $k = 20$ && $k = 5$ &  $k = 10$ & $k = 20$ && $k = 5$ &  $k = 10$ & $k = 20$\\
+	\hline
+    CAE ($G$)~\cite{masci2011stacked} & $14.96$ & $15.36$ & $14.92$ && $75.19$ & $70.79$ & $67.27$ && $5.96$ & $6.13$ & $6.20$\\
+    DCGAN ($GD$)~\cite{radford2015unsupervised} & $15.74$ & $15.93$ & $15.29$ && $73.16$ & $67.68$ & $63.38$ && $6.87$ & $7.06$ & $7.13$\\
+    \hline
+    FGGAN $GDN^{\star}$ & $16.19$ & $16.56$ & $16.35$ && $72.22$ & $67.31$ & $63.39$ && $6.15$ & $6.48$ & $6.52$\\ 
+    FGGAN $GDN$ & $16.52$ & $16.84$ & $16.35$ && $72.76$ & $67.71$ & $63.49$ && $8.74$ & $8.98$ & $8.73$\\
+    %FGGAN $GDS$ & $65.94$ & $61.70$ & $55.04$ && $92.88$ & $91.19$ & $89.33$ && $77.33$ & $\textbf{72.89}$ & $\textbf{67.65}$\\ 
+    FGGAN $GDN^{\star}S$ & $\textbf{66.60}$ & $62.19$ & $55.59$ && $\textbf{92.86}$ & $\textbf{91.01}$ & $\textbf{88.85}$ && $75.37$ & $71.21$ & $66.31$\\ 
+    FGGAN $GDNS$ & $66.47$ & $\textbf{64.52}$ & $\textbf{56.28}$ && ${92.16}$ & ${90.34}$ & ${87.81}$ && $\textbf{77.00}$ & $\textbf{71.90}$ & $\textbf{66.98}$\\ 
+	\hline
+	\end{tabular*}
+    }
+    %\vspace{-2mm}
+\end{table}%%% table ends %%%
+
+Due to lack of year information in the eBayCamera10k dataset, we randomly split the training set into $50$ known camera categories and $60$ unseen camera categories to mimic the open-set scenario.
+%~\footnote{We will release the train/test splits of eBayCamera10k that may benefit future research.}.
+We train our model on the incomplete training set and test our model on the original test set consisting of $50$ known and $60$ unseen camera categories. 
+In Table~\ref{tbl:unseen}, we observe that our method performs more favorably against the states-of-the-arts even though the database contains a large number of unknown categories. Similarly, we split the Loobook dataset to $4,000$ known and $4,726$ unseen clothing categories, and report the open-set experiments in Table~\ref{tbl:unseen}. The results are consistent with previous finding that it is challenging to learn geometric transformations for non-rigid clothing images. %For example, Figure~\ref{fig:query-retrieved-images-lookbook2} shows a qualitative comparison where our FGGAN does not produce the best results due to high deformation of clothes.% \begin{figure}[t]% \begin{center}% \includegraphics[width=\linewidth]{./figures/open-set-comcar-bar-map.pdf}% \end{center}% \caption{Performance comparison (mAP, \%) of different methods evaluated at top $20$ returned images in the open-set scenario on the CompCars. Note that all the network models are trained on the cars appeared before the year of $2010$.}% 	\label{fig:compcars-unseen-map}% \end{figure}% %%% table begins %%%% \begin{table}[t]% \renewcommand{\arraystretch}{0.9}% 	\centering% 	\caption{Performance comparison (mAP, \%) of the open-set scenario on the Lookbook dataset.}% 	\label{tbl:unseen}% 	\begin{tabular*}{\columnwidth}{@{}@{\extracolsep{\fill}}lccc@{}}% 	\hline% 	Method  & $k = 5$ &  $k = 10$ & $k = 20$\\% 	\hline%     VGG16~\cite{Simonyan14c} & $52.52$ & $50.52$ & $46.93$ \\%     VGG16 + \emph{ft}~\cite{Simonyan14c} & $\textbf{77.29}$ & $\textbf{73.37}$ & $\textbf{68.99}$\\%     \hline%     CAE~\cite{masci2011stacked} & $5.06$ & $5.30$ & $5.31$\\%     DCGAN~\cite{radford2015unsupervised} & $8.15$ & $8.42$ & $8.34$\\%     \hline%     Ours $G$+$D$+$N^{\star}$ & $7.83$ & $7.00$ & $6.98$\\ %     Ours $G$+$D$+$N$ & $8.10$ & $8.22$ & $8.23$\\%     Ours $G$+$D$+$N$+$S$& $70.79$ & $66.60$ & $61.19$\\ % 	\hline% 	\end{tabular*}% \end{table}% %%% table ends %%%\subsection{Ablation study}\label{sec:ablation-study}{\flushleft \textbf{Influence of individual modules}.}
+We compare several variants of our FGGAN with DCGAN~\cite{radford2015unsupervised} and Convolutional AutoEncoder (CAE)~\cite{masci2011stacked}. 
+While DCGAN consists of a generator $G$ and a discriminator $D$, the CAE can be seen as a single generator $G$. 
+{All comparisons are using the raw features from the last fully-connected layer while we observe similar results when using aggregated features.}%Our network consists of the generator $G$, the discriminator $D$, the normalizer $N$ and the semantic embedding $S$. %We compare of the proposed network with DCGAN~\cite{radford2015unsupervised} and CAE~\cite{masci2011stacked}. 
+As shown in Table~\ref{tbl:map-compare2}, FGGAN $GDN$ performs more favorably against DCGAN ($GD$) and CAE ($G$) on the CompCars and Lookbook datasets. 
+The results indicate that converting images in various views to the canonical view reduces view ambiguity and is useful for image retrieval. 
+In addition, FGGAN $GDN$ achieves higher mAP than $GDN^\star$, where $N^\star$ denotes the normalizer without the feature reconstruction loss. 
+The results suggest that the feature reconstruction loss is helpful for learning effective representations as the regularization term enforces the generated representations to be close to the canonical images in feature space. 
+FGGAN $GDNS$ and FGGAN $GDN^{\star}S$ achieve comparable results and outperform all other compared models, which shows that including the semantic embedding is critical for learning discriminative features.
+On the eBayCamera10k dataset, since different categories of camera may have visually similar stock images, it is challenging to learn an effective manifold by plain GAN. 
+Therefore, we notice that FGGAN $GDNS$, which learns with semantic category supervision, infers the correct manifold more effectively.
+
+\begin{comment}
+%%% table begins %%%
+\begin{table*}[t]
+\renewcommand{\arraystretch}{0.95}
+	\centering
+    \vspace{-2mm}
+    \footnotesize
+	\caption{Performance comparison (mAP, \%) of using ResNet101 as the backbone network.}
+	\label{tbl:map-compare-resnet}
+    \vspace{-2mm}{
+	\begin{tabular*}{\textwidth}{@{}@{\extracolsep{\fill}}lcccc|cccc|ccc@{}}
+	& \multicolumn{3}{c}{CompCars} && \multicolumn{3}{c}{eBayCamera10k} && \multicolumn{3}{c}{Lookbook} \\
+	\hline
+	Method  & $k = 5$ &  $k = 10$ & $k = 20$ && $k = 5$ &  $k = 10$ & $k = 20$ && $k = 5$ &  $k = 10$ & $k = 20$\\ 
+    \hline
+    ResNet101~\cite{he2016deep} & $59.54$ & $55.87$ & $49.82$ && $83.61$ & $80.82$ & $77.85$ && $65.74$ & $62.27$ & $57.80$\\
+    %ResNet101 + \emph{ft}~\cite{he2016deep} & $81.89$ & $76.44$ & $68.71$ && $96.76$ & $96.44$ & $95.91$ && $88.53$ & $84.37$ & $80.86$\\
+    RPN$+$TripletLoss~\cite{gordo2017end} & $78.65$ & $73.32$ & $65.52$ && $86.44$ & $83.30$ & $78.88$ && $71.89$ & $68.96$ & $65.58$\\
+	FGGAN$_{ResNet101}$& $\textbf{81.99}$ & $\textbf{76.65}$ & $\textbf{68.83}$ && $\textbf{95.68}$ & $\textbf{94.89}$ & $\textbf{94.06}$ && $\textbf{87.68}$ & $\textbf{83.02}$ & $\textbf{78.63}$\\
+	\hline
+    %\multicolumn{12}{l}{\footnotesize{$\ast$ \emph{ft} and $N^{\star}$ denote fine-tuning and normalizer without feature reconstruction, respectively.}} \\
+	\end{tabular*}
+    }
+\end{table*}
+\end{comment}{\flushleft \textbf{Different backbone network}.} To demonstrate that our FGGAN is a generic meta-architecture applicable to any backbone networks, we replace VGG16 by ResNet101 for the semantic embedding module and evaluate its performance. We compare our FGGAN with a recent image retrieval approach~\cite{gordo2017end} using ResNet101 as a backbone network with RPN and triplet loss. Without any additional components and expensive annotations such as triplets, our FGGAN clearly surpasses~\cite{gordo2017end} on all datasets, indicating that our adversarial learning scheme is more effective in producing discriminative features to distinguish fine-grained categories, while being more flexible. 
+
+{\flushleft \textbf{Different views}.} In Section~\ref{sec:baselines}, we present the results on the CompCars dataset using front view as the canonical view. 
+It is worth noting that the proposed FGGAN does not set any restriction on the canonical view. 
+We experiment with other views as canonical views and evaluate the corresponding performance. 
+%Specifically, we choose rear-side, rear, side and front-side views and convert others views to them, respectively.
+In Table~\ref{tbl:multi-view}, using the side views leads to the best mAP when $k=5$, meaning that it is more effective in finding correct matches at an early stage.
+Since there are more images in the side view than those in the front view, they provide more diverse samples for training to improve the network's generalizability.
+Overall, the mAP is consistent across all views with negligible difference, which clearly shows that FGGAN is robust in discovering the underlying manifold and finding correct matches from various views. 
+
+%%% table begins %%%\begin{table*}[ht]
+\renewcommand{\arraystretch}{0.95}
+	\centering
+    \small
+    	\caption{Performance comparison (mAP, \%) of using ResNet101 as the backbone network.}
+	\label{tbl:map-compare-resnet}
+    \vspace{-2mm}{
+	\begin{tabular*}{\textwidth}{@{}@{\extracolsep{\fill}}lcccc|cccc|ccc@{}}
+	& \multicolumn{3}{c}{CompCars} && \multicolumn{3}{c}{eBayCamera10k} && \multicolumn{3}{c}{Lookbook} \\
+	\hline
+	Method  & $k = 5$ &  $k = 10$ & $k = 20$ && $k = 5$ &  $k = 10$ & $k = 20$ && $k = 5$ &  $k = 10$ & $k = 20$\\ 
+    \hline
+    ResNet101~\cite{he2016deep} & $59.54$ & $55.87$ & $49.82$ && $83.61$ & $80.82$ & $77.85$ && $65.74$ & $62.27$ & $57.80$\\
+    %ResNet101 + \emph{ft}~\cite{he2016deep} & $81.89$ & $76.44$ & $68.71$ && $96.76$ & $96.44$ & $95.91$ && $88.53$ & $84.37$ & $80.86$\\
+    RPN$+$TripletLoss~\cite{gordo2017end} & $78.65$ & $73.32$ & $65.52$ && $86.44$ & $83.30$ & $78.88$ && $71.89$ & $68.96$ & $65.58$\\
+	FGGAN$_{ResNet101}$& $\textbf{81.99}$ & $\textbf{76.65}$ & $\textbf{68.83}$ && $\textbf{95.68}$ & $\textbf{94.89}$ & $\textbf{94.06}$ && $\textbf{87.68}$ & $\textbf{83.02}$ & $\textbf{78.63}$\\
+	\hline
+    %\multicolumn{12}{l}{\footnotesize{$\ast$ \emph{ft} and $N^{\star}$ denote fine-tuning and normalizer without feature reconstruction, respectively.}} \\
+	\end{tabular*}
+    }
+%\end{table*}
+%
+%\begin{table}[ht]
+%\renewcommand{\arraystretch}{0.95}
+%	\centering
+%    \footnotesize
+    %\vspace{-3mm}
+	\caption{Performance comparison (mAP, \%) of FGGAN evaluated on top $k$ retrieved images when trained with different canonical views. Mean is the average over mAP values at $k$ = 5, 10 and 20. Details in Section \ref{sec:ablation-study}.}
+    %\vspace{-2mm}
+	\label{tbl:multi-view}
+	\begin{tabular*}{\columnwidth}{@{}@{\extracolsep{\fill}}lcccc@{}}
+	\hline
+	Canonical view  & $k = 5$ &  $k = 10$ & $k = 20$ & Mean\\
+	\hline
+    rear-side & $64.82$ & $60.97$ & $54.22$ & $60.00$\\
+    rear & $65.64$ & $61.16$ & $54.58$ & $60.46$\\
+    side & $\textbf{66.89}$ & $61.80$ & $55.07$ & $61.25$\\
+    front-side & $66.82$ & $62.20$ & $56.18$ & $61.73$\\
+    front & $66.47$ & $\textbf{62.52}$ & $\textbf{56.28}$ & $\textbf{61.75}$\\
+	\hline
+	\end{tabular*}
+    %\vspace{-3mm}
+%\end{table}
+%%% table ends %%%
+%%% table begins %%%
+%\begin{table}[t]
+%\renewcommand{\arraystretch}{0.95}
+%	\centering
+%    \footnotesize
+	\caption{Performance comparison (mAP, \%) of the proposed method evaluated on top $k$ retrieved images with the feature reconstruction loss applied to different layers. Mean is the average over the mAP values at $k=5$, $10$ and $20$.}
+    %\vspace{-2mm}
+	\label{tbl:feat-recon}
+	\begin{tabular*}{\columnwidth}{@{}@{\extracolsep{\fill}}lcccc@{}}
+	\hline
+	Convolutional layer  & $k = 5$ &  $k = 10$ & $k = 20$ & Mean\\
+	\hline
+    \emph{conv1} & $66.52$ & $62.27$ & $55.33$ & $61.37$\\
+    \emph{conv2} & $\textbf{66.66}$ & $62.32$ & $55.57$ & $61.51$\\
+    \emph{conv3} & $65.82$ & $61.71$ & $54.70$ & $60.74$\\
+    \emph{conv4} & $66.47$ & $\textbf{62.52}$ & $\textbf{56.28}$ & $\textbf{61.75}$\\
+	\hline
+	\end{tabular*}
+%\vspace{-2mm}
+\end{table*}%%% table ends %%%{\flushleft \textbf{Different feature reconstruction losses}.}
+In Eq.~\eqref{eq:n}, the feature reconstruction loss enforces that the generated representations are semantically similar to the images in the canonical view in terms of the features extracted from the convolutional layer \emph{conv4} of the normalizer $N$. 
+%Such loss enforces that the features of generated representations are semantically similar to those from the images in the canonical view. 
+Since the loss is not limited to a specific convolutional layer, we attach it to different convolutional layers and show the performance in Table~\ref{tbl:feat-recon}. 
+While using lower-level information (\emph{conv2}) is more advantageous for $k=5$, the higher layer (\emph{conv4}) is also important as it encodes more high-level semantics suitable for fine-grained image search.
+%Nevertheless, FGGAN is generally not very sensitive to the choice of convolutional layers, and produces equally good results on all four convolutional layers. %%% table begins %%%\begin{table}[ht]
+\renewcommand{\arraystretch}{0.95}
+	\caption{Multi-label based retrieval with stricter evaluation criterion. Performance comparison (mAP, \%) of the proposed method on CompCars and eBayCamera10k. Notice large improvements for eBayCamera10k since fine-grained difference is subtle.
+    %Open-set scenario with stricter evaluation criterion (multi-label based retrieval). Performance comparison (mAP, \%) of the proposed method on CompCars and eBayCamera10k. Notice large improvements for eBayCamera10k since fine-grained difference is subtle. % Kevin: this one is close-set experiment
+    }
+	\label{tbl:strict}
+    \vspace{-2mm}
+    \centering
+    \footnotesize
+	\begin{tabular}{@{}@{}l@{\hspace{2mm}}c@{\hspace{1mm}}c@{\hspace{1mm}}c@{}c|c@{\hspace{1mm}}c@{\hspace{1mm}}c@{}}
+	& \multicolumn{3}{c}{CompCars} && \multicolumn{3}{c}{eBayCamera10k} \\
+    \hline
+	Method  & $k = 5$ &  $k = 10$ & $k = 20$ && $k = 5$ &  $k = 10$ & $k = 20$\\
+	\hline
+    VGG16~\cite{Simonyan14c} & $45.27$ & $43.76$ & $40.22$ && $28.49$ & $28.03$ & $25.76$\\
+    VGG16+\emph{ft}~\cite{Simonyan14c} & $62.82$ & $59.03$ & $53.25$ && $39.94$ & $37.85$ & $33.89$\\
+    \hline
+    % CAE~\cite{masci2011stacked} & $12.27$ & $12.56$ & $12.24$\\
+    % DCGAN~\cite{radford2015unsupervised} & $13.29$ & $13.43$ & $13.11$\\
+ MAC+\emph{ft}~\cite{tolias2015particular,azizpour2015generic} & $\textbf{64.64}$ & $60.81$ & $55.54$ && $40.65$ & $38.42$ & $34.28$\\  
+    Sum pooling+\emph{ft}~\cite{babenko2015aggregating} & $63.93$ & $60.79$ & $\textbf{55.81}$ && $38.35$ & $36.77$ & $33.03$\\  
+    CroW+\emph{ft}~\cite{kalantidis2016cross} & $62.86$ & $59.54$ & $54.75$ && $40.67$ & $38.73$ & $34.35$\\  
+ SCDA+\emph{ft}~\cite{DBLP:journals/tip/WeiLWZ17} & $62.17$ & $59.03$ & $53.98$ && $40.29$ & $38.23$ & $34.20$\\
+    \hline
+    %FGGAN $G$+$D$+$N^{\star}$ & $14.07$ & $14.37$ & $14.16$\\ 
+    %FGGAN $G$+$D$+$N$ & $14.34$ & $14.64$ & $14.13$\\
+    FGGAN & $63.07$ & $59.31$ & $54.41$ && $55.75$ & $53.59$ & $\textbf{49.52}$\\ 
+    FGGAN+MAC & ${64.53}$ & $\textbf{61.07}$ & ${55.56}$ && $56.40$ & $53.67$ & $48.60$\\ 
+    FGGAN+Sum pooling & $64.35$ & $60.35$ & $54.53$ && $54.40$ & $51.55$ & $47.30$\\ 
+    FGGAN+CroW & $63.81$ & $59.96$ & $54.64$ && $\textbf{56.80}$ & $\textbf{54.28}$ & $49.13$\\ 
+    FGGAN+SCDA & $62.82$ & $59.67$ & $54.25$ && $56.13$ & $53.17$ & $48.57$\\ 
+	\hline
+	\end{tabular}
+    \vspace{-2mm}
+\end{table}%%% table ends %%%\begin{comment}{\flushleft \textbf{Sensitivity of hyperparameters}.}
+In Eq.~\eqref{eq:evaluator}, there are parameters, $\gamma_D$, $\gamma_N$, and $\gamma_S$, controlling the contribution of each term in the objective function. While all parameters are equal in our experiments, we conduct additional experiments to evaluate how different weighting parameters affect our model's performance. 
+In particular, we iterate through all combinations of setting each parameter to $0.3$, $0.5$ and $0.7$ on the CompCars dataset. In Figure~\ref{fig:test2}, we show the the performance comparison regarding varying parameters. Our model is relatively insensitive to the weighting parameters. The mAP remains almost the same for all parameter combinations. 
+
+\begin{figure}[t]
+\centering
+\begin{minipage}{.8\columnwidth}
+  \centering
+  \includegraphics[height=.5\linewidth]{./figures/compar-hyper.png}
+  \label{fig:test1}
+\end{minipage}%
+\begin{minipage}{.09\columnwidth}
+  \includegraphics[height=3\linewidth]{./figures/compar-hyper-bar.png}
+\end{minipage}
+\caption{Performance comparison (mAP, \%) of the proposed method with different hyperparameters. Note the same color for all dots given varying parameter combinations.}
+\label{fig:test2}
+\end{figure}
+\end{comment}{\flushleft \textbf{Multi-label retrieval}.} In the real-world scenario, one may want to retrieve products not only of the same make but also of the same model as for query. 
+We measure the relevance of retrieved images by checking whether they share exactly the same make and model as the query to evaluate FGGAN in this scenario. 
+%This evaluation criterion is stricter than that of previous experiments since the retrieval is considered correct \textcolor{red}{ if both of them share the same make and model.} 
+Since images from the Lookbook dataset do not have hierarchical labels, \eg, make and model, we conduct experiments on CompCars and eBayCamera10k datasets only. 
+Table~\ref{tbl:strict} shows the performance comparison. FGGAN still improves precision of compared methods in most cases under stricter evaluation criterion. The observation indicates that the generated representation captures subtle visual differences and is discriminative to different fine-grained cars and cameras.
+
+%%% table begins %%%% \begin{table}[t]% \renewcommand{\arraystretch}{1}% 	\centering% 	\caption{Performance comparison (mAP, \%) of the proposed method on the eBayCamera10k dataset with the stricter evaluation criterion.}% 	\label{tbl:camera-strict}%     {\small%     eBayCamera10k Dataset% 	\begin{tabular*}{\columnwidth}{@{}@{\extracolsep{\fill}}lccc@{}}% 	\hline% 	Method  & $k = 5$ &  $k = 10$ & $k = 20$\\% 	\hline%     VGG16~\cite{Simonyan14c} & $28.49$ & $28.03$ & $25.76$ \\%     VGG16 + \emph{ft}~\cite{Simonyan14c} & $39.94$ & $37.85$ & $33.89$\\%     \hline%     CAE~\cite{masci2011stacked} & $15.89$ & $16.80$ & $16.16$\\%     DCGAN~\cite{radford2015unsupervised} & $16.48$ & $17.05$ & $16.53$\\%     \hline%     Ours $G$+$D$+$N^{\star}$ & $14.27$ & $14.76$ & $14.36$\\ %     Ours $G$+$D$+$N$ & $16.73$ & $16.88$ & $16.35$\\%     Ours $G$+$D$+$N$+$S$& $\textbf{55.75}$ & $\textbf{53.59}$ & $\textbf{49.52}$\\ % 	\hline% 	\end{tabular*}%     }% \end{table}%%% table ends %%%{\flushleft \textbf{Visualization of learned representations}.} We feed the real image $x_r$ into $G$, and visualize the generated representation $x_z$ in the RGB color space. In Figure~\ref{fig:canonical view2}, the images from the same category from the CompCars dataset are converted to similar representations even though they are in different views initially. 
+We also notice that our generator is robust to the changes in color and illumination. 
+
+\begin{comment}{\flushleft \textbf{Robustness against pose variations}.} We calculate the statistics of all possible pairwise distances of features for each fine-grained category, \ie, car make, and use coefficient of variation (CV) to measure the relative variability. 
+In particular, a small CV value indicates features from the same category are semantically close to each other, despite large pose variations. 
+We show the reduction $\Delta_{CV}$ per category by our FGGAN method on the CompCars dataset in Figure~\ref{fig:cv}.
+Compared to VGG16+\emph{ft}, our FGGAN approach reduces the CV on $68.8$\% categories by a relatively large margin. 
+This observation confirms that our FGGAN is more robust against different pose variations and generates more reliable feature representations.
+\end{comment}%To further understand the topology of the learned feature space, we visualize the features extracted from our semantic embedding module $S$ using t-SNE~\cite{maaten2008visualizing}. Figure~\ref{fig:tsne} displays the features as points colored based on the semantic categories. Comparing to VGG16+\emph{ft}, FGGAN is relatively effective to separate different fine-grained categories in the learned feature space. \begin{figure}[t]
+\begin{center}
+\includegraphics[width=.9\linewidth]{./figures/car_visualization_new_small.pdf}
+\end{center}
+\vspace{-4mm}
+\caption{Visualization of the generated representations with front view as the canonical view. The left three cars are Citroen DS3, while the right three cars are Citroen DS5.}
+%\vspace{-2mm}
+	\label{fig:canonical view2}
+\end{figure}\begin{comment}
+\begin{figure}[t]
+\begin{center}
+\vspace{-4mm}
+	\subfloat{\label{fig:cv1}{\includegraphics[height=.18\textwidth]{./figures/cv_diff_large.pdf}}}
+	\subfloat{\label{fig:cv2}{\includegraphics[height=.17\textwidth]{./figures/cv_hist_large.pdf}}}
+\end{center}
+\vspace{-4mm}
+\caption{FGGAN features have less coefficient of variation (CV) of pairwise distances for each category than those from VGG+\emph{ft}, indicating robustness to pose variations (left). Histogram of reduction in CV (right). Majority of categories benefit from FGGAN.}
+%\vspace{-4mm}
+	\label{fig:cv}
+\end{figure}
+
+\end{comment}
+\section{Conclusion}\label{sec:conclusion}
+
+We have presented an end-to-end network with adversarial learning for fine-grained image search. 
+We have integrated a generative adversarial network (GAN) to learn implicit geometric transformations for view and pose normalization. 
+%Our network is easier and more efficient to train and can handle more complex view and pose variations. 
+Features extracted from our network is more discriminative to distinguish subtle differences of objects from fine-grained categories.
+In an open-set scenario, our network is able to correctly match unseen images from unknown categories, given an incomplete training set, which is more scalable as data from new categories accumulates. 
+%Although we use a classification network as the semantic embedding module, our method is applicable to other base networks, \eg, Siamese and triplet networks. We would also like to normalize background to remove background clutter, and investigate more training strategies for GAN to further improve retrieval precision.%Extensive experiments and analysis have demonstrated the outstanding performance of the proposed approach in both closed-set and open-set scenarios. 
+
+
+\bibliographystyle{splncs}
+\bibliography{bib-gan,bib-retrieval,bib-finegrained,bib-geometric.bib}
+
+
+\end{document}

@@ -1,0 +1,317 @@
+\documentclass{bmvc2k}
+
+%% Enter your paper number here for the review copy,
+%% Commenting out will show the print ready
+\bmvcreviewcopy{185}
+
+
+\title{Learning Filter Scale and Orientation In CNN's}
+
+% Enter the paper's authors in order
+% \addauthor{Name}{email/homepage}{INSTITUTION_CODE}
+\addauthor{Ilker Cam}{ilker.cam@isikun.edu.tr}{1}
+\addauthor{F. Boray Tek}{boray.tek@isikun.edu.tr}{1}
+
+% Enter the institutions
+% \addinstitution{Name\\Address}
+\addinstitution{
+ Computer Engineering\\
+ Isik University\\
+ Istanbul, TR
+}
+
+\runninghead{Cam \& Tek}{Learning Filter Scale and Orientation In CNNs}
+
+% Any macro definitions you would like to include
+% These are not defined in the style file, because they don't begin
+% with \bmva, so they might conflict with the user's own macros.
+% The \bmvaOneDot macro adds a full stop unless there is one in the
+% text already.
+\def\eg{\emph{e.g}\bmvaOneDot}
+\def\Eg{\emph{E.g}\bmvaOneDot}
+\def\etal{\emph{et al}\bmvaOneDot}
+
+% Packages
+\usepackage{graphicx,subfigure}
+\graphicspath{{images/}}
+\DeclareGraphicsExtensions{.pdf,.jpeg,.png, .svg}
+
+%-------------------------------------------------------------------------
+% Document starts here
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+	
+Convolutional neural networks have many hyperparameters such as the filter size, number of filters, and pooling size, which require manual tuning. Though deep stacked structures are able to create multi-scale and hierarchical representations, manually fixed filter sizes put a limit on the scale of represented objects that can be learned in a single convolutional layer. 
+
+This paper introduces a new adaptive filter model that allows variable scale and orientation. The scale and orientation parameters of filters can be learned using classical back-propagation. Therefore, in a single convolution layer, we can create filters of different scale and orientation that can adapt to small or large objects and features. The proposed model uses a relatively large base size (grid) for filters. In the grid, a differentiable function acts as an envelope for filters. Masking of convolution filter weights with the envelope function limits effective filter scale and shape. Only the weights in the envelope are updated during training. 
+
+In this work, we employed a multivariate (2D) Gaussian as the envelope function, which can grow, shrink, or rotate during training using its covariance matrix. We tested the new filter model on MNIST, MNIST-cluttered, and CIFAR-10 and compared the results to the conventional convolution layers. The results demonstrate that the new model can effectively learn and produce filters of different scales and orientations. Moreover, the experiments show that the adaptive convolution layers perform equally; or better, especially when data includes multi-scale objects.
+
+\end{abstract}
+
+%-------------------------------------------------------------------------
+\section{Introduction}
+
+Naming or describing real life objects is only meaningful with respect to a relevant scale \cite{Lindeberg:1994:STC:528688}. For example, a view can be described as a leaf, a branch, or a tree depending on the distance of the observer. Natural and casual scenes are generally composed of many different entities/objects at different scales. During image acquisition, true physical scale is usually ignored. However, relative scale of the objects is somehow implicitly captured and stored in the image grid and pixels. 
+
+An automated method to identify or describe objects in images can be analyzed in two parts: representation + classification. Basic classification algorithms without add-ons can not successfully handle variation and complexity of raw pixel level representation of objects. Usually dedicated representation functions map pixels into different constructs, which are named as features.
+
+Traditionally, computer vision researchers relied on manually designed features for representation. Recently, we are witnessing success of the algorithms which self-learn the appropriate features for the classification. In either case, size of an operator or a probe determines the scale of the entities that can be represented. However, the size of the probe or operator is often manually selected. On the other hand, last two decades has seen many automated object detection/recognition algorithms that were superior to their counterparts because they have comprised multi-scale processing of images \cite{dalal2005histograms}, \cite{lenet}. Multi-scale feature extractors gather and present the inherit scale information of image pixels to a subsequent classifier. In SIFT \cite{lowe} and wavelets \cite{mallat1992characterization}, this is done by creating a multi-scale pyramid from the input image, and then applying a fixed size probe-kernel to each scale. Serre et al. \cite{serre} aims to recognize objects similarly done in the visual cortex via collection of fixed Gabor filters. Although as Chan et al. \cite{pcanet} showed that for hand crafted features, adaptation to low level representations is difficult. Convolution neural networks (CNN) rely on stacked and hierarchical convolutions of the image to extract multi-scale information. Convention of CNNs in filter size selection is to use small fixed size weight kernels. Thanks to the stacked operation of convolutional layers, sandwiched by pooling layers which down-sample the intermediate outputs, the deeper levels of a network are able to learn representations of larger scale. Though, the optimality of fixed size kernels has not proven, the convention is to use filters small as 3x3 in the first layer, which can be larger 5x5 or 7x7 in the later stages \cite{Zeiler2014}. During backpropagation training, filters are evolved to imitate lower level receptive fields in biological vision which are sensitive to certain shapes and orientations. Another justification is that larger filters require additional computation and causes overfitting.
+
+Though, the number of filters and their sizes in convolutional layers are usually selected intuitively, researchers are seeking alternatives to improve representation capacity of the network in deeper architectures. For example, Szegedy et al. \cite{inceptionv1} hand crafted their ``inception'' architecture to include mixing of parallel and wide convolutional layers which use different sized filter kernels. In a deep architecture this approach allows multi-scale, parallel and sparse representations.
+
+%Can we example very successful other networks, which use different filter sizes?? Learning shape of the filters?
+
+In summary, existing CNN based methods use fixed size convolution kernels and then rely on the fact that shape and orientation of the filters can be inferred from the training data. Additionally, CNNs employ stacked convolution layers to successfully create multi-scale representations.
+
+On the other hand, Hubel and Wiesel \cite{hubel1968receptive} discovered three type of cells in visual cortex: simple, complex, hypercomplex (i.e. end-stopped cells). Simple cells are sensitive to orientation of the excitatory input whereas hypercomplex cells are activated with certain orientation, motion, and length of the stimuli. Therefore it is biologically plausible to assume that filters of different scales next to different orientations and direction may also work better in CNNs.
+
+In this study, we create a new and adaptive model of convolution layers where the filter size (actually scale) and orientation are learned during training. Therefore, a single convolution layer can have distinct filter scales and orientations. Broadly speaking, this corresponds to extracting multi-scale information using a single convolution layer. Our aim is not to fully replace the stacked architectures and deep networks for multi-scale information, instead the our approach improves information content that can be extracted from an input image, in a single layer. Additionally, our approach allows removing of the filter size from the list of hyper-parameters of deep learning networks. Thus, researchers can focus more on the architectural design of the network. Our experiments use MNIST, MNIST-cluttered and CIFAR-10 datasets to show that the proposed model can learn and produce different scaled filters in the same layer whilst improving classification performance compared to a conventional layers. In experimental side, our work is concentrated on developing and proving an effective methodology for learnable adaptive filter scales and orientations, rather than improving highly optimized state-of-the-art results in these datasets.
+
+\section{Method}
+
+\label{sec:methods}
+In classical convolutional neural networks, stacked convolution layers perform convolutions with fixed size kernels; and sandwiched pooling layers perform downsampling operations to create a multi-scale and hierarchal representation. Fixed size convolution kernels puts a limit on the scale of features which can be extracted from a single layer. Though it is possible to mix several kernels of different size in a single convolution layer, the convention is to use a fixed size for all kernels from the same layer. In this paper, we introduce a new filter model which can adapt its scale and orientation. Therefore it allows, development of multi-scale and differently oriented filters in a single convolution layer. To realize this, our model employs a differentiable function that can grow, shrink, or rotate during training. The function acts as an envelope to guide filter scale and orientation. The following subsections explain the role of the envelope, selecting an appropriate function for the envelope, and its partial derivatives which are used in back propagation.
+
+
+%In order to identify our method we'll first introduce the envelope function. Envelope function is calculated on a grid with size of filter and used to scale the filter space. As long as this function has a defined derivative w.r.t the error function any variation can be used. The following section refines the envelope function as a 2D Gaussian function. We'll introduce it's properties and derivations to show that scale and orientation change is possible using standard backpropagation algorithm.
+
+
+%
+\begin{figure}
+	\centering     %%% not \center
+	
+	\subfigure[Arbitrary envelope]{\label{fig1:a}\includegraphics[width=0.23\linewidth]{schema}}
+	\subfigure[Gaussian envelope]{\label{fig1:b}\includegraphics[width=0.23\linewidth]{gauss}}
+	\subfigure[Random weights]{\label{fig1:c}\includegraphics[width=0.23\linewidth]{weightmap}}
+	\subfigure[Masked weights]{\label{fig1:d}\includegraphics[width=0.23\linewidth]{uw}}
+	
+	\caption{Illustration of the proposed weight envelope (a) An arbitrary differentiable  envelope function controls the weight spread and shape on a regular relatively large base grid, (b) An example, initial Gaussian kernel with centered $\mu$ and initial $\Sigma$, (c) initial weights of the filter that are randomly generated, (d) weights are masked with the envelope (Gaussian) function by simply element wise multiplication.}
+	\label{fig1}
+\end{figure}
+
+\subsection{Envelope Function}
+\label{sec:methods:envelope}
+The role of the envelope function is to guide filter scale and orientation. As illustrated in Figure \ref{fig1}, a base grid acts as the envelope and filter domain. Since it is the most common case, we will assume a two dimensional domain. Generalizations to higher dimensions or one dimensional domains are straightforward. In this domain, the envelope function differentiable. Let us assume a base grid for an $nxn$ odd sized and square filter (\ref{eq:grid}); and let $G$ be the (continuously) differentiable function defined in grid $g$ (coordinates) and parameter vector $\Theta \in \mathbf{R^i}$ to define its shape (\ref{eq:envelope}). 
+
+\begin{equation}
+\label{eq:grid}
+\begin{gathered}
+A = \{1, 2, .. , n\},
+\\
+g \in  A x A = \{(a, b) \: | \: a \in A \: and \: b \in A\}
+\end{gathered}
+\end{equation}
+
+\begin{equation}
+\label{eq:envelope}
+G = U(\mathbf{g}, \mathbf{\theta}), \qquad \qquad  \mathbf{\theta} = \{\theta_1, \theta_2, .. \theta_i\}
+\end{equation}
+
+By changing the parameters $\mathbf{\theta}$, the envelope function must be able to extend or shrink its effective area and change its orientation. Then, simply, an element wise multiplication of $G$ with the weight matrix $W$ will create a masking and scaling affect on the weights:
+
+\begin{equation}
+W' = W * G
+\end{equation}
+
+Since the weights can not grow out of envelope $G$, the filter scale and orientation will be bounded and determined by $G$. As in the conventional case, output is obtained by convolving inputs with masked and scaled filter kernel $W'$.
+Assuming that the partial derivatives of $G$ with respect to continuous parameter $\theta_i$ is defined using the chain rule, update can be performed using the standard back propagation algorithm with the learning rate $\eta$. 
+
+\begin{equation}
+\label{eq:genericderive}
+\theta_{i} \mathrel{{:}{=}} \theta_{i} - \eta \frac{\partial E}{\partial U} \frac{\partial U}{\partial \theta_{i}}
+\end{equation}
+
+\subsection{Selecting an Envelope Function}
+\label{sec:methods:gaussian}
+
+It is well known that a continuous Gaussian kernel has unique properties which are important for generating a scale space. Simply put, Gaussian kernel does not create new local extrema, nor enhance existing extrema, whilst smoothing the image with a variable scale parameter \cite{Lindeberg:1994:STC:528688}. Some of this properties are proven to exist in discrete space, if sample size is sufficiently large also.
+Therefore, Gaussian kernel is an ideal candidate for the envelope function $U$:
+
+
+\begin{equation}
+U(g, \mu, \Sigma) = \frac{1}{A} e ^{ - \frac{1}{2} (g-\mu)' \Sigma^{-1} (g-\mu)}
+\end{equation}
+
+Here parameter $\mu$ controls the center, whereas the covariance $\Sigma$ controls scale and orientation of the kernel. $A$ is an optional normalization parameter. To implement convolution operation appropriately, we set $\mathbf{\mu}$ as a vector of constants that is initialized with the center point coordinates of the grid $g$. Therefore, it is not updated during training. On the other hand, covariance $\Sigma$ can be initialized with a non-singular, non-degenerate matrix such as the identity:
+\begin{equation}
+\label{eq:initmu}
+%\mu = \ \bigg{\{} \frac{n}{2}, \frac{n}{2} \bigg{\}}
+\mu = \begin{bmatrix} \frac{A}{n} \\ \frac{A}{n} \end{bmatrix}, \qquad \Sigma =  \begin{bmatrix} 1 & 0 \\ 0 & 1 \end{bmatrix}
+\end{equation}
+
+%\begin{equation}
+%	G = U(g, \Sigma)
+%\end{equation}
+
+During feedforward execution envelope function is calculated on the grid coordinates $g$ with current covariance $\Sigma$; and then elementwise multiplied with weight matrix $W$, prior to convolution. This is illustrated in Figure \ref{fig1:b}-\ref{fig1:d}. During backgpropagation, the update rule for covariance $\Sigma$ can be easily derived using the notation in (\ref{eq:derivesigma}). 
+
+\begin{equation}
+\label{eq:derivesigma}
+\Sigma \mathrel{{:}{=}} \Sigma - \eta \frac{\partial E}{\partial U} \frac{\partial U}{\partial \Sigma}
+\end{equation}
+
+
+
+% Burasi incomplete heralde???The formal solution for extended update rule for $\Sigma$ is detailed in Equation \ref{eq:gaussderive}, \ref{eq:gausschain}.
+
+%\begin{equation}
+%\label{eq:gaussderive}
+%\frac{\partial U}{\partial \Sigma} = e
+%\end{equation}
+
+%\begin{equation}
+%     \label{eq:gausschain}
+%\frac{\partial E}{\partial \Sigma} =  \frac{\partial E}{\partial U} \,  \frac{\partial U}{\partial \Sigma}
+%\end{equation}
+
+\subsection{Implementation}
+
+We implemented the adaptive convolution filters using Theano \cite{theano} and then tested on an Nvidia Tesla K40 GPU. In terms of computational complexity, as it was expected, calculating the Gaussian envelope function caused an extra overhead on training time. However, during feed forward execution, the trained and enveloped final weights can be stored and used immediately without any overhead. Compared to conventional filters, we use relatively larger (e.g. 11x11) base filter sizes to observe adaptive growth and rotations. ACNN ran one epoch (500 examples) in $6.1 \pm .2$ seconds whereas cnn-11 ran in $3.4 \pm .15$ seconds on MNIST dataset without an optimized implementation. (The code will be available in the camera-ready version, undisclosed now for anonymity.)
+
+\section{Experiments}
+\label{sec:experiments}
+
+\begin{table}
+\centering
+\caption{Network topology that is used to test our method. In conv-1 and conv-2 layers, the proposed adaptive model (ACNN) used an 11x11 base grid for filters, whereas 'cnn-5' and 'cnn-11' used 5x5 and 11x11 filter sizes, respectively. *CIFAR-10 experiments used 16 filters instead of 8.}
+\bigskip
+\begin{tabular}{ | l | l | l | l | l | l |}
+	\hline
+	Layer & Units & Filters & Filter Size & Pool Size & Activation \\ \hline
+	1- input & - & - & - & - & - \\ \hline
+	2- conv-1 & - & 8/16* & 5x5/11x11 & - & ReLu \\ \hline
+	3- maxpool-1 & - & - & - & 2x2 & - \\ \hline
+	4- conv-2 & - & 8/16* & 5x5/11x11 & - & ReLu \\ \hline
+	5- maxpool-2 & - & - & - & 2x2 & - \\ \hline
+	6- dropout(50\%) & - & - & - & - & - \\ \hline
+	7- fully connected - 1 & 256 & - & - & - & ReLu \\ \hline
+	8- fully connected - 2 & 10 & - & - & - & Sigmoid \\ \hline
+\end{tabular}
+\label{table:network}
+
+\end{table}
+%Testte daha spesifik olmak gerekiyor örnek şu filtre diyemiyoruz %
+
+%Let $W$ be the weight matrix of one an arbitrary filter in an arbitrary layer. This weight matrix has a fixed size and usually chosen as $(3, 3), (5, 5), (7, 7)$ and the matrix is being initialized with a random initialization method and the filter is fully active. In our method we choose this size much bigger like $(9, 9), (11,11), (13, 13)$. Although this filters effective domain is determined by a envelope function $U$. This function is differentiable w.r.t the error function thus can be trained with backpropagation algorithm.
+
+We tested the adaptive filter model with three different datasets and compared the results against two conventional CNN configurations which used different fixed size filters. All three networks had the same structure which were comprised of two convolutional, two pooling layers, a dropout layer and two fully connected layers (Table \ref{table:network}). The only difference between the adaptive CNN (ACNN) and conventional CNNs (cnn-5, cnn-11) was the replacement of convolution layers. We used cross-entropy as the error function.
+The hyper parameters we used are as follows; Learning rate: 0.01, momentum: 0.95, batch size: 500. On each test we examined training loss, error \% and scale, orientation changes in filters. 
+
+% Deneyin amacını anlatıyoruz., complex multiscale problemslara çözüm arıyoruz.
+In the experiments we'd like observe that the adaptive CNNs can change its scale and orientation during training.
+%Our experiments confirm that we were able to obtain non co-adaptive filters that can change its scale and orientation. % bunu düzeltiyoruz was able to obtain non co adaptive
+
+\subsection{MNIST}
+
+MNIST \cite{mnist} is a database of handwritten digits, widely used in machine learning research to test models. It has 50,000 training and 10,000 testing images from 10 different categories. To observe the change in $\Sigma$, we calculated its eigenvalues and eigenvectors. The maximum eigenvalue represents the scale, whereas the tangent between the eigenvectors shows the orientation as illustrated in Figure \ref{fig:mnist:convchange}. 
+
+In Figure \ref{fig:mnistfilt1}, we can observe the learned envelope functions scale and orientation effects on filters. Smoothing effect of the envelope function over the input is also observed in some outputs (\ref{fig:mnist:filter1:conved}).
+Figure \ref{fig:mnistplot} shows the training loss and classification error plots. The adaptive filters had no performance gain against conventional cnn-11, cnn-5. 
+
+%As illustrated in Figure \ref{fig:mnistfilt1}, one can observe produced in both scale and orientation in convolutional filters at first convolutional layer filters. The smoothing effect of the envelope functions over the input is also observed. % Idea belli kayıtlarda var
+
+\begin{figure}
+	\centering
+	\subfigure[Orientation Change.]{\label{fig:mnist:orientation}\includegraphics[width=0.47\linewidth]{cov_degree_MNIST}}
+	\subfigure[Scale Change.]{\label{fig:mnist:scale}\includegraphics[width=0.47\linewidth]{cov_val_MNIST}}
+	\caption{The change graphs for covarince matrix $\Sigma$ in MNIST dataset, depicted by the angle of largest eigenvector and its eigenvalue.}
+	\label{fig:mnist:convchange}
+\end{figure}
+
+\begin{figure}
+	\centering
+	\subfigure[Gaussian envelope functions.]{\label{fig:mnist:filter1:mask}\includegraphics[width=0.32\linewidth]{filters/filter1_mask_MNIST}}
+	\subfigure[Scaled filters.]{\label{fig:mnist:filter1:scaled}\includegraphics[width=0.32\linewidth]{filters/filter1_scaled_MNIST}}
+	\subfigure[Convolution outputs.]{\label{fig:mnist:filter1:conved}\includegraphics[width=0.32\linewidth]{filters/filter1_conved_MNIST}}
+	\caption{The first layer (conv-1) filters at the end of training and a convolved sample input with each filter, from MNIST.}
+	\label{fig:mnistfilt1}
+\end{figure}
+
+\begin{figure}
+	\centering 
+	\subfigure[Training loss, y axis is on log scale.]{\label{fig:a}\includegraphics[width=0.49\linewidth]{train_MNIST}}
+	\subfigure[Classification Error.]{\label{fig:b}\includegraphics[width=0.49\linewidth]{vald_MNIST}}
+	\caption{Training loss and classification error for MNIST.}
+	\label{fig:mnistplot}
+\end{figure}
+
+%The aim of this study is to show that filters scale can largely change during training. Based on limited resources 
+%Implementation details
+
+\subsection{MNIST Cluttered}
+\label{mnistclut}
+Cluttered MNIST dataset \cite{mnistcluttered} consists of 60,000 samples in 10 classes. We splitted this dataset into 50.000 and 10.000 for test and train purposes, respectively. Randomly selected 8 samples are illustrated in Figure \ref{fig:abc}. It contains 60x60 images generated from the original MNIST database with numerous of distractors. Projecting the original MNIST 28x28 pixel space onto 60x60 also caused changes in scale. Thus, the dataset had scale and rotational variances, in addition to cluttered background noise which makes it a suitable test case to demonstrate the use of adaptive filters.
+
+Figure \ref{fig:mnistclutteredplot} shows the training loss and classification error, where we can observe better performance compared with conventional CNNs.
+
+\begin{figure}
+	\centering
+	\includegraphics[width=0.49\linewidth]{example_MNISTCLUTTERED}
+	\caption{Randomly selected 8 samples from cluttered MNIST dataset.}
+	\label{fig:abc}
+\end{figure}
+
+\begin{figure}
+	\centering     %%% not \center
+	\subfigure[Training loss, y axis is on log scale.]{\label{fig:a}\includegraphics[width=0.49\linewidth]{train_MNISTCLUTTERED}}
+	\subfigure[Classification Error.]{\label{fig:b}\includegraphics[width=0.49\linewidth]{vald_MNISTCLUTTERED}}
+	\caption{Training loss and classification error yielded from cluttered MNIST database.}
+	\label{fig:mnistclutteredplot}
+\end{figure}
+
+\subsection{CIFAR-10}
+
+This dataset \cite{cifar10} is a relatively small (32x32x3) image set with 60,000 samples from 10 different classes. We divided this dataset into 50,000 train and 10,000 test sets, respectively. Other than MNIST dataset, color channels are present, and objects are much more in need for multi scale features.
+
+The classification results that are shown in Figure \ref{fig:cifar10:b} demonstrates that again ACNN performed better in classification error. For further investigation we also included the change for learned envelope functions and scaled filters in Figure \ref{fig:cifar10:filter1}. Compared to MNIST, the envelope function varied significantly; and included both large, small, rotated filters. The change in scale and orientation is shown in Figure \ref{fig:cifar:convchange}. Compared with change on $\Sigma$ in MNIST test, scales and orientations have more variation and some of the filters tend to shrink, whereas some were enlarged their scales.
+
+\begin{figure}
+	\centering
+	\subfigure[Gaussian envelope functions.]{\label{fig:a}\includegraphics[width=0.49\linewidth]{filters/filter1_mask_CIFAR10}}
+	\subfigure[Scaled filters.]{\label{fig:b}\includegraphics[width=0.49\linewidth]{filters/filter1_scaled_CIFAR10}}
+	\caption{First layer filters at the end of training in CIFAR-10 database.}
+	\label{fig:cifar10:filter1}
+\end{figure}
+
+\begin{figure}
+	\centering     %%% not \center
+	
+	\subfigure[Training loss, y axis is on log scale.]{\label{fig:cifar10:a}\includegraphics[width=0.49\linewidth]{train_CIFAR10}}
+	\subfigure[Classification Error.]{\label{fig:cifar10:b}\includegraphics[width=0.49\linewidth]{vald_CIFAR10}}
+	
+	\caption{Training loss and classification error yielded from CIFAR-10 database.}
+	\label{fig:cifar10:results}
+\end{figure}
+
+\begin{figure}
+	\centering
+	\subfigure[Orientation Change.]{\label{fig:mnist:orientation}\includegraphics[width=0.47\linewidth]{cov_degree_CIFAR10}}
+	\subfigure[Scale Change.]{\label{fig:mnist:scale}\includegraphics[width=0.47\linewidth]{cov_val_CIFAR10}}
+	\caption{The change graphs for covariance matrix $\Sigma$ in CIFAR-10 dataset, depicted by the angle of largest eigenvector and its eigenvalue.}
+	\label{fig:cifar:convchange}
+\end{figure}
+
+\section{Discussion}
+
+In this paper, we propose an adaptive convolution filter model based on a Gaussian kernel acting as an envelope function on shared filter weights. The plots of scale and orientation changes during training epochs show that the adaptive model is capable of generating differently scaled and oriented filters in a single convolution layer. However, besides bounding and scaling of convolution weights, the Gaussian kernel tends to perform smoothing on input. Such that, if all weights were set to 1 and not trainable, the kernels perform only a Gaussian smoothing operation on input. Initial setting of variance terms to 1.0, enables an initial filter of 5x5 size. During training effective size of the filters are gradually increased. This is because enlarging filters enables more weights to be included in the convolution, which will allow further reduction in the network error. Therefore, the adaptive filter may be prone to overfit more than a conventional fixed sized filter of the same initial size. However, because the envelope rescales weights (max 1.0), it has a regulative affect on their magnitudes, which shall create an advantage. 
+
+A clear benefit of our model is that it removes the filter size from the list of hyper-parameters of deep learning networks. However, our main purpose is to add an adaptive multi-scale representation capacity to convolution layers. The results has shown that the advantage of the new adaptive filter model depends on the complexity and variations in training and test data. Among three datasets, MNIST is the simplest where digits are size-normalized and centered. The adaptive filters have less or no need for scale adaptation in pixel space, which resulted in no improvement in classification error compared with conventional CNNs.
+However, MNIST cluttered and CIFAR-10 include examples of arbitrary scale, orientation and centering, which allowed the adaptive filters to change scale and orientation to improve training
+without causing over fitting. Therefore, we can conclude that data with variations in scale and orientation enables the adaptive filters potential.
+
+%Since this is not always desirable, weights update themselves to be non-zero, not-one. Therefore, during training of each filter, there is a competitive trade off between the effective filter size and the smoothing. Additionally, since it scales the weights, it has a regulative affect on weight magnitudes.  Hence, the advantage of the new model depends on the complexity and variations in data. 
+
+The new and adaptive model of convolution layers allows filters' scale and orientation to be learned during training. Therefore, a single convolution layer can have filters at various scales and orientations. This enables extracting multi-scale information using a single convolution layer. State-of-the-art deep networks have many layers and more complex designs compared to the networks that were tested in this study. An interesting question which we will investigate further is whether using the adaptive filter layers can shorten the depth of the state-of-the-art architectures, such as inception \cite{inceptionv1}, highway \cite{highway} or thin \cite{fitnets}. Though, our aim is not to fully replace the stacked deep architectures, the new model may help reduce redundancy. Another question is whether the placing the adaptive layer in deeper levels of a network can have additional gains by focusing on the higher level representations.
+
+
+\section{Acknowledgment}
+\label{sec:ack}
+This research was supported supported by a grant (undisclosed for anonymity) and NVIDIA Hardware Grant scheme.
+%This research was supported supported by Isik University BAP-16A202 grant and NVIDIA Hardware Grant scheme.
+
+\bibliography{egbib}
+\end{document}

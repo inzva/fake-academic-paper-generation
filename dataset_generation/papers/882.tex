@@ -1,0 +1,690 @@
+% TODO list
+%
+% 1. Write up low res -> high res grid idea
+% 2. Results (qualitative model, qualitative fits, show averages of one subject, potentially show validation recognition performance without StaTN, maybe show cats)
+% 3. Section 4 becomes description of all losses, move task learning there + symmetry and texture
+% 4. Section 5 network architecture, training, datasets
+% 5. Section 6 results
+% 6. Write intro
+
+\documentclass[runningheads]{llncs}
+\usepackage{graphicx}
+\usepackage{amsmath,amssymb} % define this before the line numbering.
+%\usepackage{ruler}
+\usepackage{color}
+\usepackage[width=122mm,left=12mm,paperwidth=146mm,height=193mm,top=12mm,paperheight=217mm]{geometry}
+\usepackage[pagebackref=true,breaklinks=true,letterpaper=true,colorlinks,bookmarks=false]{hyperref}
+
+\usepackage{multirow,bm}
+
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\logs}{\textrm{logs}}
+\newcommand{\Proj}{\textrm{Proj}}
+\newcommand{\Retr}{\textrm{Retr}}
+\newcommand{\etal}{{et al.~}}
+
+\begin{document}
+% \renewcommand\thelinenumber{\color[rgb]{0.2,0.5,0.8}\normalfont\sffamily\scriptsize\arabic{linenumber}\color[rgb]{0,0,0}}
+% \renewcommand\makeLineNumber {\hss\thelinenumber\ \hspace{6mm} \rlap{\hskip\textwidth\ \hspace{6.5mm}\thelinenumber}}
+% \linenumbers
+\pagestyle{headings}
+\mainmatter
+\def\ECCV18SubNumber{2124}  % Insert your submission number here
+
+\title{Statistical transformer networks: learning shape and appearance models via self supervision}
+
+\titlerunning{Statistical transformer networks}
+
+\authorrunning{A. Bas and W. A. P. Smith}
+
+\author{Anil Bas and William A. P. Smith}
+\institute{Department of Computer Science, University of York\\{\tt\small \{ab1792,william.smith\}@york.ac.uk}}
+
+\maketitle
+
+\begin{abstract}
+We generalise Spatial Transformer Networks (STN) by replacing the parametric transformation of a fixed, regular sampling grid with a deformable, statistical shape model which is itself learnt. We call this a Statistical Transformer Network (StaTN). By training a network containing a StaTN end-to-end for a particular task, the network learns the optimal nonrigid alignment of the input data for the task. Moreover, the statistical shape model is learnt with no direct supervision (such as landmarks) and can be reused for other tasks. Besides training for a specific task, we also show that a StaTN can learn a shape model using generic loss functions. This includes a loss inspired by the minimum description length principle in which an appearance model is also learnt from scratch. In this configuration, our model learns an active appearance model and a means to fit the model from scratch with no supervision at all, even identity labels.
+\keywords{Spatial transformer network, statistical shape model, active appearance model, dense correspondence}
+\end{abstract}
+
+%%%%%%%%%%%%%%%%%%%%%%
+\section{Introduction}
+
+Establishing correspondence between images of objects from the same class is a fundamental task in computer vision. It enables appearance to be disentangled from the effects of pose and shape deformation, simplifying the task of comparing objects. While Convolutional Neural Networks (CNNs) are explicitly invariant to small, local translations (through pooling), they have no obvious mechanism for establishing dense, possibly nonrigid correspondence. 
+
+Statistical Transformer Networks (STNs) \cite{jaderberg2015spatial} introduce an explicit geometric transformation into CNNs. Rather than rely on generic layers within a CNN to learn invariance to various kinds of spatial transformation, an STN includes expert layers that predict and apply a parametric transformation to an input feature map. By including an STN as a component within a CNN, the network can learn its own notion of alignment that is optimal for the task that it is learning to solve. 
+
+The components of an STN are: 1.~a localiser network (a CNN that learns to regress transformation parameters from an input feature map), 2.~a grid generator (that generates a grid of sample points from the transformation parameters) and 3.~a differentiable resampler (that uses bilinear interpolation to resample the input feature map at the sample grid locations).
+
+In this paper we address an important drawback of the original STN. The geometric transformation model used by the STN must be hand picked and remains fixed. We propose to replace the hand picked transformation model by a statistical shape model that is itself learnt. We call this a Statistical Transformer Network (StaTN). The power of statistical shape and appearance models is well known, for example Active Appearance Models \cite{cootes2001active} in 2D and 3D Morphable Models \cite{blanz1999morphable} in 3D. These models can be built from a few hundred or thousand samples and then deployed to solve problems ranging from tracking to recognition to synthesis. Usually, constructing such models requires hand labelling of landmark points so that correspondence can be established between training samples. Then the variability in shape and appearance is learnt, typically using Principal Components Analysis (PCA). 
+
+A StaTN learns such a statistical shape model (and optionally a statistical appearance model) with no landmark supervision and also learns to fit the model. Hence, a StaTN learns an explicit representation of a particular object class in an interpretable way (the parameters of the statistical model can be explicitly accessed and understood).
+
+We make the following novel contributions:
+\begin{itemize}
+    \item We show how to incorporate a 2D statistical shape model in a spatial transformer network.
+    \item The mean and principal components of a statistical model are subject to constraints (e.g.~orthogonality of principal components). We show how these can be enforced by incorporating manifold gradient descent into backpropagation.
+    \item We introduce generic losses that can be used to train a StaTN, including a statistical appearance model, with no supervision at all (i.e. not even identity labels for computing a classification loss).
+\end{itemize}
+
+
+\begin{figure}[t]
+\noindent\resizebox{\textwidth}{!}{
+\includegraphics[trim={1cm 16cm 1cm 1cm},clip]{tikz/tikz_diagram.pdf}}
+\caption{An overview of the statistical transformer network. Learnable components of the network are shown in orange. }
+\label{fig:example}
+\end{figure}
+
+\section{Related Work}
+
+The general problem of alignment has been approached from a learning perspective previously \cite{huang2012learning}. The specific question of whether CNNs learn a notion of correspondence implicitly has been considered by Long \etal \cite{long2014convnets}. More generally, morphable models (models of the warps between samples from an object class in dense correspondence) have been learnt directly from in the wild image data \cite{cashman2013shape,antonakos2014automatic}, though note that the process of fitting these models is tackled separately (using handcrafted algorithms).
+
+%Dynamic Filter Networks (A dynamic convolutional layer - learning the values of the layer from another network? ):\cite{de2016dynamic}
+%Universal representations \cite{bilen2017universal}. It could be used in the introduction section perhaps. 
+%Object-level correspondence using feature points: Shape Matching and Object Recognition using Low Distortion Correspondences  \cite{berg2005shape}
+%Scene alignment by matching SIFT descriptors: SIFT Flow: Dense Correspondence across Scenes and its Applications \cite{liu2016sift}. \cite{long2014convnets} and \cite{rocco2017convolutional} outperform this in image alignment based on keypoint prediction.
+%Learning Face Representation from Scratch (CASIA paper) \cite{yi2014learning}
+
+\paragraph{Geometry Matching and Warping.}
+
+Kanazawa \etal \cite{kanazawa2016warpnet} proposed a weakly supervised architecture that learns correspondences by shape deformation in a fine-grained dataset. Rocco \etal \cite{rocco2017convolutional} propose a neural network for geometric matching between two images by estimating an affine transformation. However, their procedure strongly relies on fully supervised training. Thelwis \etal \cite{thewlis2017unsupervised} followed an unsupervised approach to establish correspondences between different object instances in categories such as human and cat faces. This is later extended from a sparse set of landmarks to a dense model \cite{thewlis2017unsupervised2}.
+
+
+%2D-Warping: \cite{hanselmann2015speeding} (FG 2015) and \cite{hanselmann2016learning} (ECCVW 2016). See figures in the first study.
+%Free-Form Deformation Network \cite{zhang2017deep} (ICCV 2017): It is a transformation based approach to warp the input shape mask onto the target object.
+
+\paragraph{Face Analysis.}
+
+Zhu \etal \cite{zhu2014recover} recover the canonical frontal view of face images using deep neural networks while Dig \etal\cite{ding2015multi} handle the full range of pose variations in a multi-task learning fashion. Hassner \etal \cite{hassner2015effective} and Chang \etal \cite{chang2017faceposenet} estimate frontalisation by using a single 3D reference surface. These four studies reported that the existing face recognition methods can be improved with adopting their approach as normalisation and pre-processing. Zhu \etal \cite{zhu2015high} present a pose and expression normalisation method by applying 3D model fitting and texture warping which later extended to deep convolutional network \cite{zhu2016face}.
+%Face reconstruction: \cite{tran2017extreme}.
+%Template based face recognition by pooling faces: \cite{hassner2016pooling}
+Jourabloo and Liu \cite{jourabloo2016large} fit a 3D model to detected landmarks and train a CNN to directly regress the fitted pose and shape parameters.
+%\paragraph{2D Face Analysis.}
+Ranjan \etal \cite{ranjan2017hyperface,ranjan2017all} proposed a multi-task architecture that simultaneously predicts landmark locations, estimates pose and identifies a face.
+
+% Don't really think this is relevant:
+%Dekel \etal \cite{dekel2017smart} obtained high quality reconstructions of face images from sparse contours using generative adversarial networks.
+
+\paragraph{Transformer networks.}
+
+Since the introduction of the Spatial Transformer Network \cite{jaderberg2015spatial}, there are many studies that presented the module in a similar manner from correspondence estimation \cite{choy2016universal} to image segmentation \cite{li2017dense} to radio communication \cite{o2016radio}.
+Wu \etal \cite{wu2017recursive} apply recursive STNs in the context of face recognition.
+Yu \etal \cite{yu2016deep} present the Deep Deformation Network to estimate landmarks to which local deformation is applied using thin-plate spline transformation as part of their point transformer network.
+Dai \etal \cite{dai2017deformable} introduce the Deformable Convolutional Networks based on the idea of augmenting the spatial sampling locations in the modules with additional offsets and then learning the offsets from target tasks without additional supervision.
+%Top-down Flow Transformer Networks: \cite{jia2017top}
+Bas \etal \cite{bas20173D} propose an architecture based on a purely geometric approach by incorporating a 3D Morphable Model into a Spatial Transformer Network to interpret and normalise pose changes and self-occlusions.
+Zhong \etal \cite{zhong2017towards} implement the spatial transformer module for alignment learning in end-to-end face recognition.
+
+
+\section{Statistical transformer networks}
+
+In this section we explain how to incorporate a learnable statistical shape model into a spatial transformer network. We explain how each component of a conventional STN must be modified. An overview of our proposed StaTN is shown in Figure \ref{fig:example}.
+
+\subsection{Localiser network}
+
+The localiser network is a black box CNN that takes an image (or, more generally, a feature map) as input and regresses a semantically meaningful vector of parameters $\theta$:
+\begin{equation}
+    \theta = (\underbrace{\phi,\mathbf{t},\logs}_{\textrm{rigid pose}},\underbrace{{\bm \alpha}}_{\textrm{shape}}).
+\end{equation}
+Here, $\mathbf{t}\in\R^2$ is a 2D translation and $\phi\in\R$ is a rotation angle. Since scale must be positive, we estimate log scale ($\logs$) and later pass this through an exponentiation layer, ensuring that the estimated scale, $s$, is positive. The shape parameters ${\bm \alpha}\in\R^D$ are the weights of the principal components of the statistical shape model described below.
+
+The architecture of the localiser network is not critical. For all our experiments, we use a very simple architecture comprising six blocks of convolution, ReLU and pooling, followed by a fully connected layer with 1024 units followed by the final regression layer implemented as a fully connected layer with $D+4$ units.
+
+\subsection{Grid generator}
+
+The purpose of the grid generator is to compute a sampling coordinate $(x_i^s,y_i^s)$ for each corresponding point $(x_i^t,y_i^t)$ in the regular output grid from the transformation parameters provided by the localiser network. The output grid comprises $M=H^{\prime}W^{\prime}$ points, regularly sampled over $-1\dots 1$ with height $H^{\prime}$ and width $W^{\prime}$. Our grid generator begins by generating a shape from a linear shape model (which is learnt as part of the StaTN training), then a rigid transformation is applied to this before it is finally upsampled to a high resolution sampling grid.
+
+\paragraph{Linear shape model.}
+A linear shape model is an orthonormal basis enabling compact representation of a class of shapes. Specifically, a shape comprised of $N$ 2D vertices, $\mathbf{x}\in\R^{2N}$, is written as a sum of a mean shape $\mathbf{b}\in\R^{2N}$ and a linear combination of a set of $D$ orthonormal bases $\mathbf{F}\in\R^{2N\times D}$:
+\begin{equation}
+    \mathbf{x} = \mathbf{F}\alpha + \mathbf{b},\label{eqn:linshape}
+\end{equation}
+where $\alpha\in\R^D$ is a vector of shape parameters and $\mathbf{F}^T\mathbf{F}=\mathbf{I}_D$. Typically, such models are built statistically by labelling a set of training images and using PCA to extract the mean and basis vectors. Instead, here we will learn the model in an unsupervised manner simultaneously with learning to fit the model.
+
+Note that the linear model in \eqref{eqn:linshape} can be interpreted as a fully connected layer of a CNN (or equivalently, a special case of a convolution layer) in which the orthonormal basis plays the role of the filters, the mean shape plays the role of the biases and the parameter vector plays the role of the input feature map. To make this explicit, we rewrite each component of the model in tensor form such that the output shape is ${\cal X}\in\R^{1\times 1\times 2N}$ and the model is given by the orthonormal basis ${\cal F}\in\R^{D\times 1\times 1\times 2N}$ and the parameter vector ${\cal \alpha}\in\R^{D\times 1 \times 1}$. In this form, the familiar definition of a convolution operation yields the same model as \eqref{eqn:linshape}:
+\begin{equation}{\cal X}_{i^{\prime},j^{\prime},k^{\prime}}=\mathbf{b}_{k^{\prime}} + \sum_{i,j,k} {\cal F}_{i,j,k,k^{\prime}}\alpha_{i+i^{\prime},j+j^{\prime},k}.
+\end{equation}
+In practice, we implement the linear shape model as a convolution layer and learn the filters and biases as normal. We initialise the biases (mean shape) as a regular, square grid and the filters (principal components) as a random orthonormal matrix.
+
+Subsequently, it is notationally convenient to rewrite the output shape and mean shape in matrix form as $\mathbf{X}\in\R^{2\times N}$ and  $\mathbf{B}\in\R^{2\times N}$.
+
+\paragraph{Scaling Layer.}
+
+The log scale estimated by the localiser is first transformed to scale by an exponentiation layer:
+\begin{equation*}
+    s(\logs)=\exp(\logs),\quad \frac{\partial s}{\partial \logs}=\exp(\logs).
+\end{equation*}
+Then, the 2D points $\mathbf{X}\in\R^{2\times N}$ are scaled:
+\begin{equation*}
+    \mathbf{X}^{\prime}(s,\mathbf{X})=s\mathbf{X},\quad \frac{\partial X^{\prime}_{i,j}}{\partial s}=X_{i,j},\quad \frac{\partial X^{\prime}_{i,j}}{\partial X_{i,j}}=s
+\end{equation*}
+
+\paragraph{2D Rotation Matrix.}
+This layer outputs a 2D rotation matrix as a function of a rotation angle $\mathbf{R}:\R\mapsto\R^{2\times 2}$:
+\begin{equation}
+    \mathbf{R}(\phi) = \begin{bmatrix}\cos\phi & -\sin\phi \\ \sin\phi & \cos\phi \end{bmatrix},\quad
+    \frac{\partial \mathbf{R}}{\partial \phi} = \begin{bmatrix}-\sin\phi & -\cos\phi \\ \cos\phi & -\sin\phi \end{bmatrix}.
+\end{equation}
+
+\paragraph{2D Rotation Layer.}
+
+The rotation layer takes as input a rotation matrix $\mathbf{R}$ and $N$ 2D points $\mathbf{X}^{\prime}\in\R^{2\times N}$ and applies the rotation:
+\begin{gather*}
+    \mathbf{X}^{\prime\prime}(\mathbf{R},\mathbf{X}^{\prime})=\mathbf{RX}^{\prime}\\
+    \frac{\partial X^{\prime\prime}_{i,j}}{\partial R_{i,k}}=X^{\prime}_{k,j},\quad \frac{\partial X^{\prime\prime}_{i,j}}{\partial X^{\prime}_{k,j}}=R_{i,k},\quad i,k\in\{1,2\}, j\in\{1,\dots,N\}.
+\end{gather*}
+
+\paragraph{Translation Layer.}
+Finally, the 2D sample points are generated by adding a 2D translation $\mathbf{t}\in\R^2$ to each of the scaled points:
+\begin{equation*}
+    \mathbf{Y}(\mathbf{t},\mathbf{X}^{\prime\prime})=\mathbf{X}^{\prime\prime}+\mathbf{1}_{N}\otimes \mathbf{t},\quad \frac{\partial Y_{i,j}}{\partial t_i}=1,\quad \frac{\partial Y_{i,j}}{\partial X^{\prime\prime}_{i,j}}=1,
+\end{equation*}
+where $\mathbf{1}_{N}$ is the row vector of length $N$ containing ones and $\otimes$ is the Kronecker product.
+
+\subsection{Grid upsampler}
+
+The resolution at which we wish to resample the image may be higher than the resolution at which we wish to statistically model shape. E.g. in our experiments, our statistical shape model comprises $N = 10\times 10$ grid vertices whereas our resampled images comprise $M = 112\times 112$ pixels, i.e. two orders of magnitude more. This keeps the dimensionality of the statistical model (that must be learnt from data) down, whilst still allowing sufficient detail to be sampled from the input images. To achieve this, we precompute the barycentric weights of each high resolution output grid point in the low resolution output grid. We then use these weights to compute sample locations for every high resolution point, $\mathbf{Z}\in\R^{2\times M}$, from the computed low resolution sample grid points. In other words, we perform a linear interpolation of the low resolution sample grid. In practice, this can be written as:
+\begin{equation}
+    \mathbf{Z}(\mathbf{Y}) = \mathbf{YW},\quad  \frac{\partial Z_{i,j}}{\partial Y_{i,k}}=W_{k,j},\quad i\in\{1,2\},\, j\in\{1,\dots,M\},\, k\in\{1,\dots,N\}.
+\end{equation}
+where $\mathbf{W}\in\R^{N\times M}$ is constant, sparse (each row contains three non-zero values) and each row sums to one: $\mathbf{W1}_M=\mathbf{1}_N$.
+The sample points for each point in the output grid are given by $(x_i^s,y_i^s)=(Z_{1,i},Z_{2,i})$. See Figure \ref{fig:example} for a visualisation of the low and high resolution sampling grids overlaid on an input image.
+
+\subsection{Bilinear sampling}
+We use bilinear sampling, exactly as in the original STN such that the re-sampled image $V_i^c$ at location $(x_i^t,y_i^t)$ in colour channel $c$ is given by:
+\begin{equation*}
+    V_i^c = \sum_{j=1}^H\sum_{k=1}^W I_{jk}^c \max(0,1-|x_i^s-k|)\max(0,1-|y_i^s-j|)
+\end{equation*}
+where $I_{jk}^c$ is the value in the input image at pixel $(j,k)$ in colour channel $c$. $I$ has height $H$ and width $W$. This bilinear sampling is differentiable (see \cite{jaderberg2015spatial} for derivatives) and so the loss can be backpropagated through the sampler and back into the grid generator.
+
+\section{Backpropagation with Manifold Gradient Descent}\label{sec:manopt}
+
+In a StaTN, some learnable parameters are subject to constraints. If, during backpropagation, an unconstrained step in the direction of the negative gradient of the loss function is taken, then these parameters will no longer satisfy the constraints. In this section, we show how manifold gradient descent can be used to ensure constraints on learnable parameters remain satisfied during training. 
+%This only requires a small modification to the parameter update step of one iteration of the chosen optimisation algorithm.
+
+\subsection{Constrained parameters}
+
+In our network, the shape model is subject to such constraints and hence requires special treatment during training. First, the shape basis is required to be orthonormal, i.e. that $\mathbf{F}^T\mathbf{F}=\mathbf{I}_D$. Second, we require that the mean shape is centred, i.e. that $\mathbf{B1}_N=\mathbf{I}_2$. Otherwise there is an ambiguity between the translation estimated by the localiser, $\mathbf{t}$, and the centering of the mean (i.e. the same shape can be obtained by translating the mean or translating the output shape from our model). Without constraint, this gives SGD redundant search directions during training.
+
+Both of these constraints can be encoded by viewing the parameters as belonging to a Riemannian manifold and using manifold optimisation for these parameters during training. This idea is not new and has been considered, for example, by Harandi and Fernando \cite{harandi2016generalized}. Here, we show how to use manifold optimisation for the two model parameters in our STN that are subject to constraints.
+
+\subsection{Manifold gradient descent}
+
+Suppose $M\subset \R^n$ is a Riemannian manifold embedded in $\R^n$ and $f:\R^n\mapsto\R$ a cost function on $\R^n$. If $\mathbf{x}\in\R^n$ is some learnable parameter then $-\nabla f(\mathbf{x})$ is a (Euclidean) descent direction for $\mathbf{x}$. In practice, this Euclidean gradient would be provided by backpropagation. Usually, some variation of stochastic gradient descent is used to reduce the loss by taking a step in the negative gradient direction. However, if our learnable parameters are subject to constraints then taking a step in the unconstrained gradient direction will lead to parameters that do not satisfy the constraints. 
+
+Manifold optimisation relies on two operations: {\it orthogonal projection} from the ambient space to the tangent space of the manifold and {\it retraction} to transform from the tangent space onto the manifold. The Euclidean gradient computed via backpropagation is first projected to the tangent space, then a retraction is applied to this tangent vector, giving a new point on the manifold. Note that the geometric exponential map is a particular kind of retraction but often we can use alternatives that are cheaper to compute.
+
+%\begin{figure}[!t]
+%\centering
+%\input{manifolddiagram.tikz}
+%\caption{Manifold optimisation: the Euclidean descent direction $\nabla\ell(\mathbf{x})$ is transformed to the tangent plane at ${\bf x}$, $T_{\mathbf{x}}{\cal M}$, via orthogonal projection and then to the manifold ${\cal M}\subset\R^n$ via a retraction.}
+%\label{fig:manifoldopt}
+%\end{figure}
+
+\begin{figure}[!t] \centering
+\noindent\resizebox{0.65\textwidth}{!}{
+\includegraphics[trim={1cm 15cm 1cm 1cm},clip]{tikz/tikz_manifold.pdf}}
+\caption{Manifold optimisation: the Euclidean descent direction $-\nabla f(\mathbf{x})$ is transformed to the tangent plane at ${\bf x}$, $T_{\mathbf{x}}{\cal M}$, via orthogonal projection and then to the manifold ${\cal M}\subset\R^n$ via a retraction.}
+\label{fig:manifoldopt}
+\end{figure}
+
+\paragraph{Centred matrices manifold.} The mean shape must lie on the manifold of centred matrices $C_{m,n}=\{\mathbf{X}\in\R^{m\times n} | \mathbf{X1}_n=\mathbf{0}_m \}$. Specifically, $\mathbf{B}\in C_{2,N}$. Without this constraint there is a translational ambiguity between the translation vector $\mathbf{t}$ and the mean shape. Projection and retraction on this manifold are particularly simple. The orthogonal projection $\Proj_{\mathbf{X}}^{C_{m,n}}:\R^{m\times n}\mapsto T_{\mathbf{X}}C_{m,n}$ of a displacement $\mathbf{U}\in \R^{m\times n}$ in the ambient space onto the tangent space $T_{\mathbf{X}}C_{m,n}$ at $\mathbf{X}$ is obtained simply by centering $\mathbf{U}$:
+\begin{equation}
+\Proj_{\mathbf{X}}^{C_{m,n}}(\mathbf{U}) = \mathbf{U}-\mathbf{U1}_n.
+\end{equation}
+The retraction $\Retr_{\mathbf{X}}^{C_{m,n}}:T_{\mathbf{X}}C_{m,n}\mapsto C_{m,n}$ of a tangent vector $\mathbf{V}\in T_{\mathbf{X}}C_{m,n}$ is simply:
+\begin{equation}
+\Retr_{\mathbf{X}}^{C_{m,n}}(\mathbf{V}) = \mathbf{X}+\mathbf{V}.
+\end{equation}
+So, we initialise with a centred shape then, when updating the mean shape during SGD, we simply centre the gradient provided by backpropagation before adding it to the current mean shape.
+
+\paragraph{Stiefel manifold.} The orthonormal shape basis must lie on the Stiefel manifold $V_k(\R^n)=\{\mathbf{X}\in\R^{n\times k} | \mathbf{X}^T\mathbf{X}=\mathbf{I}_k\}$. This is the manifold of $k$ dimensional orthonormal bases in $\R^n$. Specifically, $\mathbf{F}\in V_D(\R^{2N})$. The orthogonal projection $\Proj_{\mathbf{X}}^{V_k(\R^n)}:\R^{n\times k}\mapsto T_{\mathbf{X}}V_k(\R^n)$ of a displacement $\mathbf{U}\in \R^{n\times k}$ in the ambient space onto the tangent space $T_{\mathbf{X}}V_k(\R^n)$ at $\mathbf{X}$ is given by:
+\begin{equation}
+    \Proj_{\mathbf{X}}^{V_k(\R^n)}(\mathbf{U}) = \mathbf{U}-\mathbf{X}\,\textrm{sym}(\mathbf{X}^T\mathbf{U}),
+\end{equation}
+where $\textrm{sym}(\mathbf{M})=0.5(\mathbf{M}+\mathbf{M}^T)$. A retraction $\Retr_{\mathbf{X}}^{V_k(\R^n)}:T_{\mathbf{X}}V_k(\R^n)\mapsto V_k(\R^n)$ of a tangent vector $\mathbf{V}\in T_{\mathbf{X}}V_k(\R^n)$ can be obtained by finding the closest orthogonal matrix to $\mathbf{V}$:
+\begin{equation}
+    \Retr_{\mathbf{X}}^{V_k(\R^n)}(\mathbf{V}) = \mathbf{U},
+\end{equation}
+where $\mathbf{V} = \mathbf{UP}$ is the polar decomposition of $\mathbf{V}$.
+
+\subsection{Implementation}
+
+In practice, we make a small modification to the implementation of backpropagation. Where layer parameters are updated, we test whether the layer is one with constraints. If it is, we apply projection and retraction before the updates are added to the parameters.
+
+\section{Losses for training a StaTN}
+
+As with the original STN, a StaTN can be used as a component within a larger network that is trained end-to-end. In this section, we consider some different ways that this can be achieved and design loss functions that help the StaTN learn a meaningful statistical model.
+
+\subsection{Learning by task}
+
+The most obvious way to use a StaTN is as part of a network that is trained to solve a task such as recognition or classification. Here, the StaTN acts to normalise the effects of pose and shape, making the subsequent task easier to solve. Concretely, the output of the StaTN (i.e. the resampled image) is fed to a classification network with, for example, its own softmax loss (see Figure \ref{fig:example}). This loss is propagated back through the classification network, through the resampler and into the statistical shape model and the localisation networks.
+
+In this setting, the StaTN will learn a notion of correspondence that is optimal for the task being solved. This may not coincide with intuitive notions of correspondence, nor will attention necessarily focus only on the object of interest. For example, if training for face recognition, a StaTN may learn that there is important contextual information in clothing or background and so the statistical model (and hence sample grid) may not attend only to the face.
+
+In our experiments, we use a softmax classification loss, $\ell_{\textrm{class}}$, in the context of a face classification task.
+
+\subsection{Appearance model with minimum description length}
+
+We now propose a loss that can be used to train a StaTN in a much more general setting. Consider that we have an image collection containing images of a particular object class but no further information, i.e. we do not even have identity labels for each image. The minimum description length principle \cite{davies2002minimum} asserts that the correct correspondence is the one that leads to the best compression of the data. We apply this principle by learning a statistical appearance model of the images obtained by a StaTN resampling and then measuring a loss as the reconstruction error of the images. This loss will be minimised by the StaTN learning to establish correspondence that leads to the most compressible appearance. Intuitively, in the image collection, the StaTN then searches for objects with the most redundant appearance. 
+
+Specifically, we learn a linear statistical appearance model of the resampled images $\mathbf{V}\in\R^{H^{\prime}W^{\prime}\times C}$, where $C$ is the number of colour channels (usually the StaTN and hence the appearance model will be applied to RGB image input and so $C=3$, however in general this approach could be applied to feature maps with any number of channels). We use the same linear model as in \eqref{eqn:linshape}, where $\mathbf{b}$ is the mean texture and $\mathbf{F}$ the texture principal components. The projection of an input image onto the model is given by:
+\begin{equation}
+    \mathbf{w} = \mathbf{F}\mathbf{F}^T(\textrm{vec}(\mathbf{V})-\mathbf{b})+\mathbf{b}.
+\end{equation}
+Note that this is just a linear autoencoder. A more complex, nonlinear autoencoder could be used here for the texture model but it has been shown many times previously that a linear model is an efficient representation for the appearance of many object classes \cite{cootes2001active}. The texture loss is then given by the squared Euclidean distance between the source and reconstructed textures:
+\begin{equation}
+    \ell_{\textrm{tex}} = \|\mathbf{w}-\textrm{vec}(\mathbf{V})\|^2.
+\end{equation}
+Note that the principal components of the texture model are subject to the same orthogonality constraint as the shape model, i.e. they lie on the Stiefel manifold. Hence, we use the same manifold optimisation strategy for these parameters as in Section \ref{sec:manopt}. The mean texture does not need constraining since there is no texture translation to cause an ambiguity.
+
+Note that, when trained in this way, a StaTN is effectively learning an Active Appearance Model \cite{cootes2001active} and the means to fit the model to an image with no supervision.
+
+\subsection{Regularisation}
+
+Besides the above two losses, we may wish to regularise the process of training a StaTN such that the obtained shape and appearance models exhibit desirable properties.
+
+\paragraph{Symmetry loss.}
+Many natural and man-made objects exhibit bilateral symmetry. Usually, statistical shape and appearance models would be symmetric by construction since the chosen landmarks would be symmetric. However, we do not use landmarks and neither the classification loss nor the texture loss require this to be the case. To encourage a symmetric model we penalise asymmetry, measured as the difference between a sampled image and its reflection:
+\begin{equation}
+    \ell_{\textrm{sym}} = \sum_{i=1}^M \sum_{c=1}^3 (V_i^c - V_{\textrm{sym}(i)}^c)^2,
+\end{equation}
+where $V_{\textrm{sym}(i)}^c$ is the value in the resampled image at location $(W^{\prime}+1-x_i^t,y_i^t)$.
+This ignores the effect of illumination (which may introduce asymmetries in appearance) but is still a useful regulariser when averaged over batches.
+
+\paragraph{Area loss.}
+When training without a classification loss, i.e. using only the texture loss, a trivial solution is to collapse the grid to a single pixel. This makes the appearance constant and hence compressible. To avoid this we propose a second regularisation. In a triangulation of our sample grid, we would like the area of the triangles to be preserved (i.e. not collapase to zero). More generally, we would like our shape model to be diffeomorphic, i.e. avoid triangles folding over themselves. Hence, for a sample grid we compute the signed area, $a_t$, for each triangle $t$ and penalise areas close to zero or that are negative (i.e. have flipped) as follows:
+\begin{equation}
+    \ell_{\textrm{area}} = \sum_t \max(0,\exp(-a_t)-k),
+\end{equation}
+where $0< k\leq 1$ is a constant which determines how small a triangle must be before the penalty is applied. $k=1$ means only negative areas are penalised. $k$ close to zero means even large triangle areas are penalised. We use a value of $k=0.99$ in our experiments.
+
+\subsection{Hybrid loss}
+
+In our experiments, we use a hybrid loss function comprising a weighted sum of the four losses (where a loss is switched off by setting the corresponding weight to zero):
+\begin{equation}
+    \ell = w_{\textrm{class}}\ell_{\textrm{class}} + w_{\textrm{tex}}\ell_{\textrm{tex}} + w_{\textrm{sym}}\ell_{\textrm{sym}} + w_{\textrm{area}}\ell_{\textrm{area}}.
+\end{equation}
+
+%\section{Model regularisation}
+
+%Do we need to try to stop the model collapsing or folding over itself? We could do this with area penalties. E.g. take cross product of triangle edges in mean shape model and have heavy penalty on negative values?
+
+
+
+% \section{Landmark regularisation}
+
+% Landmarks are sparse indications of correspondence. Where images are provided with landmarks, we can use them to regularise the correspondence that we are learning. This will also stop the model/model fitting collapsing down to a single pixel which would trivially minimise the MDL loss since it would give easily compressible appearance.
+
+% Unlike in most settings however, we won't know what correspondence is from a landmark to the model since we are learning the model from scratch. The way we address this is to introduce a layer that warps landmarks from image space to normalised model space, then introduce a loss layer that penalises the 2D variance of the landmarks in model space. In other words, we expect that the same landmark across images should warp to the same location in model space.
+
+% \subsection{Landmark warping layer}
+
+% For an image with a fitted grid, find the barycentric coordinates of each image landmark. If the landmark lies outside the triangulation, then allow negative barycentric coordinates and use triangle containing closest grid vertex to landmark - this is essentially extrapolation of the piecewise affine warp used elsewhere. To warp, simply reconstruct the landmarks in model space using the computed barycentric weights applied to the normalised grid positions. This is all differentiable (at least within triangles - a bit like bilinear sampling layer).
+
+% Notations in this section are totally independent of rest of paper - need to make consistent at some point.
+
+% \subsection{Landmark variance loss}
+
+% The variance of a set of values stored in the vector $\mathbf{x}\in\R^N$ is given by:
+% \begin{equation}
+% \textrm{var}(\mathbf{x}) = \frac{1}{N-1}\mathbf{1}^T(\textrm{diag}(\mathbf{x})\mathbf{x} - 2m\mathbf{x} + m^2),
+% \end{equation}
+% where $\mathbf{1}\in\R^N$ is a vector of ones and
+% \begin{equation}
+%     m = \frac{1}{N}\mathbf{1}^T\mathbf{x}
+% \end{equation}
+% is the mean. If we wish to use variance as a loss function in the context of stochastic gradient descent, the fact that the mean depends on all elements means that we cannot express the variance as summation that can be divided into sums over mini-batches. To resolve this, we keep the mean fixed over an epoch, allowing the loss to be expressed as a summation that can be evaluated independently for each mini-batch. We then update the mean for the next epoch. Hence, dropping terms that do not depend on $\mathbf{x}$ and ignoring normalisation, we write the variance loss as:
+% \begin{equation}
+%     \ell_{\textrm{var}}(\mathbf{x}) = \mathbf{x}^T\mathbf{x} - 2m\mathbf{1}^T\mathbf{x},
+% \end{equation}
+% for which derivatives are given by:
+% \begin{equation}
+% \frac{\partial\ell_{\textrm{var}}}{\partial \mathbf{x}} = 2\mathbf{x}^T - 2m\mathbf{1}^T.
+% \end{equation}
+% We use one such loss for the $x$ and $y$ component of each landmark and the total loss is the sum over $2L$ such losses.
+
+\begin{figure}[!t]
+\centering
+\noindent\resizebox{.65\textwidth}{!}{
+\includegraphics[clip]{figure.pdf}
+}
+\caption{Training and validation curves.}
+\label{fig:curve}
+\end{figure}
+
+\begin{figure}[!t]
+\centering
+\noindent\resizebox{\textwidth}{!}{
+\begin{tabular}{ccccccc}
+
+\includegraphics[clip=true]{grid/im_1.png}&
+\includegraphics[clip=true]{grid/im_2.png}&
+\includegraphics[clip=true]{grid/im_3.png}&
+\includegraphics[clip=true]{grid/im_5.png}&
+\includegraphics[clip=true]{grid/im_6.png}&
+\includegraphics[clip=true]{grid/im_7.png}&
+\includegraphics[clip=true]{grid/im_8.png}\\
+\includegraphics[clip=true]{grid/im_9.png}&
+\includegraphics[clip=true]{grid/im_10.png}&
+\includegraphics[clip=true]{grid/im_11.png}&
+\includegraphics[clip=true]{grid/im_12.png}&
+\includegraphics[clip=true]{grid/im_13.png}&
+\includegraphics[clip=true]{grid/im_34.png}&
+\includegraphics[clip=true]{grid/im_15.png}\\
+\includegraphics[clip=true]{grid/im_19.png}&
+\includegraphics[clip=true]{grid/im_24.png}&
+\includegraphics[clip=true]{grid/im_31.png}&
+\includegraphics[clip=true]{grid/im_32.png}&
+\includegraphics[clip=true]{grid/im_33.png}&
+\includegraphics[clip=true]{grid/im_14.png}&
+\includegraphics[clip=true]{grid/im_35.png}
+
+\end{tabular}
+}
+\caption{Qualitative StaTN fitting results. We show a triangulation of the low resolution sample grid predicted by the grid generator. The deformable grid and fitting process have been learnt from scratch in an end-to-end trained face classification network with no landmark supervision.}
+\label{fig:fitting}
+\end{figure}
+
+\begin{figure}[!t] \centering
+\noindent\resizebox{\textwidth}{!}{
+
+\begin{tabular}{cccc}
+\hline
+\multirow{2}{*}{\bfseries Mean Shape} & 
+\multicolumn{3}{c}{\bfseries Shape Components}\\ \cline{2-4}
+& 1st & 2nd & 3rd \\ \hline\\[-0.5em]
+%------
+\includegraphics[height=2cm, clip=true]{model/shape_mean.png}&
+\includegraphics[height=2cm, clip=true]{model/shape_pc1_+1.png}&
+\includegraphics[height=2cm, clip=true]{model/shape_pc2_+1.png}&
+\includegraphics[height=2cm, clip=true]{model/shape_pc3_+1.png}\\
+&
+\includegraphics[height=2cm, clip=true]{model/shape_pc1_-1.png}&
+\includegraphics[height=2cm, clip=true]{model/shape_pc2_-1.png}&
+\includegraphics[height=2cm, clip=true]{model/shape_pc3_-1.png}
+\end{tabular}
+
+\quad
+
+\begin{tabular}{cccc}
+\hline
+\multirow{2}{*}{\bfseries Mean Texture} & 
+\multicolumn{3}{c}{\bfseries Texture Components}\\ \cline{2-4}
+& 1st & 2nd & 3rd \\ \hline\\[-0.5em]
+%------
+\includegraphics[height=2cm, clip=true]{model/texture_mean.png}&
+\includegraphics[height=2cm, clip=true]{model/texture_pc1_+1.png}&
+\includegraphics[height=2cm, clip=true]{model/texture_pc2_+1.png}&
+\includegraphics[height=2cm, clip=true]{model/texture_pc3_+1.png}\\ 
+&
+\includegraphics[height=2cm, clip=true]{model/texture_pc1_-1.png}&
+\includegraphics[height=2cm, clip=true]{model/texture_pc2_-1.png}&
+\includegraphics[height=2cm, clip=true]{model/texture_pc3_-1.png}
+\end{tabular}
+
+}
+\caption{Shape and appearance models learnt whilst training a StaTN on the dataset shown in Figure \ref{fig:fitting}.}
+\label{fig:model}
+\end{figure}
+
+\section{Experimental Results}
+
+We use the UMDFaces Dataset \cite{bansal2016umdfaces} in our experiments. We choose 750 identities with the highest number of images, comprising 61311 in total. This is a rather small dataset, however, we apply random cropping on images and batch normalisation to the convolutional layers as data augmentation.
+
+We follow very similar architecture (5-6 convolutional layers with ReLU and pooling followed by a fully connected layer) for our localiser and recognition parts of the network.
+We use 10 dimensions for both our statistical shape and appearance models. We trained our network with classification, texture and symmetry losses.
+The learning rates of the localiser and recognition layers are 0.001 whereas shape and texture layers are 0.01 and 1, respectively.
+
+In Figure \ref{fig:curve} we show the training and validation curves for our proposed StaTN network and an equivalent recognition network without spatial transformation. There is a modest but clear improvement in validation performance, even though our proposed network performs recognition with less information (since the grid is smaller than the image, part of the image data is discarded prior to recognition).
+
+Figure \ref{fig:fitting} shows qualitative fitting results predicted by our network's grid generator. The sparse grid successfully locates the face even in images that are highly cluttered, noisy and badly cropped. Note that we trained our network without any supervision.
+
+In Figure \ref{fig:model} we show the shape and appearance model learnt by our network. The shape model clearly resembles a face shape. Interestingly, the shape model does not appear to include the ears, but does sample a region of the shoulders and neck. The texture model has clearly interpretable principal components. The first two capture global lighting or skin colour changes, the third captures side to side lighting variation. The shape components are less easily interpretable but the second mode appearances to capture side to side 3D rotation of the face.
+
+In Figure \ref{fig:meanfaces} we apply the StaTN to multiple images of the same person and then average the output of the bilinear sampler of our network. We show comparison between the raw average (1st row) and the sampled average (2nd row). The number of images for each subject is shown in parentheses. The averages of the resampled images are much sharper and more recognisable than the averages of the raw images. This shows that the StaTN is successfully establishing correspondence between the images.
+
+Finally, in Figure \ref{fig:cat} we show results for a completely unsupervised dataset. Here, we train on 10k images from the CAT Dataset \cite{zhang2008cat}. These images have no identity labels so we use only the texture and regularisation losses. We initialise with the face network trained in the previous experiment and finetune. Again, the network learns to consistently fit a meaningful grid to each image and constructs a plausible appearance model.
+
+\newcommand{\averagesize}{2cm}
+\begin{figure}[!t]
+\centering
+\noindent\resizebox{\textwidth}{!}{
+\begin{tabular}{ccccccc}
+\includegraphics[height=\averagesize, clip=true]{idbasedtexture/stephen_hawking.png}&
+\includegraphics[height=\averagesize, clip=true]{idbasedtexture/alex_ferguson.png}&
+\includegraphics[height=\averagesize, clip=true]{idbasedtexture/oprah_winfrey.png}&
+\includegraphics[height=\averagesize, clip=true]{idbasedtexture/adriana_lima.png}&
+\includegraphics[height=\averagesize, clip=true]{idbasedtexture/alexander_graham_bell.png}&
+\includegraphics[height=\averagesize, clip=true]{idbasedtexture/george_w_bush.png}&
+\includegraphics[height=\averagesize, clip=true]{idbasedtexture/philip_seymour_hoffman.png}\\
+\includegraphics[height=\averagesize, clip=true]{idbasedtexture/stephen_hawking_40.png}&
+\includegraphics[height=\averagesize, clip=true]{idbasedtexture/alex_ferguson_49.png}&
+\includegraphics[height=\averagesize, clip=true]{idbasedtexture/oprah_winfrey_71.png}&
+\includegraphics[height=\averagesize, clip=true]{idbasedtexture/adriana_lima_72.png}&
+\includegraphics[height=\averagesize, clip=true]{idbasedtexture/alexander_graham_bell_79.png}&
+\includegraphics[height=\averagesize, clip=true]{idbasedtexture/george_w_bush_106.png}&
+\includegraphics[height=\averagesize, clip=true]{idbasedtexture/philip_seymour_hoffman_172.png}\\[-0.3em]
+
+\tiny{S. Hawking(40)}&\tiny{Alex Ferguson(49)}&\tiny{Oprah Winfrey(71)}&\tiny{Adriana Lima(72)}&\tiny{A.Graham Bell(79)}&\tiny{G.W. Bush(106)}&\tiny{P.S. Hoffman(172)}
+\end{tabular}
+}
+\caption{A set of averaged images per subject from the UMDFaces dataset \cite{bansal2016umdfaces}. 1st Row: Averaging raw face images of the same person. 2nd Row: Images that are obtained by applying the StaTN to multiple images of the same person. The number of images that are used for averaging is stated next to subject's name.}
+\label{fig:meanfaces}
+\end{figure}
+
+
+\begin{figure}[!t] \centering
+\noindent\resizebox{\textwidth}{!}{
+
+\begin{tabular}{cccccc}
+
+\includegraphics[height=2cm, clip=true]{cat/cat_shape.png}&
+\includegraphics[height=2cm, clip=true]{cat/im1.png}&
+\includegraphics[height=2cm, clip=true]{cat/im2.png}&
+\includegraphics[height=2cm, clip=true]{cat/im3.png}&
+\includegraphics[height=2cm, clip=true]{cat/im4.png}&
+\includegraphics[height=2cm, clip=true]{cat/im5.png}\\
+\includegraphics[height=2cm, clip=true]{cat/cat_texture.png}&
+\includegraphics[height=2cm, clip=true]{cat/res1.png}&
+\includegraphics[height=2cm, clip=true]{cat/res2.png}&
+\includegraphics[height=2cm, clip=true]{cat/res3.png}&
+\includegraphics[height=2cm, clip=true]{cat/res4.png}&
+\includegraphics[height=2cm, clip=true]{cat/res5.png}
+\end{tabular}
+
+}
+\caption{Transfer learning on the CAT Dataset \cite{zhang2008cat}. The first image of the first row shows the shape model with the mean texture. The other images in the first row illustrate the sparse grid fitting results. The first image of the second row shows the mean texture only.The other images in the second row illustrate the output of the bilinear sampler of our network.}
+\label{fig:cat}
+\end{figure}
+
+\section{Conclusions}
+
+We have presented a method that attempts to combine model and learning-based computer vision. By incorporating an explicit shape and appearance model along with a rigid transformation model, our StaTN network is able to explicitly learn dense, nonrigid correspondence. Moreover, the shape, appearance and pose parameters are interpretable and the shape and appearance models form components that can be reused in other networks or other settings. This reduces the ``black box'' nature of a CNN to some extent.
+
+Using a StaTN as part of a network that is learning to solve a task, e.g. with a classification loss, then the network learns a notion of correspondence that is optimal for that task. This may be revealing about what information is most important for solving a particular task. When the texture loss is used in conjunction with learning a task, then the network learns to trade off sampling more of the image (and potentially sampling useful contextual information in the background) against attending to more easily compressible objects in the image. When the texture loss is used on its own, the network seeks the most compressible object class present in the training images.
+
+The most obvious extension of our work would be to learn a 3D shape model and a 3D to 2D geometric projection model. This could be seen as extending work such as \cite{bas20173D,tewari2017mofa} by making the 3D model learnable. A 3D model allows 3D pose changes to be more efficiently modelled and occlusions to be dealt with explicitly, though this introduces a non-differentiable visibility function.
+
+\bibliographystyle{splncs}
+\begin{thebibliography}{10}
+
+\bibitem{jaderberg2015spatial}
+Jaderberg, M., Simonyan, K., Zisserman, A.,  et~al.:
+\newblock Spatial transformer networks.
+\newblock In: Proc. NIPS. (2015)  2017--2025
+
+\bibitem{cootes2001active}
+Cootes, T.F., Edwards, G.J., Taylor, C.J.:
+\newblock Active appearance models.
+\newblock IEEE Trans. Pattern Anal. Mach. Intell. \textbf{23}(6) (2001)
+  681--685
+
+\bibitem{blanz1999morphable}
+Blanz, V., Vetter, T.:
+\newblock A morphable model for the synthesis of 3d faces.
+\newblock In: Proc. SIGGRAPH. (1999)  187--194
+
+\bibitem{huang2012learning}
+Huang, G., Mattar, M., Lee, H., Learned-Miller, E.G.:
+\newblock Learning to align from scratch.
+\newblock In: Proc. NIPS. (2012)  764--772
+
+\bibitem{long2014convnets}
+Long, J.L., Zhang, N., Darrell, T.:
+\newblock Do convnets learn correspondence?
+\newblock In: Proc. NIPS. (2014)  1601--1609
+
+\bibitem{cashman2013shape}
+Cashman, T.J., Fitzgibbon, A.W.:
+\newblock What shape are dolphins? building {3D} morphable models from {2D}
+  images.
+\newblock IEEE Trans. Pattern Anal. Mach. Intell. \textbf{35}(1) (2013)
+  232--244
+
+\bibitem{antonakos2014automatic}
+Antonakos, E., Zafeiriou, S.:
+\newblock Automatic construction of deformable models in-the-wild.
+\newblock In: Proc. CVPR. (2014)  1813--1820
+
+\bibitem{kanazawa2016warpnet}
+Kanazawa, A., Jacobs, D.W., Chandraker, M.:
+\newblock Warpnet: Weakly supervised matching for single-view reconstruction.
+\newblock In: Proc. CVPR. (2016)  3253--3261
+
+\bibitem{rocco2017convolutional}
+Rocco, I., Arandjelovi{\'c}, R., Sivic, J.:
+\newblock Convolutional neural network architecture for geometric matching.
+\newblock arXiv preprint arXiv:1703.05593 (2017)
+
+\bibitem{thewlis2017unsupervised}
+Thewlis, J., Bilen, H., Vedaldi, A.:
+\newblock Unsupervised learning of object landmarks by factorized spatial
+  embeddings.
+\newblock arXiv preprint arXiv:1705.02193 (2017)
+
+\bibitem{thewlis2017unsupervised2}
+Thewlis, J., Bilen, H., Vedaldi, A.:
+\newblock Unsupervised object learning from dense equivariant image labelling.
+\newblock arXiv preprint arXiv:1706.02932 (2017)
+
+\bibitem{zhu2014recover}
+Zhu, Z., Luo, P., Wang, X., Tang, X.:
+\newblock Recover canonical-view faces in the wild with deep neural networks.
+\newblock arXiv preprint arXiv:1404.3543 (2014)
+
+\bibitem{ding2015multi}
+Ding, C., Xu, C., Tao, D.:
+\newblock Multi-task pose-invariant face recognition.
+\newblock IEEE Trans. Image Process. \textbf{24}(3) (2015)  980--993
+
+\bibitem{hassner2015effective}
+Hassner, T., Harel, S., Paz, E., Enbar, R.:
+\newblock Effective face frontalization in unconstrained images.
+\newblock In: Proc. CVPR. (2015)  4295--4304
+
+\bibitem{chang2017faceposenet}
+Chang, F., Tran, A.T., Hassner, T., Masi, I., Nevatia, R., Medioni, G.:
+\newblock Faceposenet: Making a case for landmark-free face alignment.
+\newblock In: Proc. ICCV Workshops. (2017)
+
+\bibitem{zhu2015high}
+Zhu, X., Lei, Z., Yan, J., Yi, D., Li, S.Z.:
+\newblock High-fidelity pose and expression normalization for face recognition
+  in the wild.
+\newblock In: Proc. CVPR. (2015)  787--796
+
+\bibitem{zhu2016face}
+Zhu, X., Lei, Z., Liu, X., Shi, H., Li, S.Z.:
+\newblock Face alignment across large poses: A 3d solution.
+\newblock In: Proc. CVPR. (2016)  146--155
+
+\bibitem{jourabloo2016large}
+Jourabloo, A., Liu, X.:
+\newblock Large-pose face alignment via cnn-based dense 3d model fitting.
+\newblock In: Proc. CVPR. (2016)  4188--4196
+
+\bibitem{ranjan2017hyperface}
+Ranjan, R., Patel, V.M., Chellappa, R.:
+\newblock Hyperface: A deep multi-task learning framework for face detection,
+  landmark localization, pose estimation, and gender recognition.
+\newblock IEEE Trans. Pattern Anal. Mach. Intell. (2017)
+
+\bibitem{ranjan2017all}
+Ranjan, R., Sankaranarayanan, S., Castillo, C.D., Chellappa, R.:
+\newblock An all-in-one convolutional neural network for face analysis.
+\newblock In: Proc. FG. (2017)  17--24
+
+\bibitem{choy2016universal}
+Choy, C.B., Gwak, J., Savarese, S., Chandraker, M.:
+\newblock Universal correspondence network.
+\newblock In: Proc. NIPS. (2016)  2414--2422
+
+\bibitem{li2017dense}
+Li, J., Chen, Y., Cai, L., Davidson, I., Ji, S.:
+\newblock Dense transformer networks.
+\newblock arXiv preprint arXiv:1705.08881 (2017)
+
+\bibitem{o2016radio}
+O'Shea, T.J., Pemula, L., Batra, D., Clancy, T.C.:
+\newblock Radio transformer networks: Attention models for learning to
+  synchronize in wireless systems.
+\newblock In: Proc. ACSSC. (2016)  662--666
+
+\bibitem{wu2017recursive}
+Wu, W., Kan, M., Liu, X., Yang, Y., Shan, S., Chen, X.:
+\newblock Recursive spatial transformer ({REST}) for alignment-free face
+  recognition.
+\newblock In: Proc. CVPR. (2017)  3792--3800
+
+\bibitem{yu2016deep}
+Yu, X., Zhou, F., Chandraker, M.:
+\newblock Deep deformation network for object landmark localization.
+\newblock In: Proc. ECCV. (2016)  52--70
+
+\bibitem{dai2017deformable}
+Dai, J., Qi, H., Xiong, Y., Li, Y., Zhang, G., Hu, H., Wei, Y.:
+\newblock Deformable convolutional networks.
+\newblock arXiv preprint arXiv:1703.06211 (2017)
+
+\bibitem{bas20173D}
+Bas, A., Huber, P., Smith, W.A.P., Awais, M., Kittler, J.:
+\newblock 3d morphable models as spatial transformer networks.
+\newblock In: Proc. ICCV Workshop on Geometry Meets Deep Learning. (2017)
+  904--912
+
+\bibitem{zhong2017towards}
+Zhong, Y., Chen, J., Huang, B.:
+\newblock Towards end-to-end face recognition through alignment learning.
+\newblock arXiv preprint arXiv:1701.07174 (2017)
+
+\bibitem{harandi2016generalized}
+Harandi, M., Fernando, B.:
+\newblock Generalized backpropagation, {\'e}tude de cas: Orthogonality.
+\newblock arXiv preprint arXiv:1611.05927 (2016)
+
+\bibitem{davies2002minimum}
+Davies, R.H., Twining, C.J., Cootes, T.F., Waterton, J.C., Taylor, C.J.:
+\newblock A minimum description length approach to statistical shape modeling.
+\newblock IEEE Trans. Med. Imag. \textbf{21}(5) (2002)  525--537
+
+\bibitem{bansal2016umdfaces}
+Bansal, A., Nanduri, A., Castillo, C.D., Ranjan, R., Chellappa, R.:
+\newblock Umdfaces: An annotated face dataset for training deep networks.
+\newblock arXiv preprint arXiv:1611.01484v2 (2016)
+
+\bibitem{zhang2008cat}
+Zhang, W., Sun, J., Tang, X.:
+\newblock Cat head detection-how to effectively exploit shape and texture
+  features.
+\newblock In: Proc. ECCV. (2008)  802--816
+
+\bibitem{tewari2017mofa}
+Tewari, A., Zollh{\"o}fer, M., Kim, H., Garrido, P., Bernard, F.:
+\newblock{MoFA}: Model-based deep convolutional face autoencoder for
+  unsupervised monocular reconstruction.
+\newblock In: Proc. ICCV. (2017)
+
+\end{thebibliography}
+%\bibliography{main}
+\end{document}

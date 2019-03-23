@@ -1,0 +1,979 @@
+\documentclass[10pt,twocolumn,letterpaper]{article}
+
+\usepackage{cvpr}
+\usepackage{times}
+\usepackage{epsfig}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{amssymb}
+
+% Include other packages here, before hyperref.
+
+% If you comment hyperref and then uncomment it, you should delete
+% egpaper.aux before re-running latex.  (Or just hit 'q' on the first latex
+% run, let it finish, and you should be clear).
+\usepackage[pagebackref=true,breaklinks=true,letterpaper=true,colorlinks,bookmarks=false]{hyperref}
+
+ \cvprfinalcopy % *** Uncomment this line for the final submission
+
+\def\cvprPaperID{1638} % *** Enter the CVPR Paper ID here
+\def\httilde{\mbox{\tt\raisebox{-.5ex}{\symbol{126}}}}
+
+% Pages are numbered in submission mode, and unnumbered in camera-ready
+\ifcvprfinal\pagestyle{empty}\fi
+\begin{document}
+
+%%%%%%%%% TITLE
+\title{DeMeshNet: Blind Face Inpainting for Deep MeshFace Verification}
+
+\author{Shu Zhang\quad Ran He\quad Tieniu Tan\\
+National Laboratory of Pattern Recognition, CASIA\\
+Center for Research on Intelligent Perception and Computing, CASIA\\
+{\tt\small \{shu.zhang,rhe,tnt\}@nlpr.ia.ac.cn}
+% For a paper whose authors are all at the same institution,
+% omit the following lines up until the closing ``}''.
+% Additional authors and addresses can be added with ``\and'',
+% just like the second author.
+% To save space, use either the email address or home page, not both
+%\and
+%Ran He\\
+%Institution2\\
+%First line of institution2 address\\
+%{\tt\small secondauthor@i2.org}
+%\and
+%Tieniu Tan\\
+%Institution2\\
+%First line of institution2 address\\
+%{\tt\small secondauthor@i2.org}
+}
+
+\maketitle
+%\thispagestyle{empty}
+
+%%%%%%%%% ABSTRACT
+\begin{abstract}
+MeshFace photos have been widely used in many Chinese business organizations to protect ID face photos from being misused. The occlusions incurred by random meshes severely degenerate the performance of face verification systems, which raises the MeshFace verification problem between MeshFace and daily photos. Previous methods cast this problem as a typical low-level vision problem, \ie blind inpainting. They recover perceptually pleasing clear ID photos from MeshFaces by enforcing pixel level similarity between the recovered ID images and the ground-truth clear ID images and then perform face verification on them.
+
+Essentially, face verification is conducted on a compact feature space rather than the image pixel space. Therefore, this paper argues that pixel level similarity and feature level similarity jointly offer the key to improve the verification performance. Based on this insight, we offer a novel feature oriented blind face inpainting framework. Specifically, we implement this by establishing a novel DeMeshNet, which consists of three parts. The first part addresses blind inpainting of the MeshFaces by implicitly exploiting extra supervision from the occlusion position to enforce pixel level similarity. The second part explicitly enforces a feature level similarity in the compact feature space, which can explore informative supervision from the feature space to produce better inpainting results for verification. The last part copes with face alignment within the net via a customized spatial transformer module when extracting deep facial features. All the three parts are implemented within an end-to-end network that facilitates efficient optimization. Extensive experiments on two MeshFace datasets demonstrate the effectiveness of the proposed DeMeshNet as well as the insight of this paper.
+\end{abstract}
+
+ %We show that this problem can be well solved with a convolutional neural network (CNN) architecture (DeMeshNet) that consists of three parts. The first part addresses blind inpainting of the MeshFaces by implicitly exploiting extra supervision from the occlusion position to enforce pixel level similarity. The second part explicitly enforces a feature level similarity in the compact feature space, which can explore a better inpainting output for verification. The last part copes with face alignment within the net via a customized spatial transformer module when extracting deep facial features. All the three parts are implemented within an end-to-end network that facilitates efficient optimization. We conduct extensive experiments on two MeshFace datasets, which have demonstrated the effectiveness of the proposed DeMeshNet as well as the insight of this paper.
+
+
+
+%\setcounter{secnumdepth}{2}
+\section{Introduction}\label{sec:intro}
+
+%Face verification between ID photos and daily photos (FVBID) is the task where probe face images acquired from unconstrained environment (e.g. from daily life) are compared against gallery face images from the identity card. This technique is more readily applicable than traditional face verification as it does not require face images to be registered in advance, thus enabling an on-sight verification process. Due to its convenience, this technology is widely used in many application scenarios, such as automated custom control and VIP recognition in commercial banks.
+
+
+% and is able to replace human for ID check.
+% and conference registration with face recognition.
+
+%However, the domain shift from ID to daily photos poses more difficulty than normal unconstrained face verification problems. Fortunately, thanks to the rapid advancement in deep learning based face verification techniques~\cite{taigman2014deepface}\cite{sun2014deep}\cite{schroff2015facenet} and the easy access to more training data, feature representations for those two domains are more easily transferred and we have seen remarkable improvements in the performance of FVBID~\cite{zhou2015naive}.
+
+%taigman2014deepface,sun2014deep,
+
+Benefitting from recent advancements in deep representation learning, there have been remarkable improvements in deep face recognition (verification in particular)~\cite{schroff2015facenet,sun2014deep,taigman2014deepface}. In real life applications, face verification between ID photos and daily photos (FVBID)~\cite{zhou2015naive} is gaining traction because it uses a face image from an ID photo as gallery and thus does not require the probe to be registred in advance.
+
+%~\cite{Kemelmacher-Shlizerman_2016_CVPR}
+
+%Face verification between ID photos and daily photos (FVBID) is the task of matching a face image in an individual's identity card to his face images acquired in unconstrained environment (e.g. from daily life). Benefitting from the recent advancements in deep face representation~\cite{taigman2014deepface}\cite{sun2014deep}\cite{schroff2015facenet}, there have been remarkable improvements in the performance of FVBID~\cite{zhou2015naive}. Because FVBID does not require face images to be registered in advance, it enables an on-sight verification process, which makes it more applicable than traditional face verification techniques.
+
+
+\begin{figure}
+  \centering
+    \includegraphics[scale=0.23]{fig0_1.png}
+    \caption{MeshFaces (first row) refer to the ID photos corrupted by randomly generated mesh-like lines or watermarks. The corruptions significantly degenerate the performance of facial landmark detection and facial feature extraction, thus leading to poor verification accuracy.}
+    \label{fig:spn} %% label for entire figure
+\end{figure}
+% whenever a ID is checked with face image   this task is applicable
+
+%This paper aims to address a specific problem called MeshFace verification that originates from FVBID. MeshFaces refers to ID photos that are corrupted by mesh-like lines or watermarks for the protection of personal privacy. These photos are widely used in business organizations (banks, customhouse, hotels etc) for person identification purpose. As shown in Fig~\ref{fig:spn}, although those mesh-like corruptions may not affect human brain in deciding a person's identity, it is almost catastrophic for face recognition systems as we use today. Till now, face detection and recognition under severe occlusions~\cite{Burgos-Artizzu_2013_ICCV}~\cite{4483511} are still open questions and there are a lack of effective models to tackle them. Therefore, this raises the problem of MeshFace verification between MeshFace and daily photos. In the first work~\cite{7550058} that tries to address this problem, the authors opt to first recover clear ID photos before recognition as opposed to directly conducting recognition on the MeshFace. They refer to this recover process for MeshFace as \textit{blind face inpainting} as the position of corruptions is unknown during testing time.
+%And, it is also this work's purpose to investigate this newly proposed blind face inpainting problem and propose a novel method for better verification between MeshFace and daily photos.
+
+
+When FVBID is applied to real-world scenarios, such as automated custom control and VIP recognition in commercial banks, the ID photo in an identity card may potentially be misused or illegally distributed. Therefore, ID photos are often deliberately corrupted by mesh-like lines or watermarks for privacy protection when used by some business organizations, \eg banks and hotels. For convenience, we denote this type of corrupted ID photo as MeshFace. As shown in Fig.~\ref{fig:spn}, MeshFaces incur catastrophic influence to face recognition systems~\cite{Burgos-Artizzu_2013_ICCV,he}. Directly verifying MeshFaces against daily photos leads to very poor accuracy~\cite{7550058}. Therefore, these corruptions raise a novel and challenging problem called MeshFace verification which deals with face verification between MeshFaces and daily photos.
+
+Some efforts have been made to address this challenging problem. Zhang et al.~\cite{7550058} propose a multi-task residual learning CNN for this problem. They propose to learn a non-linear transformation with SRCNN~\cite{dong2014learning} based architecture to recover clear ID photos from MeshFaces. Then, the recovered clear ID photos are used for face verification. They treat the recovery of clear ID photos from MeshFaces as \textit{blind face inpainting} because the position of corruptions is unknown during testing phase. In a related vein of research, many contemporary works~\cite{mao2016image,Pathak_2016_CVPR,ren2015shepard,xie2012image} have shown that CNN is very effective in solving hole filling (non-blind inpainting) problems~\cite{criminisi2004region} because this data-driven learning method can exploit the structure of natural images to predict occluded parts.
+\begin{figure}
+  \centering
+    \includegraphics[scale=0.23]{fignew3.png}
+    \caption{%Illustration of the relationship between pixel level distance and feature level distance. The red sample is the ground-truth clear ID photo. The black sample is the MeshFace, while the purple, yellow and green ones are its different recovered versions. Smaller pixel level distance doesn't necessarily means a smaller feature level distance, \eg the green and yellow sample.
+Recovered ID with higher PSNR may be further away from the ground-truth clear ID in the compact deep feature space. For instance, the green and yellow sample. Best viewed in color.}
+    \label{fig:insight} %% label for entire figure
+\end{figure}
+
+Improved verification performance is observed after blind face inpainting in~\cite{7550058} because using an occlusion free image will greatly improve the accuracy of face detection and alignment. However, in their work, the performance gap between using their inpainted ID and the clear ID is still very large. On one hand, this is because SRCNN is less powerful in modeling corruption distributions and recovering the exact image content. As a result, the difference in image content between the recovered ID photos and the ground-truth clear ID photos are too large (as illustrated by the red and the purple sample in Fig.\ref{fig:insight}).
+
+\begin{figure*}
+  \centering
+    \includegraphics[scale=0.43]{figover1.png}
+    \caption{Conceptual diagram of DeMeshNet. Black solid lines stand for the training phase and red solid lines represent the testing phase. Note that the corruption mask and clear ID are only used in the training phase to provide ground-truth for the pixel and feature level loss. Feature extraction model is pre-trained and has fixed parameters during training. In the testing phase, DeMeshNet takes a MeshFace as input and produce an inpainted photo with the learned deep FCN.}
+    \label{fig:overview} %% label for entire figure
+\end{figure*}
+
+
+
+%Although both are highly ill-posed inverse problems, blind face inpainting is much more challenging than hole filling. This is because the positions of corruptions are unknown in advance, and the corruption patterns in MeshFaces are rather diverse in shape, orientation and pixel values. Therefore, it's imperative to adopt a more powerful non-linear model to model the distribution of corruption and finally inpaint them accurately.
+
+
+
+%On the other hand, existing works often assume that using recovered ID photos with higher PSNR are more likely to achieve better verification performance~\cite{7550058}.
+%Therefore, they only enforce the pixel level similarity when learning a blind face inpainting network.
+
+%On the other hand, recovered ID photos with smaller PSNR doesn't necessarily leads to a better verification performance because the face similarity is compared in a compact feature space rather the image pixel space.
+
+On the other hand, existing works often assume that using recovered ID photos with higher PSNR are more likely to achieve better verification performance~\cite{7550058}. But in fact, face similarity is compared in a compact feature space rather the image pixel space. Moreover, it has been shown that CNN can be potentially `fooled' by adding even a tiny amount of noise to the original input~\cite{goodfellow2014explaining,nguyen2015deep,szegedy2013intriguing}. That is, when facial features are extracted by a CNN, two perceptually indistinguishable face images (\eg the ground-truth clear ID and its recovered version) may still have very large feature level differences (as shown by the green and yellow sample in Fig.\ref{fig:insight}). It is a common belief that a large intra-class feature distance will generally deteriorate face verification performance. Therefore, this suggests that treating blind face inpainting as a typical low-level vision problem by only enforcing the pixel level similarity can hardly guarantee an improvement in verification performance.
+
+
+%This paper  Specifically, DeMeshNet is trained on a large scale dataset of  MeshFace/clear ID photo pairs to learn a non-linear transformation to recover clear ID photos from MeshFaces. Then, the outputs of DeMeshNet, which are the recovered clear ID photos (denoted as \textit{inpainting result} in Fig.~\ref{fig:overview}) can be used for face verification against the daily photos.
+
+To address the aforementioned problems, we present DeMeshNet to take verification performance into account when dealing with the blind face inpainting problem. DeMeshNet is trained on a large scale dataset of  MeshFace/clear ID photo pairs to learn a non-linear transformation to recover clear ID photos from MeshFaces. Note that DeMeshNet aims to improve the MeshFace verification performance rather than simply to recover perceptually pleasing clear ID photos. Therefore, we refer to DeMeshNet as a feature oriented blind face inpainting framework. We briefly introduce each part of the DeMeshNet and our contributions in the following paragraphs.
+%The proposed framework is composed of three parts, which are carefully designed to address the aforementioned challenges. %The DeMeshNet considerably outperforms previous method~\cite{7550058} in the application of MeshFace verification.
+%Specifically, it is trained by maintaining not only the pixel level similarity but also the similarity in the feature space as computed by a pre-trained CNN for face feature extraction.
+
+
+
+%//////~\cite{yeh2016semantic} introduce Generative Adversarial Networks in their learning process to capture the data distribution and generate perceptually pleasing inpainting results given the position of corruptions(which make them the non-blind inpainting problem or hole filling problem).
+
+
+
+%Since our objective in this paper should be improving the verification accuracy, modeling our problem at hand as a typical inpainting problem as in~\cite{7550058} is not good enough. Therefore we extend the definition of blind face inpainting problem in this paper. And we argue that extended `blind face inpainting' problem distinguishes from aforementioned works in at least two aspects. Firstly, unlike traditional inpainting problem whose sole purpose is to recover perceptually pleasing clear image, the blind face inpainting algorithm should be tailored to recover clear photos that would help to improve the recognition accuracy; Secondly, since the corruption pattern is rather diverse in shape, orientation and pixel values, the blind face inpainting task is much harder than ordinary non-blind inpainting~\cite{criminisi2004region} problems.
+
+In the first part, we enforce the \textit{pixel level similarity} to explore the structure of face images so as to recover uncorrupted ID photos from MeshFaces. Specifically, we propose to adopt a fully convolutional network (FCN)~\cite{long2015fully} with a weighted Euclidean loss to minimize the pixel differences of the ground-truth clear ID/recovered ID photo pairs. Extra supervision from corruption positions is further exploited to accurately model the corruption distribution.
+
+
+
+
+%Photos inpainted through minimizing the Euclidean loss are perceptually indistinguishable to the ground-truth as the difference between them are very small in L2 norm. However, as shown in previous work~\cite{szegedy2013intriguing}\cite{goodfellow2014explaining}\cite{nguyen2015deep}, CNN can be easily fooled by adding even perceptually indistinguishable noise. This means that when face features are extracted by a CNN, two perceptually indistinguishable face images can be classified into different identities due to the slight difference in the pixel.
+
+In the second part, we enforce a \textit{feature level similarity} between the ground-truth clear ID photo and the recovered ID photo pairs in a compact deep feature space. This feature space is spanned by a pre-trained CNN, and distance in it directly corresponds to a measure of face similarity. This part will force the inpainted image to have a smaller distance to the ground-truth clear ID in the deep feature space, which will in turn facilitate accurate verification. Moreover, we propose to measure the feature level similarity with the reverse Huber loss function so that the feature level similarity can be more efficiently optimized when the differences are very small.
+
+%In the second part, we explicitly enforce the similarity between the ground-truth clear ID/recovered clear ID photo pairs in the compact feature space (which is spanned by a pre-trained feature extraction CNN) where distances directly correspond to a measure of face similarity. Drawing supervision from this high-level semantic space will guide the content of an inpainted image to favor a verification friendly distribution and thus have a smaller feature distance with the ground-truth clear ID in the compact deep feature space. For better optimization, we propose to measure the feature level similarity with the reverse Huber loss function.
+%prevent the pre-trained feature extraction CNN from being `fooled'.
+ %Since verification is conducted in the compact face feature space spanned by a pre-trained feature extraction CNN, this can potentially make the recovered ID have better verification accuracy.
+%we encourage the recovered clear face image to have similar high-level feature representation with the ground-truth clear ID image.
+
+
+
+
+
+
+%This would serve to help us generate feature level similar inpainting results in addition to visual similar ones.
+%Minimizing image feature representation extracted from pre-trained CNN has also been applied to network inversion~\cite{zhmoginov2016inverting}, texture synthesis~\cite{guccluturk2016convolutional} and super-resolution~\cite{johnson2016perceptual}, where perceptually pleasing result is obtained. In the work, we investigate its ability in generating feature level similar image for accurate verification of MeshFace.
+
+%///(or In our work, we have shown that this 'feature loss' is also effective for improving recognition accuracy with corrupted photos.)
+
+%Previous work~\cite{szegedy2013intriguing}\cite{szegedy2013intriguing}\cite{goodfellow2014explaining} have shown that CNN can be easily fooled. Adding even perceptually indistinguishable noise (very small in L2 norm) to the original image would lead to a wrong classification results. Therefore, minimizing the pixel difference between the recovered photo and the clear ground truth does not guarantee a minimized distance in the face feature embedding formed by a pre-trained CNN. To improve the recognition accuracy,
+
+%The third part makes the DeMeshNet alignment aware for the purpose of accurate feature extraction.
+
+%Face alignment needs to be realized within the network for minimizing the feature level loss in an end-to-end fashion.
+%Therefore, in the third part, we employ a customized spatial transformer module~\cite{jaderberg2015spatial} to align and crop the face region for accurate feature representation within the network.
+
+In the third part, we employ a \textit{customized spatial transformer module}~\cite{jaderberg2015spatial} to align and crop the face region for accurate feature extraction within the network. It is essential to take alignment into account because the MeshFace which is the input of DeMeshNet and the aligned face which is the input of the feature extraction sub-net are different in sizes, scales and orientations (as shown in Fig.~\ref{fig:overview}).
+
+
+All the three parts are implemented within an end-to-end network that facilitates efficient optimization with gradient back propagation. Extensive experimental results on two MeshFace datasets demonstrate that DeMeshNet achieves the best verification accuracy and outperforms previous work by a large margin.
+%Overall, as demonstrated by the experimental results, the proposed deep architecture can achieve superior recognition accuracy to previous work at the cost of some visual effects.
+%Furthermore, we also thoroughly evaluate the influence of spatial transformer module and the pixel vs feature level loss in order to analyze their benefits.
+Furthermore, we thoroughly evaluate different configurations of DeMeshNet to gain insight into the factors for such significant improvements.
+
+
+%As a pre-process routine, face images are aligned and cropped to fixed size before feature extraction.
+%Therefore, it's not optimal to directly input the corrupted ID photos which come in a different scale and are not strictly aligned to the pre-trained feature extraction network for feature representation.
+%Therefore, the similarity transformation and crop implementation should be incorporated to the network to enable end to end training of the combined pixel level and feature level loss.
+%In this work, we employ a spatial transformer module~\cite{jaderberg2015spatial} within the network to align and rescale the face region for high-level feature representation.
+%The introduction of such module enable us to train the combined pixel level and feature level loss end to end.
+
+
+%Our main contributions can be summarized as follows.
+%\begin{itemize}
+
+%\item This paper addresses a novel problem that originates from the FVBID task, i.e. the MeshFace verification problem. Specifically, we resort to blind inpainting algorithm to firstly recover a clear version of the MeshFace before further verification using deep CNN based features.
+
+%\item We present a novel end-to-end FCN architecture, named DeMeshNet, to blindly inpaint the MeshFace. Compared to previous work, DeMeshNet explicitly takes feature level similarity into account to train a blind inpainting model that would benefit performance of MeshFace verification. Weighted Euclidean loss and reverse Huber loss are respectively proposed for measuring the pixel and feature level similarity. Moreover, face alignment are conducted within the network for accurate feature representation with a spatial transformer module.
+
+
+%\item MeshFace verification experiments are conducted on two MeshFace datasets. Coupled with a well-trained face feature extraction network for FVBID tasks, the proposed DeMeshNet achieves the best verification accuracy and outperforms previous work by a large margin.
+
+%\item We present a novel FCN architecture, the DeMeshNet, for blind face inpainting. The proposed network consists of a series of symmetric down-sampling and up-sampling layers, which is able to increase the capacity of the network and save computational cost at the same time.
+
+%\item We redefine \textit{blind face inpainting} as a specific problem for FVBID, which aims to recover a clear photo that is optimal for face verification. To this end, we propose a novel training objective that combines the pixel level loss and the feature level loss to fight against possible confusion rooted in the easily fooled nature of CNN.
+
+%\item To allow for feature extraction of sub-regions of the input image to the blind face inpainting network, we introduce the spatial transformer module to align and rescale the input face image within the network and enable an end to end training of the proposed network architecture.
+%\end{itemize}
+
+
+%\section{Related Work}
+
+%Not so many researches specifically focus on the problem of blind face inpainting for MeshFace verification. However, there is a great amount of literature and research that addresses the problem of blind image inpainting~\cite{bertalmio2000image}. The goal of blind image inpainting is to recover a semantically plausible and visually pleasing image from a image with unknown corruption patterns. Typical applications include text removal~\cite{lee2003automatic}, rain removal~\cite{Li_2016_CVPR} and image de-fencing~\cite{Yi_2016_CVPR}.
+
+
+
+
+
+
+
+
+
+%\setcounter{secnumdepth}{2}
+\section{Approach}
+
+
+
+\subsection{Overview}
+In this section, we present an overview of the proposed DeMeshNet. We cast the proposed feature oriented blind face inpainting problem as a dense regression problem, which aims to regress a perceptually pleasing and verification favorable clear ID photo from a MeshFace $X$. For convenience, we refer to the ground-truth clear ID photo as the \textit{target}, termed as $Y$  and the recovered ID photo from our blind face inpainting model $\psi$ as the \textit{prediction}, termed as $\psi ({X})$. The prediction will be used for face verification against clear daily photos.
+
+We model the highly non-linear function for dense regression as a FCN as illustrated in part A of Fig.~\ref{fig:overview}. Part B shows the customized spatial transformer module. The following part is a pre-trained CNN which is utilized to compute the feature representation of the aligned face region. It should be noted that parameters in both the spatial transformer module and the pre-trained CNN are fixed during training. The learnable parameters in the FCN are optimized through minimizing a unified loss function that jointly models the pixel and feature level similarities between the prediction and the target pairs. No identity information is needed to train such a blind inpainting network.
+
+
+The pixel level loss helps to obtain perceptually pleasing inpainting results and serves as a means to capture the distribution difference between actual face texture and mesh-like corruptions. And the feature level loss explores supervision in a compact feature space to provide regularizations to the network training. Thus, the network's prediction will not only have similar appearance but also have similar feature representation to that of the target. Specifically, we develop a weighted Euclidean loss to model the pixel level similarity and employ a reverse Huber function~\cite{laina2016deeper} to characterize the feature level loss on the spatial transformed face region. Combining the pixel level loss and the spatial transformed feature level loss, we define the unified loss function for DeMeshNet as follows:
+\begin{equation}
+\begin{split}
+&{L_i} = l_{pixel} + {l_{feature}} = \\
+&||\psi ({X_i} ) - {Y_i}||_F^2 + \lambda_1 ||{M_i} \odot (\psi ({X_i} ) - {Y_i})||_F^2+\\
+ &\lambda_2\sum\limits_{j=1}^2 {RH({\phi _j}(\psi ({ST(X_i)})) - {\phi _j}({ST(Y_i)})} {\kern 1pt} {\kern 1pt} )
+\end{split}\label{eq:first}
+\end{equation}
+where $ST$ denotes the spatial transformation implementation that samples an aligned $128\times 128$ face region from the original input solely based on the positions of facial
+s, $RH$ is the reverse Huber function, $\lambda_1$ and $\lambda_2$ are the balance parameters which are empirically set to $1$ throughout the paper. We postpone explanations of other symbols to later sections when we meet them.
+
+For simplicity, we omit the regularization term on the parameters of FCN (weight decay) in Equation~\ref{eq:first}, which is used to reduce overfitting when optimizing our network. The objective function can be efficiently optimized by gradient back propagation in an end-to-end manner. We will elaborate each of the three parts in the following subsections.
+
+
+%We propose a blind inpainting algorithm that simultaneously recovers perceptually pleasing clear ID photos from MeshFaces and improves the accuracy for MeshFace verification. This section gives details of the proposed DeMeshNet, and shows how to model feature and pixel level loss and combine them into a unified optimization framework to boost the verification performance.
+
+
+%The proposed DeMeshNet takes a MeshFace as input and output a recovered clear photo for accurate face verification.
+
+%\subsection{Overview and Problem Formulation}
+
+%The proposed DeMeshNet takes a MeshFace $X$ as input and output a recovered clear photo. The recovered photo will be used for face verification against clear daily photos. For convenience, we will refer to the ground-truth clear ID photo as the \textit{target}, termed as $Y$ the recovered ID photo from our model $\psi$ as the \textit{prediction}, termed as $\psi ({X})$. We formulate the DeMeshNet by enforcing the similarity in both the pixel space and feature space. Fig~\ref{fig:overview} illustrates the learning framework of the proposed DeMeshNet which consists of three parts: the pixel level regression network, the feature level regression network and the spatial transformer module for face alignment. Specifically, we develop a weighted Euclidean loss term to model the pixel level regression task by exploiting the position of the corruption and employ a reverse Huber function to minimize the spatial transformed feature level loss.
+%Combining the pixel level regression loss and the spatial transformed feature level loss, we define the final loss function for our blind face inpainting model as follows:
+
+
+%where $ST$ denote the spatial transformation implementation that sample an aligned $128\times 128$ face region from the original input, $\lambda_1$ and $\lambda_2$ are the balance parameters which are empirically set to $1$ in our experiment. This objective function can be efficiently solved by gradient back propagation.
+%We will elaborate each part in the following subsections.
+
+
+
+
+\subsection{Pixel Level Regression Network}
+
+\subsubsection{Pixel Level Loss}Blind face inpainting is naturally characterized as a pixel-wise regression problem. In the first part of DeMeshNet, it learns a highly non-linear transformation by optimizing a well-designed pixel level loss. For blind face inpainting, although positions of the corruption are not provided during the testing phase, we can still make use of this information when training DeMeshNet. Specifically, we propose to implicitly exploit this extra supervision by introducing a weighted Euclidean loss function as below:
+\begin{equation}{l_{pixel}} =||\psi ({X_i} ) - {Y_i}||_F^2 + \lambda ||{M_i} \odot (\psi ({X_i} ) - {Y_i})||_F^2
+\end{equation}
+
+where $X_i$, $Y_i$ and $\psi ({X_i})$ are a corrupted input, target and prediction, respectively. $M_i$ is the binary mask with a value of $1$ indicating the pixel is corrupted and a value of $0$ otherwise. $\odot$ is the element-wise product operation. Therefore, the second term in the loss function only measures the Euclidean loss on corrupted areas, emphasizing losses on those areas with a weighting parameter $\lambda$. This loss function helps the network to learn the distributions of corrupted pixels better by exploiting extra supervision from the corruption positions. Experimental results demonstrate that it also helps to generate predictions with higher PSNR.
+
+
+\subsubsection{Network Architecture} Since FCN has achieved outstanding performance in dense prediction tasks like depth prediction~\cite{eigen2014depth} and semantic segmentation~\cite{long2015fully}, it motivates us to use FCN as the non-linear function to improve the blind face inpainting performance.
+
+The main difference between FCN and the architecture in~\cite{7550058} is the introduction of down-sampling and up-sampling layers in FCN. This simple adjustment has enabled FCN to admit much deeper layers and to expand the receptive fields with the same amount of computational cost. The expanded receptive fields are critical to blind inpainting as it can enclose more contextual information for identifying the corrupted areas.
+
+
+In this work, we use the network architecture of SegNet as proposed in~\cite{badrinarayanan2015segnet}.
+%A VGG-16 Net~\cite{simonyan2014very} is used in the front end of our network, unpooling and convolutional layers with ReLU nonlinearities are symmetrically concatenated to the bottleneck layer (output of conv53) to progressively upsample the feature maps to its original size.
+ It is feasible to adopt other architectures such as ResidualNet~\cite{He_2016_CVPR} and Deconvolution Network~\cite{Noh_2015_ICCV}, but this is beyond the scope of this paper. The input and output to the network are MeshFaces and clear ID photos respectively. Gray scale images of size $220 \times 178$ are used for input and output throughout the paper.
+
+
+
+
+
+
+\subsection{Feature Level Regression Network}
+%\subsection{Pixel-wise Regression Network}
+\subsubsection{Feature Level Loss} As aforementioned in Section~\ref{sec:intro}, images with very small Euclidean distance may have large feature distance. This problem is raised in~\cite{szegedy2013intriguing} and has been shown to severely deteriorate classification performance because of the enlarged intra-class feature distance. In fact, the enlarged intra-class feature distance can also influence the verification task at hand. To improve the verification performance, it won't be enough to only enforce pixel level similarity. % when the face features are extracted with a CNN. %still be misclassified into totally different categories by CNN~\cite{szegedy2013intriguing}.
+Therefore, in the second part, we explicitly enforce the target and the prediction to have a small distance in the compact feature space computed by the pre-trained CNN $\phi$.
+
+Let $\phi _j(\psi(X_i))$ be the activations of the $j$th layer of the pre-trained face model $\phi$. We intend to improve the verification performance by minimizing the residual $r = {\phi (\psi ({x_i})) - \phi ({y_i})}$ at each position of an image. To efficiently back-propagate the errors when the residual is very small, we employ the reverse Huber loss function~\cite{laina2016deeper} to measure the feature level difference, its formulation is:
+\begin{equation}
+RH(r) = \left\{ \begin{array}{l}
+\left| r \right| \ \ \ \ \ \ \ \ \  \left| r \right| > c\\
+\frac{{r^2 + c^2}}{{2c}}  \ \ \ \ \left| r \right| \le c
+\end{array} \right.
+\end{equation}
+
+
+
+The reverse Huber loss is equivalent to L1 norm when the residual $r$ is in the interval of $[-c,c]$ and equals to a transformed L2 norm otherwise. This loss experimentally works better than L2 norm.
+% The L2 norm is transformed with some constants to make the loss function continuous and first order differentiable at the turning point $\left|c\right|$.
+ Note that when $c$ is smaller than $1$, the derivative of the L1 norm is greater than that of the L2 norm, which will speed up error back-propagation when the residual is very tiny. Like in~\cite{laina2016deeper}, we use a dynamic threshold for $c$. That is, in each batch-minimization step, $c$ is set to be at $20\%$ of maximum residual in that batch.
+
+
+
+
+
+Since our objective is to improve verification performance, we impose the reverse Huber loss on the output of $eltwise\_6$ in the pre-trained model $\phi$, which is a $256$-dim feature vector used for similarity comparison. Drawing inspirations from~\cite{johnson2016perceptual}, where feature loss is used for super-resolution, we also impose the reverse Huber loss on the early layers ($conv2$ in our case) of the pre-trained face model $\phi$ to include deeper supervision~\cite{lee2014deeply}. Therefore, our final loss function for feature level regression is:
+\begin{equation}{l_{feature}} = \sum\limits_{j=1}^2 {RH({\phi _j}(\psi ({X_i})) - {\phi _j}({Y_i})} {\kern 1pt} {\kern 1pt} )
+\end{equation}
+
+
+Feature loss has recently been considered in the literature of super-resolution and sketch inversion for better visual performance~\cite{guccluturk2016convolutional,johnson2016perceptual,LedigTHCATTWS16}. But it should be noted that in this paper, the feature level loss is proposed from a totally different perspective. Instead of pursing a perceptually pleasing image transformation results, we want to deal with the large intra-class feature distance problem and improve verification performance.
+
+
+\begin{figure}
+  \centering
+    \includegraphics[scale=0.23]{fig2_2.png}
+    \caption{Schematic architecture for face feature extraction. It uses Max-Feature-Map nonlinearities instead of ReLU.}
+    \label{fig:face} %% label for entire figure
+\end{figure}
+
+%But the feature level loss is proposed in this paper to address the large intra-class feature distance problem to improve the verification performance.
+
+\subsubsection{Pre-trained CNN for Face Feature Extraction} Both training DeMeshNet and evaluate the verification performance need a pre-trained CNN to compute the facial features for face images. We use the architecture proposed in~\cite{wu2015lightened} for facial feature extraction because it is computationally efficient in both time and space. Fig.~\ref{fig:face} briefly illustrates its architecture, which uses Max-Feature-Map nonlinearities instead of ReLU and thus can generate dense features at its output. The network takes aligned gray-scale face images of size $128 \times 128$ as input and returns a $256$-dim feature (output of $eltwise\_6$). Alignment is conducted by transforming two facial landmarks (i.e., centers of two eyes) to $(32,32)$ and $(96,32)$ with a similarity transformation.
+
+
+
+We train a base model on the \textit{purified} MS-Celeb-1M dataset~\cite{guo2016ms} (the original data is very noisy, we purify them before use). One single base model achieves a verification accuracy of $98.80\%$ on the LFW~\cite{LFWTech} benchmark, which is very competitive among already published works~\cite{ding2015robust,wang2015face}. We further finetune the base model with triple-let loss on a large-scale ID-daily photo dataset collected from the web and use the finetuned model $\phi$ to extract compact facial features in DeMeshNet. Note that this model's parameters should stay fixed during the training of DeMeshNet because we only use it for feature computation and no identity related supervision is adopted to finetune $\phi$ while learning the blind inpainting FCN.
+
+
+
+
+
+
+\subsection{Spatial Transformer For Face Alignment} Face alignment is essential for feature extraction. It helps to improve verification performance by providing a normalized input. The pre-trained model $\phi$ admits $128\times 128$ aligned face region to compute the $256$-dim feature. But DeMeshNet takes $220\times 178$ un-aligned MeshFace as input and outputs a prediction with the same size. Therefore, in order to compute the $256$-dim feature in the fully connected layer $eltwise\_6$, we must implement face alignment within the network.
+%Later in the experimental analysis, we will show that there is another reason why implementing face alignment within DeMeshNet is very significant.
+
+\begin{figure}
+  \centering
+    \includegraphics[scale=0.43]{fig3_2.png}
+    \caption{The customized spatial transformer module used in our model. It uses the locations of facial landmarks to calculate a transformation matrix for face alignment.}
+    \label{fig:stn} %% label for entire figure
+\end{figure}
+
+Moreover, unlike the image classification models that are trained with multi-scale natural images from ImageNet~\cite{russakovsky2015imagenet}, the pre-trained facial feature extraction model $\phi$ only takes single-scale, well-aligned face regions for training. This means that even we only compute the features from conv layers like in~\cite{guccluturk2016convolutional,johnson2016perceptual,LedigTHCATTWS16}, we will still need to align the MeshFaces first to acquire an accurate feature representation.
+
+
+%One may argue that by excluding $eltwise\_6$ from the feature level loss (which makes the model $\phi$ fully convolutional), we can directly take the $220\times 178$ prediction to calculate the feature level loss. But the scale and orientation differences are likely to lead to performance degeneration.
+
+
+%Face alignment is essential for feature extraction. It helps to improve verification performance by providing a normalized input. Model $\phi$ admits $128\times 128$ aligned input for computing the $256$-dim feature in $eltwise\_6$. But the DeMeshNet takes $220\times 178$ un-aligned MeshFace as input. Unlike the ImageNet models that are trained with multi-scale natural images, the pre-trained face model $\phi$ only takes single-scale, well-aligned face regions for training. Therefore, if face alignment is not taken care of, scale and orientation differences are likely to lead to performance degeneration. To facilitate end to end training of the combined feature and pixel loss, face alignment should be implemented within the network.
+%Moreover, unlike networks trained for generic image classification using ImageNet~\cite{russakovsky2015imagenet} which are trained with multi-scale images, our face model is trained with single-scale face images.
+
+We incorporate a customized spatial transformer module~\cite{jaderberg2015spatial} between the pixel level regression sub-net and the feature level regression sub-net to sample an aligned $128 \times 128$ face region from the $220 \times 178$ prediction according to the facial landmarks. This procedure is illustrated in Fig.~\ref{fig:overview} and detailed in Fig.~\ref{fig:stn}.
+%Therefore, it is vital that we use face image with the same scale as in training for feature extraction and feature loss calculation.
+
+
+The spatial transformer module comprises of a localization network, a grid generator and a sampler. Since the similarity transformation $\tau_\theta$ for face alignment is uniquely determined by the coordinates of two eye centers, we do not need to learn it through the localization network as in~\cite{jaderberg2015spatial}. $\tau_\theta$ is parameterized by $\theta = [a,b,1;-b,a,1]$ and can be determined with the following equation:
+\begin{equation}
+\left( {\begin{array}{*{20}{c}}
+x_l&x_r\\
+y_l&y_r\\
+1&1
+\end{array}} \right) = \left[{\begin{array}{*{20}{c}}
+a&b&1\\
+{ - b}&a&1
+\end{array}} \right]\left({\begin{array}{*{20}{c}}
+{ - 0.5}&{0.5}\\
+{ - 0.5}&{ - 0.5}\\
+1&1
+\end{array}} \right)
+\end{equation}
+where $(x_l,y_l)$, $(x_r,y_l)$ and $(-0.5,-0.5)$, $(0.5,-0.5)$ are the \textit{normalized coordinates} (normalized to $[-1,1]$) of two eye centers in the original image and the aligned face image respectively.
+
+%Given the similarity transformation matrix $\tau_\theta$, we can define the forward and backward pass of the spatial transformer module, which employ a bilinear sampling kernel to sample the original $220 \times 178$ image to its aligned $128 \times 128$ version and back propagate the feature loss from the aligned image to the original input respectively.
+
+
+
+In the forward pass, a sampling grid is firstly determined with the given $\tau_\theta$. A sampling grid is a set of points with continuous coordinates. Sampling an input image according to this sampling grid will generate a transformed output.
+% And then with a bilinear sampling kernel, the output map is sampled from the input feature map using the sampling grid.
+ By defining the output pixels to lie on a regular grid $G = {G_i}$ of pixels $G_i = (x_i^{t},y_i^{t})$, the sampling grid $\tau_\theta(G)$ is given by the point-wise transformation:
+\begin{equation}
+\left( \begin{array}{l}
+x_i^{s}\\
+y_i^{s}
+\end{array} \right) = {\tau _\theta }(G) = \left[{\begin{array}{*{20}{c}}
+a&b&1\\
+{ - b}&a&1
+\end{array}} \right]\left( \begin{array}{l}
+x_i^{t}\\
+y_i^{t}
+\end{array} \right)
+\end{equation}
+where $(x_i^{s}, y_i^{s})$ are the source coordinates in the input feature map, and $(x_i^{t}, y_i^{t})$ are the target coordinates of the regular grid. Since the coordinates in the sampling grid are continuous numbers, a bilinear kernel is applied to those positions to produce the corresponding pixel values in the output:
+\begin{equation}
+Q = max(0,1 - \left| {x_i^{s} - m} \right|)max(0,1 - \left| {y_i^{s} - n} \right|)
+\end{equation}
+\begin{equation}
+P_{(x_i^{t},y_i^{t})}= \sum\limits_n^H {\sum\limits_m^W {P_{(x_n^{s},y_m^{s})}Q} }
+\end{equation}
+where $H$ and $W$ are the height and width of the input image respectively and $P_{(x_i^{t},y_i^{t})}$ represents the pixel value of $(x_i^{t},y_i^{t})$. To allow the feature loss defined in the last subsection to be back-propagated from the output of the spatial transformer module to the input image, we give the gradients with respect to the input image as follows:
+\begin{equation}
+\frac{{\partial (P(x_i^t,y_i^t))}}{{\partial (P(x_m^s,y_n^s))}} =\sum\limits_n^H {\sum\limits_m^W {Q} }\label{eq:bp}
+\end{equation}
+
+The gradients of the feature loss defined earlier can be easily flowed back to the input image using chain rule with Equation~\ref{eq:bp}. Note that the gradients with respect to the sampling grid coordinates $(x_i^{s}, y_i^{s})$ are not derived, because the transformation parameters are not learned in the customized spatial transformer module.
+
+
+
+\begin{figure}
+  \centering
+    \includegraphics[scale=0.23]{fig4_1.png}
+    \caption{An image triplet sample from the training dataset~\cite{7550058}.}
+    \label{fig:dataset} %% label for entire figure
+\end{figure}
+
+%The first term can preserve the semantic similarity by minimizing the empirical error, the second term can capture the underlying data structures by minimizing the embedding error, and the third term encour- ages the decision boundary in low density regions, which is complementary with semi-supervised embedding term. Thus the proposed SSDH model can fully benefit from both the labeled and unlabeled data. We introduce these three terms separately in the following parts of this subsection.
+
+
+
+\section{Experiments}
+%\setcounter{secnumdepth}{2}
+
+In this section, we experimentally evaluate the proposed framework. We begin by introducing the datasets for training and testing. Then we specify the baseline methods and implementation details. At last, we present detailed algorithmic evaluation, as well as comparison with other methods.
+
+\subsection{Datasets}
+
+\begin{figure}
+  \centering
+    \includegraphics[scale=0.23]{fig11_2.png}
+    \caption{Sample image pairs from SV1000. Note that this dataset is very hard as the variations in illumination, pose and hair style are very significant.}
+    \label{fig:sv} %% label for entire figure
+\end{figure}
+
+
+All the compared models are trained on the dataset as in~\cite{7550058} that contains over $500,000$ data triplets of $11,648$ individuals. Each data triplet consists of a MeshFace, its clear version and a corruption mask (as illustrated in Fig.~\ref{fig:dataset}). Facial landmarks (two eye centers) are detected using Intraface~\cite{XiongD13} to aid the spatial transformer module. Data triplets of $400$ individuals are sampled for validation and testing ($200$ each) and all the other individuals are used for training.
+
+Besides the SYN500 used in~\cite{7550058}, we collect another dataset with 1000 MeshFace/daily photo pairs from 1000 individuals named SV1000 to evaluate the MeshFace verification performance. Daily photos in SV1000 are captured under surveillance cameras. As shown in Fig.~\ref{fig:sv}, this dataset not only contains more individuals but also presents more variations in the daily photo, which makes it more challenging than SYN500 (shown in Fig.~\ref{fig:syn}).
+
+We develop a protocol for evaluation of verification performance on these two datasets. Specifically, face comparison is conducted between all the possible recovered clear ID/daily photo pairs in the compact feature space (spanned by model $\phi$) with cosine distance. For a dataset with $N$ data pairs, $N^2$ comparisons are conducted in total. To exclude influences from metric learning methods, no supervised learning methods, \eg joint bayesian~\cite{chen2012bayesian}, are employed on the extracted features.
+
+\subsection{Baselines and Implementation Details}
+
+
+
+
+
+Although many algorithms have been proposed for non-blind inpainting, few have been developed to address the blind inpainting problem, even less for the blind face inpainting problem addressed in this paper. We implement the multi-task CNN (MtNet)~\cite{7550058} as a baseline. This method employs architecture that resembles the SRCNN~\cite{dong2014learning} and use multi-task learning to make use of the information of corruption position in the training phase.
+
+To give a detailed evaluation of each part of the proposed DeMeshNet, we also compare it with various configurations. The compared configurations include FCN with Euclidean pixel level loss (FCNE), FCN with weighted pixel level loss (FCNW) and feature loss FCN without spatial transformer module (FCNF). All three configurations use FCN as the backbone for the blind face inpainting task. Both FCNE and FCNW only adopts the pixel level loss during training, but FCNW introduces an implicit supervision from the corruption mask with a weighted loss in addition to the Euclidean loss. FCNF takes both weighted pixel loss and whole-image feature level loss into consideration. But the feature level differences are only computed at the output of $conv2$, using whole-image as input to the pre-trained feature extraction network $\phi$. Like in~\cite{johnson2016perceptual}, we don't implement face alignment within the network.
+%The FCNE model resembles the model newly proposed in~\cite{mao2016image}.
+\begin{figure}
+  \centering
+    \includegraphics[scale=0.23]{fig12.png}
+    \caption{Sample image pairs from SYN500. Images of some Chinese celebrities are collected from the Internet.}
+    \label{fig:syn} %% label for entire figure
+\end{figure}
+
+
+All the compared models are trained on the training set with photo pairs of size $220 \times 178$, gray scale images are used in all the experiments. For all the compared network structure, training is carried out using Adam~\cite{adam} with a batch size of $30$. The learning rate is set to $10^{-4}$ initially, and decreased by a factor of $10$ each $40k$ iterations. The training process takes approximately $160k$ iterations to converge. For the proposed approach, feature level loss is computed at layer $conv2$ and $eltwise\_6$ of the pre-trained face model $\phi$. For FCNF, only $conv2$ is used for computing the feature loss as the computation of $fc$ layer $eltwise\_6$ requires the input to be of size $128\times 128$. All the MeshFace verification experiments use the pre-trained face model $\phi$ for facial feature extraction. All the experiments are conducted with the Caffe framework~\cite{jia2014caffe} on a single GTX Titan X GPU.
+
+
+
+%\subsection{Experiment Results and Analysis}
+
+\begin{table*} %table ???????tabular,??tabular???????
+\centering  %????
+\caption{Verification performance on SYN500/SV1000 and inpainting results on the testing set. RMSE illustrates the feature distance between the recovered ID photos and the ground-truth clear ID photos, while PSNR indicates the pixel distance. Note that smaller RMSE consistently indicates better verification performance, but higher PSNR doesn't guarantee that.}  %????
+ \begin{tabular}{|c|c|c|c|c|c|}  %???
+
+     \hline
+       Method&TPR@FPR=1\% &  TPR@FPR=0.1\% & TPR@FPR=0.01\%&PSNR&RMSE  \\
+       \hline
+            \hline
+       MtNet &83.60\% / 78.80\% & 62.80\% / 57.50\%&36.80\% / 35.40\% &29.89& 55.47    \\
+       Clear & \bf{98.80\%} / 88.10\%& \bf{89.40\%} / 74.30\%&\bf{67.40\% / 53.60\%}&-&0\\
+       Corrupted & 47.40\% / 43.20\% & 33.80\% / 28.50\%&18.40\% / 18.20\%&20.69&112.63\\
+       \hline
+       FCNE & 95.20\% / 83.20\% & 79.80\% / 63.90\%&53.80\% / 43.00\% & 35.11&49.52\\
+       FCNW & 95.40\% / 85.70\% & 78.40\% / 64.90\%  & 52.80\% / 44.40\%&\bf{35.31}&48.22\\
+        FCNF & 95.20\% / 85.80\% & 82.80\% / 66.40\% &54.40\% / 46.30\% &  25.26& 38.19  \\
+        DeMeshNet\_E & 96.60\% / 86.30\% & 83.90\% / 70.00\% &54.80\% / 46.50\% &  29.28& 35.77  \\
+        \hline
+        DeMeshNet & \bf{97.40\%} / 86.70\% & \bf{84.80\%} / 70.70\%&\bf{55.20}\% / 47.00\%&29.16&\bf{34.57} \\
+       \hline
+
+   \end{tabular}\label{tab:psnr}
+\end{table*}
+
+
+\subsection{Evaluation of Verification Results}
+
+%As suggested earlier, our goal is to improve the MeshFace verification performance.
+In this section, we conduct MeshFace verification experiments on two datasets, i.e., SYN500 and SV1000. Recovered ID photos are used for FVBID according to the aforementioned protocol.
+%Firstly, we use the compared models to recover the clear ID photos from the MeshFaces. Then we conduct verification experiments according to the protocol with these recovered ID photos.
+We report ROC curves in Fig.~\ref{fig:roc}. TPR@FPR=1\% (true positive rate when false positive rate is \%1), TPR@FPR=0.1\% and TPR@FPR=0.01\% are reported in Table~\ref{tab:psnr} for closer inspection. We also present the face verification performances with ground-truth clear ID photos and MeshFaces (denoted as \textit{Clear} and \textit{Corrupted}) for fair comparison.
+\begin{figure}
+  \centering
+    \includegraphics[scale=0.3]{final6.png}
+    \caption{ROC curves for SYN500 and SV1000.}
+    \label{fig:roc} %% label for entire figure
+\end{figure}
+
+
+As expected, when using the MeshFaces for verification, the accuracy suffers a severe drop on both datasets due to large detection and alignment errors. After processing the MeshFace with blind face inpainting models, face verification performance with the recovered ID photos has seen a great improvement. Owning to the deeper FCN architecture and expanded receptive fields, all the FCN based models outperform the baseline model MtNet~\cite{7550058} by a large margin on both datasets.
+
+As shown in Fig.~\ref{fig:roc}, feature loss based models (DeMeshNet, FCNF) perform better than the models that only seek a visually pleasing inpainting results (FCNE, FCNW). This suggests that by enforcing a feature level similarity during training, predictions from DeMeshNet lie in a low-dimensional feature space that is closer to the ground-truth clear ID photos than predictions from pixel-level only networks. This is validated in the next section where we calculate the RMSE (rooted mean square error) between the features of ground-truth clear IDs and recovered IDs.
+
+
+%Among all the compared models, the proposed model achieves the best verification performance on both datasets, outperforming the baseline model MtNet by a large margin. The deeper FCN architecture are the key for FCNW's obvious improvement over MtNet. What's more, FCNF and the proposed model perform even better, owning to the introduction of feature loss during training. [[Should elaborate on]]
+
+We further investigate the role of the spatial transformer module in our model by comparing DeMeshNet with FCNF which uses the image of original size ($220\times 178$) as input to the feature loss component.
+We find that DeMeshNet consistently performs better than FCNF. This is because FCNF takes the whole image, which is different from the aligned face region in both scale and orientation, for feature extraction. Unlike the ImageNet~\cite{russakovsky2015imagenet} models that are trained with multi-scale natural images, the pre-trained face model $\phi$ only takes single-scale, well-aligned face regions for training. The scale and orientation differences have led to the performance degeneration. Therefore, it is significant to take face alignment into account when optimizing the feature level loss as done in DeMeshNet.
+%By introducing the spatial transformer module within the DeMeshNet, this problem is effectively solved.
+%It should be noted that although DeMeshNet achieves the best verification performance on both datasets, there is still a gap between it and the ground-truth clear ID photos.
+
+%We further investigate the role of the spatial transformer module in our model by comparing the DeMeshNet with FCNF which uses the image of original size ($220\times 178$) as input to the feature loss component.
+
+
+It should be noted that for blind inpainting models, there is an upper limit for their verification performance, which is the verification performance with ground-truth clear ID photos. From Table~\ref{tab:psnr}, we can observe that the gap between DeMeshNet and clear ID at TPR@FPR=1\% is very small ($1.4\%$ for both datasets), validating the outstanding performance of DeMeshNet.
+
+%It should be noted that FCNF doesn't always outperform FCNE and FCNW (e.g. TPR@FPR=1\% on SYN500). The most probable reason for this phenomenon is the scale change. That is, FCNF takes whole image instead of aligned face region for feature extraction. The scale and orientation differences between them have led to the performance degeneration. Because unlike ImageNet models which are trained with multi-scale natural images, the pre-trained face model only $\phi$ takes single-scale, well-aligned face regions for training. This again validates the importance of the spatial transformer module.
+%We believe the margin of improvement should be magnified If the scale change is more significant.
+
+
+
+\subsection{Evaluation of Inpainting Results} In this section, we \textit{qualitatively} and \textit{quantitatively} evaluate the inpainting results on the testing set ($200$ individuals, $10000$ photos).
+%The occlusion introduced by those mesh-like corruptions severely deteriorates verification performance. Therefore, two standards are introduced for qualitative evaluation, that is, how well are the corrupted pixels recovered and how well are the global details preserved.
+Firstly, we qualitatively evaluate the compared models by visual inspection of the inpainting results in Fig.~\ref{fig:visual}. It is observed that MtNet fails to identify and recover some portions of the corruptions in these cases (cherry-picked to illustrate the point). In contrast, FCN based models can handle all the corruption areas very well because they can enclose more contextual information with expanded receptive fields. This demonstrates the improved capacity of FCN over SRCNN based architectures.
+\begin{figure*}
+  \centering
+    \includegraphics[scale=0.63]{fig5_2.png}
+    \caption{Visual inspection of the inpainting results. Although these inpainting results all look very well and are quite similar, they will lead to entirely different verification rates because of the different RMSE in the feature space.}
+    \label{fig:visual} %% label for entire figure
+\end{figure*}
+
+Regarding the details of the recovered ID photo, the models trained with only pixel level loss (FCNE, FCNW, MtNet) can better preserve the consistency of pixels and thus provide a smooth and clear photo which is more similar to the ground-truth. But the images recovered with models trained on feature level loss (FCNF in particular) contain many artifacts, making them visually less appealing. This is because the high-level features are robust to pixel level changes in the texture, shape and even color. However, images recovered from DeMeshNet looks much better than the ones from FCNF due to the introduction of the spatial transformer module within DeMeshNet.
+
+%Due to the introduction of pooling layers in the pre-trained model, it is invariant to small changes in the texture, shape or even color. Therefore, when enforcing the feature level similarity, it can tolerate subtle artifacts in the pixel level. Fortunately, when the prediction is used to extract facial features, visual artifacts will be neglected by the model $\phi$ because of this kind of invariance. This is validated in the next part where we compare the feature level difference in the $eltwise\_6$ layer.
+
+
+
+%\begin{table} %table ???????tabular,??tabular???????
+%\centering  %????
+%\caption{Pixel and feature level difference as PSNR and RMSE }  %????
+ %\begin{tabular}{|c|c|c|c|c|c|}  %???
+  %   \hline
+ %      Method&MtNet &  FCNE & FCNW & FCNF & DeMeshNet \\
+ %      \hline
+ %       \hline
+ %      PSNR & 32.89 & 35.11 & \bf{35.31} & 25.26 &29.16     \\
+ %      RMSE & 55.47 & 49.52 & 48.22 & 38.19 &\bf{34.57} \\
+ %      \hline
+ %  \end{tabular}\label{tab:psnr}
+%\end{table}
+
+
+
+Next, we quantitatively evaluate the models by measuring both pixel level and feature level ($eltwise\_6$) difference. The ground-truth clear ID photo is used as a baseline. Specifically, average PSNR and Euclidean distance between features (or rooted mean square error, RMSE) are shown in Table~\ref{tab:psnr}. Pixel level loss based models yield better PSNR as they explicitly optimize PSNR in their loss function. We also observe that FCNW performs slightly better than FCNF. This implies that exploiting extra supervision from the corruption position in the training phase is beneficial for acquiring visually pleasing inpainting results.
+
+To validate the choice of the reverse Huber loss over the Euclidean loss on the feature level difference, we also implement a DeMeshNet\_E that use Euclidean loss for the feature level loss. From Table~\ref{tab:psnr}, we can see that RMSE for DeMeshNet\_E is slightly larger than DeMeshNet. This indicates that the reverse Huber loss is more effective at minimizing the feature level distance thanks to the imposed L1 norm when residuals are small.
+
+Furthermore, from Table~\ref{tab:psnr} we observe that smaller RMSE often means better verification performance, but higher PSNR doesn't guarantee smaller RMSE. This reveals that the models trained with only pixel level loss does suffer from the influence of the easily fooled nature of CNN~\cite{goodfellow2014explaining,nguyen2015deep,szegedy2013intriguing}. Moreover, visually appealing inpainting results does not necessarily produce better verification results. By exploring supervision from the deep feature space, DeMeshNet can capture a distribution that is more robust to transformation in $\phi$ and thus provide a stable high-level representation in the compact deep feature space.
+
+%Furthermore, it is also observed that the feature loss based models yields smaller RMSE at the loss of PSNR. This phenomenon indicates that small PSNR cannot guarantee small feature difference because of the easily fooled nature of CNN~\cite{nguyen2015deep} and validates our motivation in explicitly optimizing the feature level loss in our model.
+
+
+%To conclude, the experimental results demonstrate our proposed model's superior ability in achieving better verification performance than current state-of-the-art. By comparing different configurations of the proposed model, the significance of the introduction of the FCN architecture, feature level loss and spatial transformer module are clearly revealed.
+
+%\subsubsection{Test time evaluation} We compare the testing time of different models in this subsection. From Table[][] we can see that the multi-task CNN runs the fastest. Although training with different configurations, our proposed model, FCNE, FCNW and FCNF runs at the same speed at testing time. The comparison between the deeper multi-task CNN and our proposed model reveal yet another merit of the FCN architecture, which is computationally friendly. Because of the downsampling/upsampling implementation within the network, it is able to reduce the running time by xxxx percent compared to the deeper multi-task CNN model.
+
+%Therefore, when the input comes from a different scale, optimizing the feature loss will lead the training to a wrong direction, causing significant performance drop on the verification experiment.
+
+%\begin{table}[h]
+%\centering  %????
+%\caption{}  %????
+ %\begin{tabular}{rrr}  %???
+  %   \hline
+  %   \hline
+ %      & $PSNR$ & $RMSE$  \\ %????
+ %      \hline
+ %      MtNet &  &    \\
+ %      FCNE & 35.11 &  49.52 \\
+ %      FCNW & \bf{35.31} & 48.22 \\
+ %      FCNF & 25.26 &  38.19 \\
+  %     \hline
+   %    Proposed& 28.70 & \bf{0.47} \\  %?????????
+  %     \hline
+ %      \hline
+%   \end{tabular}
+%\end{table}
+
+%\section{Discussions}
+
+
+
+\section{Conclusions}
+%\setcounter{secnumdepth}{1}
+
+This paper addresses the MeshFace verification problem that verifies corrupted ID photos against clear daily photos. Specifically, we have proposed DeMeshNet that consists of three parts to blindly inpaint the MeshFace before conducting verification.The proposed DeMeshNet distinguishes itself from previous works by explicitly taking verification performance into consideration while recovering a clear ID photo. The training objective of DeMeshNet is motivated by the fact that minimizing pixel level differences alone cannot guarantee a small intra-class feature distance in the compact deep feature space, which is crucial for accurate face verification. By further incorporating a spatial transformer module, DeMeshNet can implement face alignment within the network, resulting in an end-to-end network. For optimizing DeMeshNet, a very well-performed facial feature extraction network has been trained in advance. Experimental results on two MeshFace datasets demonstrate that the proposed DeMeshNet outperforms previous work on verification performance.
+
+%Authors in~\cite{Pathak_2016_CVPR, YehCLHD16} propose hole-filling algorithms based on the Deep Convolutional Generative Adversarial Network (DCGAN)~\cite{RadfordMC15} to recover images that reside near the real data distribution of the clear images. Visual performance of integrating DCGAN into network for blind inpainting has been well validated in their work, but its influence on the recognition performance have not been researched yet. Suppose we can introduce DCGAN in our blind face inpainting framework, we might be able to recover clear ID photos that are from the same distribution of the training clear IDs. Since the pre-trained feature extraction model is trained on that same distribution, this might be able to provide another solution to the large intra-class feature distance problem when pixel-level loss alone is considered. Therefore, in the future, we are interested in finding out whether DCGAN is helpful for blind face inpainting and for improving verification performance in particular.
+
+
+%%%%%%%%%% BODY TEXT
+%\section{Introduction}
+%
+%Please follow the steps outlined below when submitting your manuscript to
+%the IEEE Computer Society Press.  This style guide now has several
+%important modifications (for example, you are no longer warned against the
+%use of sticky tape to attach your artwork to the paper), so all authors
+%should read this new version.
+%
+%%-------------------------------------------------------------------------
+%\subsection{Language}
+%
+%All manuscripts must be in English.
+%
+%\subsection{Dual submission}
+%
+%Please refer to the author guidelines on the CVPR 2017 web page for a
+%discussion of the policy on dual submissions.
+%
+%\subsection{Paper length}
+%Papers, excluding the references section,
+%must be no longer than eight pages in length. The references section
+%will not be included in the page count, and there is no limit on the
+%length of the references section. For example, a paper of eight pages
+%with two pages of references would have a total length of 10 pages.
+%{\bf There will be no extra page charges for CVPR 2017.}
+%
+%Overlength papers will simply not be reviewed.  This includes papers
+%where the margins and formatting are deemed to have been significantly
+%altered from those laid down by this style guide.  Note that this
+%\LaTeX\ guide already sets figure captions and references in a smaller font.
+%The reason such papers will not be reviewed is that there is no provision for
+%supervised revisions of manuscripts.  The reviewing process cannot determine
+%the suitability of the paper for presentation in eight pages if it is
+%reviewed in eleven.
+%
+%%-------------------------------------------------------------------------
+%\subsection{The ruler}
+%The \LaTeX\ style defines a printed ruler which should be present in the
+%version submitted for review.  The ruler is provided in order that
+%reviewers may comment on particular lines in the paper without
+%circumlocution.  If you are preparing a document using a non-\LaTeX\
+%document preparation system, please arrange for an equivalent ruler to
+%appear on the final output pages.  The presence or absence of the ruler
+%should not change the appearance of any other content on the page.  The
+%camera ready copy should not contain a ruler. (\LaTeX\ users may uncomment
+%the \verb'\cvprfinalcopy' command in the document preamble.)  Reviewers:
+%note that the ruler measurements do not align well with lines in the paper
+%--- this turns out to be very difficult to do well when the paper contains
+%many figures and equations, and, when done, looks ugly.  Just use fractional
+%references (e.g.\ this line is $095.5$), although in most cases one would
+%expect that the approximate location will be adequate.
+%
+%\subsection{Mathematics}
+%
+%Please number all of your sections and displayed equations.  It is
+%important for readers to be able to refer to any particular equation.  Just
+%because you didn't refer to it in the text doesn't mean some future reader
+%might not need to refer to it.  It is cumbersome to have to use
+%circumlocutions like ``the equation second from the top of page 3 column
+%1''.  (Note that the ruler will not be present in the final copy, so is not
+%an alternative to equation numbers).  All authors will benefit from reading
+%Mermin's description of how to write mathematics:
+%\url{http://www.pamitc.org/documents/mermin.pdf}.
+%
+%
+%\subsection{Blind review}
+%
+%Many authors misunderstand the concept of anonymizing for blind
+%review.  Blind review does not mean that one must remove
+%citations to one's own work---in fact it is often impossible to
+%review a paper unless the previous citations are known and
+%available.
+%
+%Blind review means that you do not use the words ``my'' or ``our''
+%when citing previous work.  That is all.  (But see below for
+%techreports.)
+%
+%Saying ``this builds on the work of Lucy Smith [1]'' does not say
+%that you are Lucy Smith; it says that you are building on her
+%work.  If you are Smith and Jones, do not say ``as we show in
+%[7]'', say ``as Smith and Jones show in [7]'' and at the end of the
+%paper, include reference 7 as you would any other cited work.
+%
+%An example of a bad paper just asking to be rejected:
+%\begin{quote}
+%\begin{center}
+%    An analysis of the frobnicatable foo filter.
+%\end{center}
+%
+%   In this paper we present a performance analysis of our
+%   previous paper [1], and show it to be inferior to all
+%   previously known methods.  Why the previous paper was
+%   accepted without this analysis is beyond me.
+%
+%   [1] Removed for blind review
+%\end{quote}
+%
+%
+%An example of an acceptable paper:
+%
+%\begin{quote}
+%\begin{center}
+%     An analysis of the frobnicatable foo filter.
+%\end{center}
+%
+%   In this paper we present a performance analysis of the
+%   paper of Smith \etal [1], and show it to be inferior to
+%   all previously known methods.  Why the previous paper
+%   was accepted without this analysis is beyond me.
+%
+%   [1] Smith, L and Jones, C. ``The frobnicatable foo
+%   filter, a fundamental contribution to human knowledge''.
+%   Nature 381(12), 1-213.
+%\end{quote}
+%
+%If you are making a submission to another conference at the same time,
+%which covers similar or overlapping material, you may need to refer to that
+%submission in order to explain the differences, just as you would if you
+%had previously published related work.  In such cases, include the
+%anonymized parallel submission~\cite{Authors14} as additional material and
+%cite it as
+%\begin{quote}
+%[1] Authors. ``The frobnicatable foo filter'', F\&G 2014 Submission ID 324,
+%Supplied as additional material {\tt fg324.pdf}.
+%\end{quote}
+%
+%Finally, you may feel you need to tell the reader that more details can be
+%found elsewhere, and refer them to a technical report.  For conference
+%submissions, the paper must stand on its own, and not {\em require} the
+%reviewer to go to a techreport for further details.  Thus, you may say in
+%the body of the paper ``further details may be found
+%in~\cite{Authors14b}''.  Then submit the techreport as additional material.
+%Again, you may not assume the reviewers will read this material.
+%
+%Sometimes your paper is about a problem which you tested using a tool which
+%is widely known to be restricted to a single institution.  For example,
+%let's say it's 1969, you have solved a key problem on the Apollo lander,
+%and you believe that the CVPR70 audience would like to hear about your
+%solution.  The work is a development of your celebrated 1968 paper entitled
+%``Zero-g frobnication: How being the only people in the world with access to
+%the Apollo lander source code makes us a wow at parties'', by Zeus \etal.
+%
+%You can handle this paper like any other.  Don't write ``We show how to
+%improve our previous work [Anonymous, 1968].  This time we tested the
+%algorithm on a lunar lander [name of lander removed for blind review]''.
+%That would be silly, and would immediately identify the authors. Instead
+%write the following:
+%\begin{quotation}
+%\noindent
+%   We describe a system for zero-g frobnication.  This
+%   system is new because it handles the following cases:
+%   A, B.  Previous systems [Zeus et al. 1968] didn't
+%   handle case B properly.  Ours handles it by including
+%   a foo term in the bar integral.
+%
+%   ...
+%
+%   The proposed system was integrated with the Apollo
+%   lunar lander, and went all the way to the moon, don't
+%   you know.  It displayed the following behaviours
+%   which show how well we solved cases A and B: ...
+%\end{quotation}
+%As you can see, the above text follows standard scientific convention,
+%reads better than the first version, and does not explicitly name you as
+%the authors.  A reviewer might think it likely that the new paper was
+%written by Zeus \etal, but cannot make any decision based on that guess.
+%He or she would have to be sure that no other authors could have been
+%contracted to solve problem B.
+%
+%FAQ: Are acknowledgements OK?  No.  Leave them for the final copy.
+%
+%
+%\begin{figure}[t]
+%\begin{center}
+%\fbox{\rule{0pt}{2in} \rule{0.9\linewidth}{0pt}}
+%   %\includegraphics[width=0.8\linewidth]{egfigure.eps}
+%\end{center}
+%   \caption{Example of caption.  It is set in Roman so that mathematics
+%   (always set in Roman: $B \sin A = A \sin B$) may be included without an
+%   ugly clash.}
+%\label{fig:long}
+%\label{fig:onecol}
+%\end{figure}
+%
+%\subsection{Miscellaneous}
+%
+%\noindent
+%Compare the following:\\
+%\begin{tabular}{ll}
+% \verb'$conf_a$' &  $conf_a$ \\
+% \verb'$\mathit{conf}_a$' & $\mathit{conf}_a$
+%\end{tabular}\\
+%See The \TeX book, p165.
+%
+%The space after \eg, meaning ``for example'', should not be a
+%sentence-ending space. So \eg is correct, {\em e.g.} is not.  The provided
+%\verb'\eg' macro takes care of this.
+%
+%When citing a multi-author paper, you may save space by using ``et alia'',
+%shortened to ``\etal'' (not ``{\em et.\ al.}'' as ``{\em et}'' is a complete word.)
+%However, use it only when there are three or more authors.  Thus, the
+%following is correct: ``
+%   Frobnication has been trendy lately.
+%   It was introduced by Alpher~\cite{Alpher02}, and subsequently developed by
+%   Alpher and Fotheringham-Smythe~\cite{Alpher03}, and Alpher \etal~\cite{Alpher04}.''
+%
+%This is incorrect: ``... subsequently developed by Alpher \etal~\cite{Alpher03} ...''
+%because reference~\cite{Alpher03} has just two authors.  If you use the
+%\verb'\etal' macro provided, then you need not worry about double periods
+%when used at the end of a sentence as in Alpher \etal.
+%
+%For this citation style, keep multiple citations in numerical (not
+%chronological) order, so prefer \cite{Alpher03,Alpher02,Authors14} to
+%\cite{Alpher02,Alpher03,Authors14}.
+%
+%
+%\begin{figure*}
+%\begin{center}
+%\fbox{\rule{0pt}{2in} \rule{.9\linewidth}{0pt}}
+%\end{center}
+%   \caption{Example of a short caption, which should be centered.}
+%\label{fig:short}
+%\end{figure*}
+%
+%%------------------------------------------------------------------------
+%\section{Formatting your paper}
+%
+%All text must be in a two-column format. The total allowable width of the
+%text area is $6\frac78$ inches (17.5 cm) wide by $8\frac78$ inches (22.54
+%cm) high. Columns are to be $3\frac14$ inches (8.25 cm) wide, with a
+%$\frac{5}{16}$ inch (0.8 cm) space between them. The main title (on the
+%first page) should begin 1.0 inch (2.54 cm) from the top edge of the
+%page. The second and following pages should begin 1.0 inch (2.54 cm) from
+%the top edge. On all pages, the bottom margin should be 1-1/8 inches (2.86
+%cm) from the bottom edge of the page for $8.5 \times 11$-inch paper; for A4
+%paper, approximately 1-5/8 inches (4.13 cm) from the bottom edge of the
+%page.
+%
+%%-------------------------------------------------------------------------
+%\subsection{Margins and page numbering}
+%
+%All printed material, including text, illustrations, and charts, must be kept
+%within a print area 6-7/8 inches (17.5 cm) wide by 8-7/8 inches (22.54 cm)
+%high.
+%
+%
+%
+%%-------------------------------------------------------------------------
+%\subsection{Type-style and fonts}
+%
+%Wherever Times is specified, Times Roman may also be used. If neither is
+%available on your word processor, please use the font closest in
+%appearance to Times to which you have access.
+%
+%MAIN TITLE. Center the title 1-3/8 inches (3.49 cm) from the top edge of
+%the first page. The title should be in Times 14-point, boldface type.
+%Capitalize the first letter of nouns, pronouns, verbs, adjectives, and
+%adverbs; do not capitalize articles, coordinate conjunctions, or
+%prepositions (unless the title begins with such a word). Leave two blank
+%lines after the title.
+%
+%AUTHOR NAME(s) and AFFILIATION(s) are to be centered beneath the title
+%and printed in Times 12-point, non-boldface type. This information is to
+%be followed by two blank lines.
+%
+%The ABSTRACT and MAIN TEXT are to be in a two-column format.
+%
+%MAIN TEXT. Type main text in 10-point Times, single-spaced. Do NOT use
+%double-spacing. All paragraphs should be indented 1 pica (approx. 1/6
+%inch or 0.422 cm). Make sure your text is fully justified---that is,
+%flush left and flush right. Please do not place any additional blank
+%lines between paragraphs.
+%
+%Figure and table captions should be 9-point Roman type as in
+%Figures~\ref{fig:onecol} and~\ref{fig:short}.  Short captions should be centred.
+%
+%\noindent Callouts should be 9-point Helvetica, non-boldface type.
+%Initially capitalize only the first word of section titles and first-,
+%second-, and third-order headings.
+%
+%FIRST-ORDER HEADINGS. (For example, {\large \bf 1. Introduction})
+%should be Times 12-point boldface, initially capitalized, flush left,
+%with one blank line before, and one blank line after.
+%
+%SECOND-ORDER HEADINGS. (For example, { \bf 1.1. Database elements})
+%should be Times 11-point boldface, initially capitalized, flush left,
+%with one blank line before, and one after. If you require a third-order
+%heading (we discourage it), use 10-point Times, boldface, initially
+%capitalized, flush left, preceded by one blank line, followed by a period
+%and your text on the same line.
+%
+%%-------------------------------------------------------------------------
+%\subsection{Footnotes}
+%
+%Please use footnotes\footnote {This is what a footnote looks like.  It
+%often distracts the reader from the main flow of the argument.} sparingly.
+%Indeed, try to avoid footnotes altogether and include necessary peripheral
+%observations in
+%the text (within parentheses, if you prefer, as in this sentence).  If you
+%wish to use a footnote, place it at the bottom of the column on the page on
+%which it is referenced. Use Times 8-point type, single-spaced.
+%
+%
+%%-------------------------------------------------------------------------
+%\subsection{References}
+%
+%List and number all bibliographical references in 9-point Times,
+%single-spaced, at the end of your paper. When referenced in the text,
+%enclose the citation number in square brackets, for
+%example~\cite{Authors14}.  Where appropriate, include the name(s) of
+%editors of referenced books.
+%
+%\begin{table}
+%\begin{center}
+%\begin{tabular}{|l|c|}
+%\hline
+%Method & Frobnability \\
+%\hline\hline
+%Theirs & Frumpy \\
+%Yours & Frobbly \\
+%Ours & Makes one's heart Frob\\
+%\hline
+%\end{tabular}
+%\end{center}
+%\caption{Results.   Ours is better.}
+%\end{table}
+%
+%%-------------------------------------------------------------------------
+%\subsection{Illustrations, graphs, and photographs}
+%
+%All graphics should be centered.  Please ensure that any point you wish to
+%make is resolvable in a printed copy of the paper.  Resize fonts in figures
+%to match the font in the body text, and choose line widths which render
+%effectively in print.  Many readers (and reviewers), even of an electronic
+%copy, will choose to print your paper in order to read it.  You cannot
+%insist that they do otherwise, and therefore must not assume that they can
+%zoom in to see tiny details on a graphic.
+%
+%When placing figures in \LaTeX, it's almost always best to use
+%\verb+\includegraphics+, and to specify the  figure width as a multiple of
+%the line width as in the example below
+%{\small\begin{verbatim}
+%   \usepackage[dvips]{graphicx} ...
+%   \includegraphics[width=0.8\linewidth]
+%                   {myfile.eps}
+%\end{verbatim}
+%}
+%
+%
+%%-------------------------------------------------------------------------
+%\subsection{Color}
+%
+%Please refer to the author guidelines on the CVPR 2017 web page for a discussion
+%of the use of color in your document.
+%
+%%------------------------------------------------------------------------
+%\section{Final copy}
+%
+%You must include your signed IEEE copyright release form when you submit
+%your finished paper. We MUST have this form before your paper can be
+%published in the proceedings.
+%
+%Please direct any questions to the production editor in charge of these
+%proceedings at the IEEE Computer Society Press: Phone (714) 821-8380, or
+%Fax (714) 761-1784.
+
+{\small
+\bibliographystyle{ieee}
+\bibliography{egbib}
+}
+
+\end{document}

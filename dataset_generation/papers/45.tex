@@ -1,0 +1,547 @@
+\documentclass{article} % For LaTeX2e
+\usepackage{iclr2019_conference,times}
+
+% Optional math commands from https://github.com/goodfeli/dlbook_notation.
+% \input{math_commands.tex}
+
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{amsfonts}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{array}
+\usepackage[title]{appendix}
+\usepackage{float}
+\usepackage{amsmath, amssymb}
+\usepackage{subcaption}
+\usepackage{caption}
+\usepackage{placeins}
+\usepackage{tabularx}
+
+\usepackage{graphicx} % for pdf, bitmapped graphics files
+%\usepackage{ruler}
+\usepackage{color}
+%\DeclareMathOperator{\E}{\mathbb{E}}
+
+
+\title{Unifying Bilateral Filtering and Adversarial Training for Robust Neural Networks}
+
+% Authors must not appear in the submitted version. They should be hidden
+% as long as the \iclrfinalcopy macro remains commented out below.
+% Non-anonymous submissions will be rejected without review.
+
+\author{Neale Ratzlaff,  Li Fuxin \\
+Department of Computer Science\\
+Oregon State University\\
+\texttt{\{ratzlafn,lif\}@oregonstate.edu} \\
+}
+
+\iclrfinalcopy
+% The \author macro works with any number of authors. There are two commands
+% used to separate the names and addresses of multiple authors: \And and \AND.
+%
+% Using \And between authors leaves it to \LaTeX{} to determine where to break
+% the lines. Using \AND forces a linebreak at that point. So, if \LaTeX{}
+% puts 3 of 4 authors names on the first line, and the last on the second
+% line, try using \AND instead of \And before the third author name.
+
+\newcommand{\fix}{\marginpar{FIX}}
+\newcommand{\new}{\marginpar{NEW}}
+
+\begin{document}
+
+
+\maketitle
+\begin{abstract}
+Recent analysis of deep neural networks has revealed their vulnerability to carefully structured adversarial examples. Many effective algorithms exist to craft these adversarial examples, but performant defenses seem to be far away. In this work, we explore the use of edge-aware bilateral filtering as a projection back to the space of natural images. We show that bilateral filtering is an effective defense in multiple attack settings, where the strength of the adversary gradually increases. In the case of an adversary who has no knowledge of the defense, bilateral filtering can remove more than 90\% of adversarial examples from a variety of different attacks. To evaluate against an adversary with complete knowledge of our defense, we adapt the bilateral filter as a trainable layer in a neural network and show that adding this layer makes ImageNet images significantly more robust to attacks. When trained under a framework of adversarial training, we show that the resulting model is hard to fool with even the best attack methods. 
+\end{abstract}
+
+\section{Introduction}
+
+Deep neural networks are known to be vulnerable to targeted perturbations added to benign inputs. The perturbed inputs, known as \textit{adversarial examples}, can cause a classifier to output highly confident, but incorrect predictions. %Adversarial examples are cheap to create, and defending against them is still an open problem.
+The majority of prior work has studied adversarial examples in the context of computer vision, where they pose the clearest threat. Small perturbations, imperceptible to humans, can be added to input images that cause a classifier to output false predictions. Because of the particular success of neural networks in computer vision, these models are being deployed in areas such as autonomous driving, facial recognition, and malware detection. Recent work has shown that these systems are vulnerable in the real world to adversarial examples \citep{evtimov2017robust}, which makes the problem of resisting adversarial attacks a growing concern. 
+
+There have emerged two central lines of research for defending against adversarial examples. \textit{Denoising} approaches attempt to remove the adversarial perturbations from the inputs as a preprocessing step. This is often done by filtering, or by projecting the input to a lower dimensional space that cannot represent high frequency perturbations \citep{samangouei2018defense,shen2017ape}. These methods often lead to high accuracy, even on difficult datasets like ImageNet. But it has been shown that an attacker with knowledge of the defense can successfully circumvent them \citep{athalye2018obfuscated}. On the other hand, \textit{Adversarial training} methods use principles from robust optimization to train models which resist adversarial attacks. Under the adversarial training framework, adversarial examples are combined with the natural training set to increase the model's robustness to attacks. These methods are expensive, requiring many more training examples, and have not been shown to scale well to natural image datasets such as ImageNet. 
+
+This paper explores the utility of bilateral filtering as both a denoising defense and a useful addition to adversarial training. Bilateral filtering is a classic approach in computer vision for edge-aware smoothing. Because natural images are more likely piecewise-smooth while adversarial perturbations are less likely to be, we hypothesize that bilateral filtering would be able to filter out adversarial perturbations. Indeed, in experiments we found that with appropriate parameters, a plain bilateral filter can recover $\textbf{99\%}$ of the adversarial images so that a classifier can predict the original label. 
+
+Furthermore, we introduce BFNet: an end-to-end model incorporating bilateral filtering as a differentiable layer. With BFNet, it is possible to examine the performance of white-box attacks trying to bypass our bilateral filtering defense. We show that BFNet is naturally robust to attacks from many such adversaries, greatly reducing the strength of both $L_\infty$ and $L_2$ attacks on the ImageNet dataset.
+
+Finally, we combine bilateral filtering with adversarial training, and achieve state-of-the-art results on MNIST and CIFAR10. Our method works with zero knowledge of either the network or any incoming attack, making it applicable to a variety of models and datasets. %We demonstrate the versatility of our approach by testing bilateral filter based defenses in the strongest adversary with full access to our defense and can optimize against it, while the defense having no knowledge 
+%\begin{enumerate}
+%\vspace{-0.05in}
+%\item Against adversaries with no knowledge of our defense, we show that a vanilla bilateral filter with fixed parameters can reliably remove adversarial perturbations created by a variety of strong adversaries. 
+%\vspace{-0.03in}
+%\item We further develop an adaptive filtering network which predicts bilateral filter parameters from an input image, to combat an adversary who employs a larger attack repertoire. We test our network on the ImageNet dataset, using Inception V3 and InceptionResNet V2 classifiers. We found that our adaptive filtering network successfully removes adversarial perturbations from natural images, recovering the clean class label. 
+%\vspace{-0.03in}
+%\item The strongest adversary has access to our defense, and can optimize against it. We show that BFNet is naturally robust to such perfect-knowledge attacks on ImageNet. We also combine BFNet with adversarial training to further increase its resistance to attack. In particular, we evaluated the ability of adversaries to attack our network on the MNIST and CIFAR10 datasets, and achieve state of the art results for PGD and FGSM attacks.
+%\vspace{-0.05in}
+%\end{enumerate}
+
+\section{Related Work}
+\subsection{Adversarial Attacks}
+There have been many proposed attacks for creating adversarial examples. We give a brief description of the six attacks that we used to test our models. \\
+
+\noindent \textbf{A. Projected Gradient Descent (PGD)}\\
+%When measuring the robustness of a model to adversarial attack. It is helpful to limit the strength of the adversary by generating perturbations within a bounded magnitude $\epsilon$. 
+In \citep{lyu2015unified,madry2017towards}, generating an adversarial example is the task of solving the objective $\max_{\delta\leq\epsilon} L(\theta, x + \delta, y_{true})$. 
+PGD is used to maximize this objective under a loss function $L$, yielding an image with a perturbation magnitude less than $\epsilon$ with respect to the $L_\infty$ norm, and achieves the highest possible loss on the true class. \\
+
+\noindent \textbf{B. Fast Gradient Sign Method (FGSM)}
+FGSM \citep{goodfellow2015explaining} is a one step linearization of the above objective. FGSM finds adversarial examples by assuming linearity at the decision boundary. Given an image x, we find a perturbation $\eta$ under the max norm: $\eta = \epsilon \cdot sign(\nabla_x L(\theta, x, y))$, where $\theta$ is the parameters of the network, y is the original label, and $L$ is the loss function used to train the network.
+\\
+
+\noindent \textbf{C. Momentum Iterative Method}\\
+The Momentum Iterative Fast Sign Gradient Method (MI-FGSM) \citep{dong2018boosting} is an iterative version of the FGSM attack. MI-FGSM moves pixel values linearly along the gradient toward the decision boundary. MI-FGSM improves on FGSM by introducing a momentum term into gradient calculation: 
+\[
+g_{t+1} = \mu \cdot g_t + \frac{\nabla_x L(x^*_t, y)}{\|\nabla_x L(x^*_t, y)\|_1}
+\]. 
+The gradient is then used to iteratively update the image $x^*_{t+1} = x^*_t + \alpha \cdot (g_{t+1})$. The authors claim that simply using an iterative FGSM leads to greedy overfitting of the decision boundary, and thus falls into local poor maxima. Adding momentum stabilizes the update direction and creates a stronger adversarial example. 
+\\
+
+\noindent \textbf{D. L-BFGS-B}\\
+\citep{szegedy2014intriguing} used box-constrained L-BFGS to generate adversarial examples with minimal distortion under the $L_2$ norm. Given a natural image $x$ and a target class $y_{true}$, the adversarial objective is as follows: 
+\[ \min \Big[ c \cdot \vert \vert x - (x + \delta) \vert \vert^{2}_{2} + L(x+\delta, y_{target}) \Big] \]
+Where $\delta$ is the adversarial perturbation, $L$ is the loss function, and the parameter $c$ controls the trade-off between the magnitude and strength of the perturbation. 
+\\
+
+\noindent \textbf{E. Carlini \& Wagner Attack ($\normalfont{L_2}$)} \\
+\citep{carlini2017towards} proposed three iterative attacks which create adversarial examples under the $L_0$, $L_2$, and $L_\infty$ norms. In this work we consider the most powerful attack, the white-box $L_2$ attack. Specifically, they minimize
+\[\min \vert \vert \frac{1}{2}(\tanh(w) + 1)- x \vert \vert^{2}_{2} + c \times f (\frac{1}{2}(\tanh(w)+1))\] 
+where $f(x') = \max(\max\{Z_i(x') : i \neq t\}- Z_t(x'), -\kappa)$.
+Here, $t$ is the target label, $Z$ refers to the logits of the network, $\kappa$ controls the confidence of the new classification, and the $\frac{1}{2}\tanh$ term constrains the result to pixel space.
+\\
+
+\noindent \textbf{F. DeepFool}\\
+Deepfool is an iterative, first order method used to find minimal distortion under the $L_2$ norm \citep{moosavi2016deepfool}. Deepfool linearizes the classifier itself and performs gradient descent until the image is misclassified. The DeepFool objective is  $ \min_{\delta} \|\delta\|_2 \quad \textrm{subject to}\quad \arg\max \, f(x) \neq \arg\max \, f(x + \delta)$.
+In addition to the attacks listed above, other methods have been proposed. $L_0$ attacks such as \citep{papernot2016limitations} choose to measure adversarial perturbations by the minimum change necessary to produce an incorrect prediction.
+\\
+
+\subsection{Adversarial Defenses}
+There is a growing body of work on defenses against adversarial attacks \citep{papernot2016effectiveness,papernot2015distillation,xu2017feature,liao2018defense}. An averaging filter was studied in \citep{li2017adversarial}. JPEG compression was studied in \citep{dziugaite2016study,das2017keeping}, and was found to be effective at removing adversarial perturbations. However, JPEG encoding is not differentiable, hence its performance when the adversary has knowledge of the defense is unknown. Our bilateral filtering approach is fully differentiable hence we can test it against counter-attacks.
+
+Other recent defenses attempt to remove adversarial perturbations by projecting inputs back onto the real data manifold \citep{meng2017magnet}. \citep{shen2017ape} projects inputs using a generative adversarial network. Given a normal or adversarial image, a generator is trained to produce a image from the normal data distribution. This method also did not test against counter-attacks, and has been shown to be successfully fooled by the CW attack \citep{meng2017magnet}. Our approach can also be seen as a projection back to the data manifold, where we impose the constraint that the resulting image must be piecewise-smooth. By fixing the filter approach, we would likely not overfit significantly to the training set and remain effective under counter-attacks. %Again, we show our method to remain effective under counter-attacks.
+ 
+On the other hand, adversarial training methods \citep{goodfellow2015explaining,madry2017towards,shaham2018understanding,tramer2017ensemble} combine adversarial examples with the natural training set to increase the robustness of the model to adversarial attacks. These approaches are promising as they attempt to provide a guarantee on both the type of adversary and the magnitude of the perturbation they are resistant to. In practice however, these methods are hard to scale as they require expensive computation in the inner training loop to generate adversarial examples. When training on a large dataset such as ImageNet, generating a sufficient amount of strong adversarial examples can be intractable. This problem has been mitigated by training against a weak adversary like FGSM \citep{tramer2017ensemble} which can quickly generate adversarial examples. But training models that are robust to strong adversaries on ImageNet or CIFAR-10 is still an open problem. 
+
+\section{Method}
+%In this section we present our motivation for using a bilateral filter as the building block for our robust defenses. We give a quick discussion of the theory of edge aware filtering and how it applies to adversarial examples. We show that it can remove adversarial perturbations crafted by many strong attacks. We then describe our end to end approach for training a classifier with a bilateral filter as a differentiable filtering layer. Finally, we recognize the current state of the art method for training models robust to adversarial attacks, adversarial training, and we show that our method can extend adversarial training to create still more robust models. 
+
+In this paper, we consider white-box threat models where the attacker has full access to the training data, model parameters and architecture. This is categorically more difficult than black-box threat models where the attacker has little or no knowledge about the model or training data. We will first show the utility of bilateral filter against simple attacks without knowledge of the network, then introduce BFNet with bilateral filtering as a differentiable layer, so that we can evaluate attacks with knowledge of our defense.
+
+%Existing adversarial attacks fool deep networks by exploiting the training distribution: creating inputs which lie very close to decision boundaries. An effective defense would be to project the perturbed image back to a distribution similar to the training distribution. But it is not so clear what type of projection we should employ. We observe that gradients in natural images are often \textit{piecewise-smooth}. In contrast, adversarial attacks perturb images such that the resulting gradients are locally non-smooth with respect to the perturbed components of the image. A nonlinear Gaussian filter like the bilateral filter can be viewed as a projection back to the distribution of piecewise-smooth functions. The bilateral filter preserves local discontinuities (edges), while smoothing image gradients, for this reason the bilateral filter is a natural candidate projection for removing adversarial perturbations.
+
+%By design, the perturbations in adversarial images have very small magnitudes, such that these perturbations are imperceptible to humans. In the case of multi-step attacks, the $L_{\infty}$ or $L_2$ distance can be small enough that any blurring filter will destroy the perturbation. Indeed it has been shown in prior work that projection based methods are enough to remove perturbations from adversarial inputs. However, as prior work did not examine performance under perfect-knowledge attacks, we cannot be sure of their reliability. On the other hand, bilateral filters can be formulated as a differentiable operation within a DNN and trained end to end. This new network, which we call BFNet, can be validated against perfect-knowledge adversarial attacks to test its robustness.  
+
+%\subsection{Threat Model}
+%Prior work often presents adversarial attacks and defenses as being either a white-box or black-box attack. In the white-box threat model, the attacker has full access to training data, model parameters and architecture. The black-box threat model considers the case where the attacker has little to no knowledge about the model architecture, parameters, or training data. In the most restrictive setting, the attack may only have access to the argmax output of a softmax operation. In this work we consider white-box attacks, as they are categorically stronger adversaries than black-box attacks. We consider three different levels of robustness for our bilateral filter defenses. We measure robustness against an attacker without knowledge of the defense, a changing attacker who may employ many different adversarial attacks, and finally an adversary who can mount a perfect-knowledge attack. 
+
+\subsection{The Bilateral Filter and Its Capability of Recovering Adversarial Images}
+The bilateral filter is a non-linear Gaussian filter that is commonly used to smooth image gradients while preserving sharp edges. 
+%Similar to other Gaussian filters, the bilateral filter replaces pixel values with a weighted average of the neighboring intensity values. Edges are preserved through weighting both pixel-wise Euclidean distance as well as differences in range, intensity, depth, etc. 
+For an image $I$, window $\Omega$ centered at pixel $p$, the bilateral filter is formulated as a domain function $G_s$, and a range function $G_r$:
+\[ 
+I_{filtered}(p) = \frac{1}{W_p} \sum_{q \in \Omega} G_s(||\mathbf{p} - \mathbf{q}||) G_r(\|I_p - I_q\|)  \, I_q
+\] 
+where the normalization term $W_p$ is:
+\[
+W_p = \sum_{q \in \Omega} G_s(\|\mathbf{p} - \mathbf{q}\|) G_r(\|I_p - I_q\|),
+\]
+$G_s(x) = \exp(-\frac{x^2}{2 \sigma_s^2})$ and $G_r(x) = \exp(-\frac{x^2}{2 \sigma_r^2})$ are Gaussian filters,  and $\sigma_s$ and $\sigma_r$ are parameters which control the strength of the domain and range functions respectively.
+Each neighboring pixel is assigned a weight according to both spatial closeness and value difference. %To calculate the resulting weight on a single pixel $(i, j)$ and its neighbor $(k, l)$, then the weight assigned to $(k, l)$ is as follows:
+%\[
+%w(i, j, k, l) = \exp \Big(-\frac{(i-k)^2 + (j-l)^2}{2\sigma^2_s} - \frac{||I(i, j) - I(k, l)||^2}{2\sigma_r}\Big)
+%\] The value of the filtered pixel is given after normalization:
+%\[
+%I_p(i, j) = \frac{\sum_{k, l}I(k, l)w(i, j, k, l)}{\sum_{k, l}w(i, j, k, l}
+%\]
+If the color of the pixels $p$ and $q$ are very different, then $q$ will affect the filtered image at pixel $p$ very little. At sharp image boundaries, this would effectively lead to smoothing on only one side of the boundary, since the other side would have very different color. Hence, sharp boundaries can be preserved and oversmoothing or blurring effects that are commonly seen in Gaussian smoothing or averaging can be prevented. In Fig.\ref{fig:test} one can see the effect of denoising an L-BFGS-B adversarial image, where an averaging filter will leave the image significantly blurred, but bilateral filtering would preserve the edges. More images are shown in the appendix in Fig.~\ref{fig:collection}.
+
+We believe piecewise-smoothness is an inherent property of many images hence bilateral filtering offered a projection back to this manifold of piecewise-smooth images. Convolutional networks only work on images from the natural image manifold, which left the hole for adversarial examples to maneuver by creating off-manifold images. By using bilateral filtering to force images to be on the manifold, we would leave significantly less holes for adversarial examples to maneuver on.
+
+To test the efficacy of the bilateral filter to recover clean inputs from adversarial examples, we generated a set of adversarial examples from a range of powerful adversaries. Our first approach was to manually tune parameters for each input image, to test the effective range of parameters which could recover the original label from an adversarial example. We found that with carefully chosen parameters, the corrupted labels could indeed be recovered. Our experiments showed that the small perturbations created by iterative methods like the Carlini \& Wagner attack and DeepFool were easier to remove with a bilateral filter than the larger perturbations created with one step attacks. To remove perturbations generated by iterative attacks, we used small kernels 3 - 5 pixels wide, and $\sigma_s$, $\sigma_r$ values of $0.5$. Filtering with larger kernel sizes offers no benefit, as the resulting images from iterative attacks have imperceptible perturbations which are removed with small filters. One step attacks perturb every pixel in the image with the same magnitude of noise. As a result, we increased kernel width to 7 and $\sigma_s$ to 3, holding $\sigma_r$ constant. These parameters reliably removed adversarial perturbations from $L_\infty$ attacks with a bounded distance of 0.3, as well as unbounded $L_2$ attacks. The results can be found in Table \ref{tab:manual}.
+
+\begin{figure}[!ht]
+\vskip -0.05in
+\centering
+\begin{subfigure}{.3\textwidth}
+  \centering
+  \includegraphics[width=.7\linewidth]{lbfgs_0_3.png}
+  \caption{}
+\end{subfigure}%
+\begin{subfigure}{.3\textwidth}
+  \centering
+  \includegraphics[width=.7\linewidth]{recovered_lbfgs_2_3.png}
+  \caption{}
+\end{subfigure}
+%\label{fig:test}
+\begin{subfigure}{.3\textwidth}
+  \centering
+  \includegraphics[width=.7\linewidth]{avg_recovered_lbfgs_0_3.png}
+  \caption{}
+\end{subfigure}
+\vskip -0.05in
+\caption{ (a) The original LBFGS-B adversarial image, (b) The image after 3x3 bilateral filtering and (c) The image after 3x3 averaging filtering. The bilateral filter is superior since it removes small perturbations while preserving sharp edges in the image, keeping it from becoming blurry}
+\label{fig:test}
+\vskip -0.1in
+\end{figure}
+
+%Note that we can parameterize the bilateral filter in terms of the size of the filter $\Omega$, and the strength of the two Gaussian functions $\sigma_s$ and $\sigma_r$. This makes it possible to train a classifier to predict what parameters will be needed to filter an image, while preserving the features underlying the noise.
+
+
+\begin{table}[htb]
+%\vbox{\openup.4em% make the row separating space a bit bigger
+\begin{center}
+  \def\title#1&{\omit#1\hfil&}% omit the preamble formatting + left-align
+  \def\decsplit#1.#2 {\quad\llap{#1}.\rlap{#2}}% quad = 2*enspace; enspace = digit width
+  % only thing "seen" is the decimal point itself
+  \hrule height 1pt \medskip
+  \halign{#\hfil\tabskip1em&&\decsplit#\hfil\cr
+    \title Network & \title FGSM & \title MI-FGSM & \title DeepFool & \title CW ($L_2$) & \title L-BFGS\cr
+    \noalign{\vskip-.4em}% make the gap between header rows smaller
+    \noalign{\smallskip\hrule\medskip}
+    Inception V3       & 97.0 & 97.5 & 98.8 & 99.2 & 97.8 \cr
+    InceptionResNet V2 & 94.2 & 98.4 & 96.3 & 98.8 & 95.1 \cr
+    ResNet V2          & 96.5 & 98.0 & 96.1 & 98.1 & 98.0 \cr
+  }
+  \smallskip
+  \hrule height 1pt
+  \end{center}
+%}
+\vskip -0.1in
+\caption{ Recovery performance for manually chosen bilateral filter parameters. We measure recovery by the percentage of examples which, after filtering, revert to the classification label assigned to the unperturbed image by the CNN. This shows that with adaptively chosen parameters according to the attack, we can recover nearly all adversarial examples\\}\label{tab:manual}
+\vskip -0.3in
+\end{table}
+\subsection{Adaptive Filtering}
+One caveat to the above approach, is that the parameters for the bilateral filter must be carefully chosen to be able to recover the accuracy and confidence of the original classification. Large values for the parameters $\sigma_s$ and $\sigma_r$ can create an excessively blurred image, and a small filter size $K$ may capture insufficient information to remove the adversarial perturbations. With this in mind, we train a small network which will predict the parameters of the bilateral filter $(K, \sigma_s, \sigma_r)$  for an input image. This network will serve as a cheap preprocessing step that will remove adversarial perturbations without affecting the underlying class label. 
+
+To build our classifier we first extract information about the distribution of pixel gradients by convolving the input with a Sobel filter in the $x$ and $y$ direction. Because adversarial attacks directly change values of the input, adversarial examples will often have larger color gradients in the $x$ and $y$ direction than natural images. We concatenate the gradient map depth-wise with the input image, and use three dilated convolutional layers with 64, 128, and 256 filters respectively, followed by 2x2 max pooling and a linear layer of 64 units. We use a dilation rate of 2 for each convolutional layer. Note this experiment is stand-alone and it is not utilized in the BFNet proposed in the next section.
+
+%In table \ref{tab:af} we see that the adaptive filtering approach can remove over 80\% of adversarial perturbations from ImageNet images, crafted by strong first order methods. In addition, we found that we were successful in defeating the attack itself in over 95\% of the test images. If the original class label cannot be recovered with certainty, than it is important that the any malicious attack not proceed unarrested. Our adaptive filtering approach ensures that an adversary is either completely defeated, or stopped from mounting targeted attacks. 
+
+\subsection{BFNet: Adding Bilateral Filtering as A Trainable Layer}
+The main idea of BFNet is to always preprocess the input image with bilateral filter before inputting it into the CNN. Namely, instead of computing $f(x)$ where $f$ is learned by a deep network, always computing $f(BF(x))$ instead. Hence we can then optimize for attacks that have full knowledge and gradients about our defense. This has two utilities, one is to examine the robustness of the defense, and secondly we can add the newly generated adversarial examples back to the training set of the network, in order to perform adversarial training.
+
+A brute-force implementation of the bilateral filter has a $\mathcal{O}(n^2)$ cost associated with computing the response of individual pixels. Making it the most expensive operation in the graph. To reduce computation time, We choose as our preprocessing function the Permutohedral Lattice implementation of the bilateral filter \citep{adams2010fast}, which is also fully differentiable and can be computed in $\mathcal{O}(n)$ time. This can then be attached as the first layer to any other network, and the bilateral filter parameters can be trained jointly with other parts of the network.%To train our model we use the same experimental setup as in \citep{adams2010fast}. We train our model using the adversarial training framework against FGSM and PGD adversaries, and evaluate on the MNIST digits dataset, as well as CIFAR-10.  
+
+\subsection{Adversarial Training} 
+It has been shown that under the white-box threat model, using a denoiser as the only defense is insufficient to stop the strongest adversarial attacks. 
+%A preprocessing stage works best with transferred adversarial examples, that is, adversarial examples generated against a different classifier with no knowledge of the defense. 
+Currently the most promising direction for training models robust to adversarial attacks is adversarial training. Despite continuing progress on both MNIST and CIFAR10, adversarial training is still very expensive, and performs worse than denoising approaches on the same datasets. We propose an approach combining adversarial training with BFNet, giving a robust, performant classifier on different threat models.
+
+Following \citep{madry2017towards,athalye2018obfuscated,carlini2017towards}, the adversarial training framework can be expressed as the following saddle point problem with model parameters $\theta$, and input $x$ with true label $y$:
+\[
+\min_{\theta} f(x;\theta) \quad \textnormal{where} \quad f(x;\theta) = \mathbb{E}_{(x, y)\sim D} \Big[ \max_{\delta} L(\theta, x + \delta, y)\Big]
+\]
+where a solution to the inner maximization problem represents the \textit{most} adversarial example within some perturbation budget. Solving the outer minimization problem yields a classifier which is robust to the above adversary. \citep{madry2017towards} showed that PGD could reliably solve the inner maximization problem without linearization, and is thus a better adversary to train against than FGSM. 
+
+We propose a modification to the above saddle point formulation which incorporates the BFNet:
+\[
+\min_{\theta} f(BF(x)) \quad \textnormal{where} \quad f(x) = \mathbb{E}_{(x, y)\sim D} \Big[ \max_{\delta} L(\theta, x + \delta, y_{true})\Big]
+\]
+where $BF(x)$ is the bilateral filter in BFNet.
+%, represented as convolutions of an image patch $\Omega$ with two Gaussian kernels. The spatial and range kernels are unchanged and denoted by $G_s(\cdot)$ and $G_r(\cdot)$ respectively, weighting and normalization occur as in the vanilla bilateral filter. Because all our operations are differentiable, it is straightforward to construct a layer in a neural network to perform the bilateral filter. 
+
+
+%Because adversarial examples pose a real world risk to mission-critical AI systems, we plan to open-source our models and implementation soon. We believe it is especially important for defenses against adversarial defenses to be open and validated.  
+
+\section{Experiments}
+
+\subsection{Adaptive Filtering Model}
+In this section we show that our adaptive filtering model can correctly predict filtering parameters which will restore an adversarial input. To test this, we generate a dataset of 1,000 adversarial images from the ILSVRC 2012 validation set with five different attacks: Projected Gradient Descent with 40 steps (PGD), Box constrained L-BFGS, The Carlini \& Wagner $L_2$ attack (CW), The Momentum Iterative FGSM (MIM), FGSM, and DeepFool.
+Where applicable, we constrain the perturbations to an $\epsilon$-ball of radius $0.3$ from the training example. Source images have been normalized to a range of $[-1, 1]$.
+
+To construct our training set we use a separate 1,000 images generated from each of the attacks in table 1. For each image, we collect labels in the form of triples $(K, \sigma_s, \sigma_r)$, $K$ denotes the kernel size, and $\sigma_s$, $\sigma_r$ are the standard deviation for the spatial and range kernels respectively. Given any adversarial example, there may be many permutations of parameters for the bilateral filter that successfully denoise the input. For this reason we collect a maximum of 10 different parameter configurations for each image in our training set. Given this is a multi-class prediction problem, we train using a sigmoid function at the output of our network to predict a set of candidate parameter configurations. At test time we evaluate with the parameters predicted by the maximally activated output unit. Our results are presented in tables \ref{tab:af}, and \ref{tab:clfaf}. 
+
+We used the pretrained Inception V3 \citep{szegedy2016rethinking} and InceptionResNet V2 \citep{szegedy2017inception} ImageNet classifiers as our source networks. To generate adversarial examples on these networks, we used the open-source Cleverhans toolbox \citep{papernot2016cleverhans}.
+the model was trained using SGD with Nesterov momentum for 25 epochs. We then test on six different validation sets, one for each adversary respectively. 
+
+\begin{table}[!h]
+\begin{center}
+  \def\title#1&{\omit#1\hfil&}% omit the preamble formatting + left-align
+  \def\decsplit#1.#2 {\quad\llap{#1}.\rlap{#2}}% quad = 2*enspace; enspace = digit width
+  % only thing "seen" is the decimal point itself
+  \hrule height 1pt \medskip
+  \halign{#\hfil\tabskip1em&&\decsplit#\hfil\cr
+    \title Source Network & \title Clean & \title FGSM & \title PGD & \title MIM & \title CW & \title DeepFool & \title L-BFGS\cr
+    \noalign{\vskip-.4em}% make the gap between header rows smaller
+    \noalign{\smallskip\hrule\medskip}
+    AF+Inception V3\textsubscript{A}       & 95.0 & 89.0 & 90.7 & 79.1 & 89.1 & 90.3 & 81.3 \cr
+    AF+Inception V3\textsubscript{B}       & 95.0 & 95.9 & 98.0 & 96.4 & 94.1 & 95.3 & 96.2 \cr
+    AF+InceptionResNet V2\textsubscript{A} & 91.1 & 87.2 & 87.1 & 75.3 & 87.8 & 85.0 & 80.8 \cr
+    AF+InceptionResNet V2\textsubscript{B} & 91.1 & 93.1 & 98.0 & 94.3 & 97.8 & 92.0 & 95.3 \cr
+  }
+  \hrule height 1pt
+  
+  \end{center}
+  \vskip -0.1in
+  \caption{Performance of our adaptive bilateral filter (AF) network across different attacks. We show (A) the top-5 accuracy of recovering the original predicted classification label from the adversarial example (note this is not necessarily the ground truth label), as well as (B) how often AF is able to defeat the adversarial attack - changing the prediction from the adversarial label to a new one}\label{tab:af}
+\vskip -0.05in
+\end{table}
+
+\begin{table}[!h]
+\begin{center}
+  \def\title#1&{\omit#1\hfil&}% omit the preamble formatting + left-align
+  \def\decsplit#1.#2 {\quad\llap{#1}.\rlap{#2}}% quad = 2*enspace; enspace = digit width
+  % only thing "seen" is the decimal point itself
+  \hrule height 1pt \medskip
+  \halign{#\hfil\tabskip1em&&\decsplit#\hfil\cr
+    \title Network &\title Clean &\title FGSM&\title PGD&\title MIM&\title CW&\title DeepFool &\title L-BFGS \cr
+    \noalign{\vskip-.4em}% make the gap between header rows smaller
+    \noalign{\smallskip\hrule\medskip}
+    Inc V3 \textsubscript{top1}       & 78.8 & 30.1 & 0.2 & 0.1 & 0.1 & 0.7 & 0.0 \cr
+    Inc V3 \textsubscript{top5}       & 94.4 & 65.2 & 4.8 & 5.5 & 7.3 & 0.5 & 12.1 \cr
+    AF + Inc V3 \textsubscript{top1}  & 71.7 & 71.0 & 71.6 & 63.1 & 71.1 & 70.1 & 64.2 \cr
+    AF + Inc V3 \textsubscript{top5}  & 89.6 & 84.0 & 86.3 & 74.6 & 84.1 & 85.2 & 76.7 \cr
+    IncResNet V2 \textsubscript{top1} & 80.4 & 55.3 & 0.8 & 0.5 & 0.3 & 2.5 & 0.0 \cr
+    IncResNet V2 \textsubscript{top5} & 95.3 & 72.1 & 15.8 & 10.2 & 10.3 & 8.5 & 19.2 \cr
+    AF + IncResNet V2 \textsubscript{top1} & 73.1 & 70.1 & 70.8 & 60.5 & 70.3 & 70.5 & 65.0 \cr
+    AF + IncResNet V2 \textsubscript{top5} & 86.7 & 83.1 & 82.8 & 71.7 & 83.6 & 85.6 & 77.0 \cr
+  }
+  \hrule height 1pt
+\end{center}
+\vskip -0.15in
+\caption{ Top-1 and top-5 accuracy of InceptionV3 and Inception-ResNetV2 on adversarial examples. We can see that adaptive filtering significantly increases the robustness of the classifier against many diverse attacks}\label{tab:clfaf}
+\vskip -0.2in
+\end{table}
+
+It can be seen that we recover adversarial examples generated by FGSM, PGD, CW and DeepFool near perfectly, while missing nearly 15\% of the examples of MIM and L-BFGS. These results are significantly better than the results in \citep{li2017adversarial}, which used a 3x3 average filter to recover images. Our Adaptive Filtering network succeeds in removing adversarial examples generated on natural images, with a relatively simple network. This makes the Adaptive Filtering network a viable method for defending networks against an adversary who employs a wide range of attacks.  
+
+%Here we show the strength of BFNet against the final adversary: one who can mount perfect knowledge attacks. For all experiments, we prepend our differentiable bilateral filtering layer to the network, and attack it by backpropogating through the entire defense. We first present our BFNet combined with robust optimization by evaluating it with adversarial training on MNIST and CIFAR-10 datasets. We then show the robustness of BFNet without any robust optimization training methods. We will see that BFNet shows significant robustness to both $L_\infty$ and $L_2$ adversaries both with and without adversarial training.  
+
+\subsection{BFNet Defending Against Counter Attacks on ImageNet}
+Due to the high cost of adversarial training on natural images, on ImageNet we perform only one round of counter-attack, which is: have the attack knows about BFNet and attack it by backpropagating through the entire BFNet defense. We use this as an opportunity to test the robustness of BFNet that cannot be attributed to adversarial training. To this end, we use the Inception V3 and the Inception-ResNet V2 networks, and add our bilateral filter layer to the input, keeping the pretrained ImageNet weights. We test against both $L_2$ and $L_\infty$  adversaries to obtain a complete picture of the robustness of BFNet. $L_\infty$ is a more informative metric when discussing the magnitude of adversarial attacks on very small images, because a large perturbation measured under the $L_\infty$ norm equates to a large visual change across few pixels. But with large natural images, a perturbation with a large $L_\infty$ distance is less interpretable. A large change to a single pixel may still go unnoticed to a human observer, while a large perturbation under the $L_2$ norm gives more information about the \textit{total distortion} caused by the adversarial attack. 
+
+\begin{figure}[htb]
+\label{fig:l2_images}
+\centering
+\captionsetup[subfigure]{}
+\begin{subfigure}{\textwidth}
+  \centering
+  \includegraphics[width=.9\linewidth]{lbfgs_adv_bf.png}
+\vskip -0.1in
+  \caption{Adversarial examples generated by L-BFGS on a BFNet version of the Inception V3 classifier. Generated adversarial examples have visually identifiable perturbations, and have an average $L_2$ norm of $106.2$ }
+\end{subfigure}
+\vskip -0.03in
+\begin{subfigure}{\textwidth}
+  \centering
+  \includegraphics[width=.9\linewidth]{deepfool_adv.png}
+\vskip -0.1in
+  \caption{Adversarial examples generated by DeepFool on a BFNet version of the Inception V3 classifier. The generated adversarial examples have large, noisy perturbations, and have an average $L_2$ norm of $181.2$ }
+\end{subfigure}
+\vskip -0.08in
+\caption{ Adversarial images created with BFNet. See the appendix for adversarial images from the same original images without BFNet}
+\label{fig:bfnet_imagenet}
+\vskip -0.1in
+\end{figure}
+
+%\subsubsection{$L_2$ Robustness}
+To measure resistance to attacks under the $L_2$ norm, we use the unbounded attacks L-BFGS and DeepFool. It is impossible to be fully resistant to unbounded attacks, because any image can be changed to a completely different image and its CNN output would certainly change. Hence, we report the average $L_2$ and $L_\infty$ distance of the adversarial images to the original ones from the unbounded attacks.
+From Table \ref{tab:deepfool_in} we can see that our approach yields a very robust model against adversarial perturbations under the $L_2$ metric. When attacking our BFNet models with DeepFool, we see that the generated adversarial image has an $L_\infty$ distance over \textit{30x larger}, when compared to an unmodified network of the same architecture. Similarly, we can see that the $L_2$ distance of an adversarial generated against BFNet is far larger when compared to adversarial images generated against a network of the same architecture without the bilateral filter. With respect to the L-BFGS attack, we see a similarly large disparity between BFNet and a vanilla network.  Fig.\ref{fig:bfnet_imagenet} shows some examples of images generated by those adversarial counterattacks. One can see that the DeepFool and LBFGS attacks had to significantly modify the image to defeat BFNet, creating clearly visible patterns. An adversarial detector or a human eye would easily be able to detect those attacks.
+\begin{table}
+\begin{center}
+\begin{tabular}{cccccc} \toprule
+& \multicolumn{2}{c}{DeepFool} & \multicolumn{2}{c}{L-BFGS} \\
+    {Network} & {$L_\infty$} & {$L_2$} & $L_\infty$ & $L_2$  \\ \midrule{Inception V3\textsubscript{Natural}}  & 0.015 & 0.43  & 0.02 & 0.67 \\
+    {Inception V3\textsubscript{BFNet}}    & 0.621 & 148.29 & 0.39 & 90.52 \\ \midrule{IncResNet V2\textsubscript{Natural}}  & 0.025 & 0.44 & 0.06 & 0.77  \\
+    {IncResNet V2\textsubscript{BFNet}}    & 0.793 & 187.45 & 0.65 & 90.65\\ \bottomrule
+\end{tabular}
+\end{center}
+\vskip -0.1in
+\caption{ Performance of BFNet against DeepFool and L-BFGS attacks. We report the average $L_2$ and $L_\infty$ distance of $1,000$ adversarial images on Inception V3 and Inception-ResNet V2.}
+\label{tab:deepfool_in}
+\vskip -0.2in
+\end{table}
+
+%\subsubsection{$L_\infty$ Robustness}
+For the $L_\infty$ attacks such as FGSM, and MI-FGSM we measure the resistance of our model to different values of perturbation $\epsilon$. We can see that our BFNet significantly decreases the attack strength of $L_\infty$ adversaries, in most cases by over $50\%$. Of particular note is that we show more significant resistance to adversarial perturbations of $\epsilon \leq 0.3$. Larger perturbations are visually discernible, and thus are less adversarial than smaller fooling perturbations. For both attacks we use 1,000 random images sampled from the ILSVRC 2012 validation set, and report the percentage of successful attacks against the natural model and BFNet respectively.
+\begin{table}[htb]
+\begin{center}
+\begin{tabular}{cccccc} \toprule
+& & \multicolumn{2}{c}{FGSM} & \multicolumn{2}{c}{MI\_FGSM} \\
+      {Network} & {Epsilon} & {Natural} & {BFNet} & Natural & BFNet \\ \midrule{Inception V3}  & 0.1  & 73.2  &  \textbf{30}.\textbf{2} & 58.8  &  \textbf{21}.\textbf{0}\\{Inception V3}  & 0.15 & 78.6  &  \textbf{36}.\textbf{6} & 65.6  &  \textbf{30}.\textbf{1} \\
+	  {Inception V3}  & 0.3  & 93.2  &  \textbf{46}.\textbf{6} &88.2  &  \textbf{42}.\textbf{2}\\{Inception V3}  & 0.5  & 99.0  &  \textbf{63}.\textbf{2}& 98.0  &  \textbf{52}.\textbf{4} \\
+	  {Inception V3}  & 0.75 & 100.0 &  \textbf{90}.\textbf{8} & 99.6  &  \textbf{53}.\textbf{4}   \\
+	  {Inception V3}  & 1.0  & 100.0 &  \textbf{99}.\textbf{8} &99.6  &  \textbf{70}.\textbf{8}\\
+	  \noalign{\smallskip\hrule\medskip}
+	  %IncResNet V2  & 0.05 & 57.0  &  \textbf{23}.\textbf{0} \cr
+      {IncResNet V2}  & 0.1  & 58.8  &  \textbf{42}.\textbf{6} &89.1  &  \textbf{59}.\textbf{0}\\{IncResNet V2}  & 0.15 & 65.6  &  \textbf{55}.\textbf{4} &90.6  &  \textbf{38}.\textbf{6}\\{IncResNet V2}  & 0.3  & 88.2  &  \textbf{75}.\textbf{4} &92.2  &  \textbf{59}.\textbf{4}\\{IncResNet V2}  & 0.5  & 98.0  &  \textbf{91}.\textbf{0} &100.0 &  \textbf{74}.\textbf{6}\\{IncResNet V2}  & 0.75 & \textbf{99}.\textbf{6}  &  \textbf{99}.\textbf{6} &100.0 &  \textbf{80}.\textbf{2} \\
+      {IncResNet V2}  & 1.0  & \textbf{99}.\textbf{6}  &  \textbf{99}.\textbf{6} & 100.0 &  \textbf{91}.\textbf{8}\\ \bottomrule
+\end{tabular}
+\end{center}
+\vskip -0.1in
+\caption{ Performance of BFNet against FGSM and MI-FGSM adversaries for a range of perturbation sizes (lower is better). For our MI-FGSM attack, we use a momentum decay factor of $1.0$, and run the attack for $10$ iterations} \label{tab:fgsm_in}
+\vskip -0.1in
+\end{table}
+
+\subsection{Adversarial Training}
+Finally, we experiment on adversarial training with BFNet on the MNIST and CIFAR-10 datasets. 
+
+%For the MNIST dataset we construct a model with two convolutional layers, with 32 and 64 filters respectively. We use 2x2 max pooling followed by a single logit layer with 1024 units. 
+%We then prepend our bilateral filter layer to the first convolutional layer. 
+
+\subsubsection{MNIST}
+To show that BFNet is robust to strong first-order adversaries, we train a small CNN to $99.2\%$ accuracy on the test set. Our model consists of 2 convolutional layers with 32 and 64 filters respectively, each followed by 2 x 2 max pooling and ReLU. We use a final fully connected layer with 1024 units. We modify our network into a BFNet by adding our bilateral filter layer at the input of the first convolutional layer. We then train with adversarial training using three distinct adversaries: FGSM, PGD, and PGD with the proposed CW loss function. We report the results in table \ref{tab:mnist}. Our results perform well against the state-of-the-art adversarial training results. We also show that when our network is trained on a single strong adversary, we are robust to attacks from other adversaries. 
+
+\begin{table}[htb]
+\vskip -0.05in
+%\begin{center}
+%\resizebox{\textwidth}{!}{
+\begin{tabular}{@{}llllll@{}} \toprule{Network} & {Clean} & {FGSM} & {PGD} & {CW} & {CW} \\
+    & & & & & ($\kappa$=50) \\\midrule{BFNet\textsubscript{pgd}}   & \textbf{99}.\textbf{0} &  95.5  & \textbf{98}.\textbf{0} & 93.2   & {-}   \\
+    {BFNet\textsubscript{fgsm}}  & \textbf{99}.\textbf{0} & \textbf{98}.\textbf{1} & 36.4 & 88.2     & \textbf{96}.\textbf{0} \\
+    {Madry}                   & 98.8 & 95.6 & 93.2 & \textbf{94}.\textbf{0} & 93.9 \\ 
+    {Tramer\textsubscript{A}}  & 98.8 & 95.4 & 96.4 & {-}  & 95.7 \\
+    {Tramer\textsubscript{B}}  & 98.8 & 97.8 & {-} & {-}   & {-}  \\ \bottomrule
+
+\end{tabular}
+\begin{tabular}{ccccc@{}} \toprule{Method} & {Type} & {Clean}  & {FGSM} & {PGD} \\ \midrule{BFNet\textsubscript{pgd}}  & {A}  & 87.1 &  55.2  & \textbf{50}.\textbf{4}  \\
+    {BFNet\textsubscript{pgd}}  & {B}  & 73.1 &  64.5  & 38.1 \\
+    {BFNet\textsubscript{fgsm}} & {B}  & 76.5 & \textbf{70}.\textbf{6} & 12.2  \\
+    {Madry}              & {A}  & 87.3 & 56.1 & 45.6  \\ \bottomrule
+\end{tabular}
+\vskip -0.05in
+\caption{ LEFT: Comparison of our method with state of the art adversarial training results on MNIST. BFNet\textsubscript{pgd} denotes our model trained against a PGD adversary, while BFNet\textsubscript{fgsm} is trained against a FGSM adversary. For Tramer We report A: the strongest white box attack given against a non-ensembled model from \citep{tramer2017ensemble}, as well as B: the performance of architecture B from \citep{madry2017towards}; RIGHT: Performance of our two adversarially trained BFNets on CIFAR-10. BF\textsubscript{pgd} denotes our model trained against a PGD adversary, while BFNet\textsubscript{fgsm} is trained against a FGSM adversary. Network type (A) refers to the ResNet network used in \citep{madry2017towards}, while (B) refers to the smaller architecture.}\label{tab:mnist}
+\vskip -0.1in
+\end{table}
+
+During training we observe a faster convergence in training loss (see Appendix), and increased robustness to white-box FGSM, PGD, and CW attacks, when trained against only the PGD attack. However, the model trained against FGSM does worse against stronger adversaries such as PGD, as the attack itself is a weak adversary. 
+\subsubsection{CIFAR10}
+We perform similar experiments to test BFNet on CIFAR-10. We use a network with four convolutional layers, each followed by 2x2 max pooling. A linear layer of $4,096$ units is used before softmax. For BFNet, a differentiable bilateral filter layer to preprocess the images. When naturally trained with Adam for 30 epochs, this network reaches an accuracy of 79.04\% on the test set. We also train the original ResNet-18 model used in \citep{madry2017towards} for 80K iterations. Trained on natural examples we reached an accuracy of 92.7\% on the test set. Each model is then trained adversarially with PGD and FGSM, respectively. We use an $L_\infty$ bound of $\epsilon = 8$ for both adversaries. We use 20-step PGD with a learning rate of $2.0$. We report our results in Table \ref{tab:mnist} and it can be seen that our BFNet trained on PGD outperforms \citep{madry2017towards} significantly on the PGD adversary.
+
+In contrast to MNIST, CIFAR-10 remains a very challenging dataset. The higher dimensionality makes robust training significantly more difficult. Because CIFAR-10 is too small, the edges are not so obvious, which could have hurted our performance. We believe that the bilateral filtering poses more constraint in larger natural images, such as ImageNet.
+
+
+\section*{Conclusion}
+The continued existence of adversarial examples, and the lack of effective defenses limits our ability to deploy AI systems in critical areas where safety and security are necessary. In this paper we showed that a bilateral filter can be used as a core part of versatile, effective defenses to recover clean images from perturbed ones. The bilateral filter remains effective when deployed with numerous defense strategies: as a manual preprocessing step, a trained denoiser, or a robust model that is trained end-to-end. Our defense holds in multiple attack settings where the attacker has knowledge about it. In the future we hope to explore even better filter approaches which projects even better to the natural image manifold and limit adversarial examples, as well as combining it with an adversarial detection approach to construct a comprehensive defense.
+
+%Because the bilateral filter encourages piecewise smoothness, we see that the bilateral filter effectively projects adversarial images back to the distribution of natural images. Furthermore, when trained end to end, our bilateral filter can be combined with adversarial training approaches to create a robust defense method.
+%In the future we hope to see preprocessor defenses te sted by direct white-box attack, and combined with robust optimization methods like adversarial training to create performant, unified defenses. 
+
+\bibliography{iclr2019_conference,dependent_reference}
+\bibliographystyle{iclr2019_conference}
+
+\newpage
+
+\section{Appendix}
+\subsection{More examples of bilateral filtering results on adversarial images}
+Fig. \ref{fig:collection} shows more examples of adversarial images from several different attacks after bilateral filtering.
+\begin{figure}[!ht]
+\centering
+\includegraphics[width=.8\linewidth, height=.6\linewidth]{adv_composite__1_.png}
+\caption{The effect of bilateral filtering on adversarial inputs. From left to right, we show the adversarial perturbation, the clean image, the adversarial images generated by the respective attack algorithms, and the recovered image after bilateral filtering. Note that bilateral filtering does not destroy image quality, and images can be correctly classified. }
+\label{fig:collection}
+\end{figure}
+\subsection{Adversarial images without BFNet}
+Fig.~\ref{fig:nonbf_imagenet} shows the images generated with DeepFool and L-BFGS on ImageNet without BFNet added to preprocess the images. Compared with Fig.~\ref{fig:bfnet_imagenet}, these adversarial images are indiscernible with real ones from human eyes.
+\begin{figure}[htb]
+\begin{subfigure}{\textwidth}
+  \centering
+  \includegraphics[width=.9\linewidth]{deepfool_adv_nat.png}
+  \caption{\small Adversarial images generated with DeepFool on a vanilla Inception V3 classifier. The adversarial images are visually identical to the real images, and have an average $L_2$ norm of $0.09$}
+\end{subfigure}
+\vskip -0.05in
+\begin{subfigure}{\textwidth}
+  \centering
+  \includegraphics[width=.9\linewidth]{adv__1_.png}
+  \caption{\small Adversarial examples generated by an L-BFGS adversary on a vanilla Inception V3 classifier. The adversarial examples have an average $L_2$ distance of $0.025$ from their natural counterparts, and have visually imperceptible perturbations. }
+  \end{subfigure}
+  \vskip -0.05in
+  \caption{Adversarial images generated by DeepFool and L-BFGS without BFNet, to be compared with Fig.\ref{fig:bfnet_imagenet}}
+  \label{fig:nonbf_imagenet}
+\end{figure}
+\subsection{Convergence of the adversarial training}
+Fig. \ref{fig:mnist_acc} shows the convergence of the adversarial training.
+\begin{figure}[htb]
+\centering
+\begin{subfigure}{.5\textwidth}
+  \centering
+  \includegraphics[width=.99\linewidth]{mnist_adv_acc.png}
+  \caption{}
+\end{subfigure}%
+\begin{subfigure}{.5\textwidth}
+  \centering
+  \includegraphics[width=.99\linewidth]{mnist_adv_xent.png}
+  \caption{}
+\end{subfigure}
+\caption{The average mini-batch batch accuracy (a) and cross entropy loss (b) for the model trained with adversarial training on MNIST. We trained our model to convergence, which happened near 20k iterations. We can see that the training is stable and converges to a similar training error as a naturally trained network}\label{fig:mnist_acc}
+\end{figure}
+\subsection{Adversarial examples that fooled the adversarially trained BFNet}
+Fig.\ref{fig:pgdfail} and Fig.\ref{fig:fgsmfail} showed all the failure images after adversarial training on the MNIST dataset.
+\begin{figure}[htb]
+%\label{fig:test}
+\centering
+\captionsetup[subfigure]{labelformat=empty}
+\begin{subfigure}{.3\textwidth}
+  \centering
+  \includegraphics[width=.3\linewidth]{pgd_148-7-4.png}
+  \caption{Natural: 7\\Adversarial: 4}
+\end{subfigure}%
+\begin{subfigure}{.3\textwidth}
+  \centering
+  \includegraphics[width=.3\linewidth]{pgd_160-8-4.png}
+  \caption{Natural: 8\\Adversarial: 4}
+\end{subfigure}
+\begin{subfigure}{.3\textwidth}
+  \centering
+  \includegraphics[width=.3\linewidth]{pgd_370-7-1.png}
+  \caption{Natural: 7\\Adversarial: 1}
+\end{subfigure}
+\begin{subfigure}{.3\textwidth}
+  \centering
+  \includegraphics[width=.3\linewidth]{pgd_494-6-0.png}
+  \caption{Natural: 6\\Adversarial: 0}
+\end{subfigure}
+\begin{subfigure}{.3\textwidth}
+  \centering
+  \includegraphics[width=.3\linewidth]{pgd_720-8-1.png}
+  \caption{Natural: 8\\Adversarial: 1}
+\end{subfigure}
+\begin{subfigure}{.3\textwidth}
+  \centering
+  \includegraphics[width=.3\linewidth]{pgd_80-9-5.png}
+  \caption{Natural: 9\\Adversarial: 5}
+\end{subfigure}
+\caption{PGD adversarial examples which fool an adversarially trained BF\textsubscript{PGD} with $\epsilon = 0.3$}
+\label{fig:pgdfail}
+\end{figure}
+
+\begin{figure}[htb]
+%\vspace{0.06cm}
+\centering
+\captionsetup[subfigure]{labelformat=empty}
+\begin{subfigure}{.3\textwidth}
+  \centering
+  \includegraphics[width=.3\linewidth]{fgsm_148-7-2.png}
+  \caption{Natural: 7\\Adversarial: 2}
+\end{subfigure}%
+\begin{subfigure}{.3\textwidth}
+  \centering
+  \includegraphics[width=.3\linewidth]{fgsm_224-1-3.png}
+  \caption{Natural: 1\\Adversarial: 3}
+\end{subfigure}
+\begin{subfigure}{.3\textwidth}
+  \centering
+  \includegraphics[width=.3\linewidth]{fgsm_370-7-1.png}
+  \caption{Natural: 7\\Adversarial: 1}
+\end{subfigure}
+\begin{subfigure}{.3\textwidth}
+  \centering
+  \includegraphics[width=.3\linewidth]{fgsm_418-8-2.png}
+  \caption{Natural: 6\\Adversarial: 0}
+\end{subfigure}
+\begin{subfigure}{.3\textwidth}
+  \centering
+  \includegraphics[width=.3\linewidth]{fgsm_67-1-7.png}
+  \caption{Natural: 1\\Adversarial: 7}
+\end{subfigure}
+\begin{subfigure}{.3\textwidth}
+  \centering
+  \includegraphics[width=.3\linewidth]{fgsm_778-5-7.png}
+  \caption{Natural: 9\\Adversarial: 5}
+\end{subfigure}
+\caption{FGSM adversarial examples which fool adversarially trained BF\textsubscript{fgsm} with $\epsilon = 0.3$}
+\label{fig:fgsmfail}
+\end{figure}
+\end{document}

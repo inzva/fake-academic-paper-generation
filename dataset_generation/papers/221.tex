@@ -4,23 +4,9 @@
 \usepackage{times}
 \usepackage{epsfig}
 \usepackage{graphicx}
+\usepackage{subcaption}
 \usepackage{amsmath}
 \usepackage{amssymb}
-\usepackage{mathtools}
-\usepackage{url}
-\usepackage{listings}
-\usepackage{framed}
-\usepackage{multirow}
-\usepackage{xcolor}
-\usepackage{mdwlist}
-\usepackage{caption}
-\usepackage{subcaption}
-
-\newcommand{\SotA}{state-of-the-art }
-%\newcommand{\etal} {\emph{et al.}}
-\newcommand{\dropin}{DropIn }
-\newcommand{\dropinNS}{DropIn}
-\DeclarePairedDelimiter{\ceil}{\lceil}{\rceil}
 
 % Include other packages here, before hyperref.
 
@@ -31,825 +17,584 @@
 
 \cvprfinalcopy % *** Uncomment this line for the final submission
 
-\def\cvprPaperID{495} % *** Enter the CVPR Paper ID here
+\def\cvprPaperID{6108} % *** Enter the CVPR Paper ID here
 \def\httilde{\mbox{\tt\raisebox{-.5ex}{\symbol{126}}}}
 
 % Pages are numbered in submission mode, and unnumbered in camera-ready
-%\ifcvprfinal\pagestyle{empty}\fi
+\ifcvprfinal\pagestyle{empty}\fi
+\setcounter{page}{1}
 \begin{document}
 
 %%%%%%%%% TITLE
-\title{Gradual DropIn of Layers to Train Very Deep Neural Networks}
+\title{Automatic Dataset Annotation to Learn CNN Pore \\ Description for Fingerprint Recognition}
 
-\author{
-Leslie N. Smith\\
-Naval Research Laboratory\\
-%4555 Overlook Ave, Washington, DC \\
-{\tt\small leslie.smith@nrl.navy.mil}\\
-\and
-Emily M. Hand\\
-University of Maryland\\
-%4438 A.V. Williams, College Park, MD\\
-{\tt\small emhand@cs.umd.edu}
-\and
-Timothy Doster\\
-Naval Research Laboratory\\
-%4555 Overlook Ave, Washington, DC\\
-{\tt\small timothy.doster@nrl.navy.mil}\\
+% Authors at the same institution
+\author{Gabriel Dahia \hspace{2cm} Maur\' icio Pamplona Segundo \\
+Department of Computer Science, Federal University of Bahia \\
+{\tt\small gdahia@gmail.com, mauriciops@ufba.br} \\
 }
 
 \maketitle
-%\thispagestyle{empty}
+\ifcvprfinal\thispagestyle{empty}\fi
 
 %%%%%%%%% ABSTRACT
 \begin{abstract}
-
-
-We introduce the concept of dynamically growing a neural network during training. In particular, an untrainable deep network starts as a trainable shallow network and newly added layers are slowly, organically added during training, thereby increasing the network's depth. This is accomplished by a new layer, which we call \dropinNS. The \dropin layer starts by passing the output from a previous layer (effectively skipping over the newly added layers), then increasingly including units from the new layers for both feedforward and backpropagation. We show that deep networks, which are untrainable with conventional methods, will converge with \dropin layers interspersed in the architecture. In addition, we demonstrate that \dropin provides regularization during training in an analogous way as dropout. Experiments are described with the MNIST dataset and various expanded LeNet architectures, CIFAR-10 dataset with its architecture expanded from 3 to 11 layers, and on the ImageNet dataset with the AlexNet architecture expanded to 13 layers and the VGG 16-layer architecture.
-
+  High-resolution fingerprint recognition often relies on sophisticated matching algorithms based on hand-crafted keypoint descriptors, with pores being the most common keypoint choice.
+  Our method is the opposite of the prevalent approach: we use instead a simple matching algorithm based on robust local pore descriptors that are learned from the data using a CNN.
+  In order to train this CNN in a fully supervised manner, we describe how the automatic alignment of fingerprint images can be used to obtain the required training annotations, which are otherwise missing in all publicly available datasets.
+  This improves the state-of-the-art recognition results for both partial and full fingerprints in a public benchmark.
+  To confirm that the observed improvement is due to the adoption of learned descriptors, we conduct an ablation study using the most successful pore descriptors previously used in the literature.
+  All our code is available 
+  \ifcvprfinal
+  at \url{https://github.com/gdahia/high-res-fingerprint-recognition}.
+  \else
+  in the Supplementary Materials.
+  \fi
 \end{abstract}
 
 %%%%%%%%% BODY TEXT
 \section{Introduction}
 
-\label{sec:intro}
+Automated fingerprint recognition systems mostly work by detecting keypoints, usually minutiae or pores, and matching them across images.
+Sometimes, the matching approach uses local descriptors to describe the keypoints' neighborhood and establish correspondences~\cite{jain-latent,direct-pore,ridge-reconstruction}.
+These approaches usually provide excellent recognition results and can mostly be categorized into two settings.
+The first one uses low-resolution sensors but requires high-quality images comprising the entire fingerprint~\cite{jain-pores-and-ridges,ridge-reconstruction}.
+The second setting requires high-resolution images and relies on sophisticated and computationally expensive algorithms to match keypoint descriptors~\cite{ridge-reconstruction,su-pores-deep,td-sparse}.
+The latter usually provides better recognition results, thus allowing the use of partial fingerprints while maintaining the system secure.
+The focus of this work is on the second scenario, high-resolution fingerprint recognition.
+Specifically, we consider pores as keypoints, as many works in the literature do~\cite{direct-pore, ridge-reconstruction, td-sparse, feature-guided, su-pores-deep}.
 
-Over the past few years, \SotA results for image recognition \cite{Alexnet12,  simonyan2014very,szegedy2014going}, object detection \cite{girshick2014rich}, face recognition \cite{taigman2014deepface}, speech recognition \cite{graves2014towards}, machine translation \cite{sutskever2014sequence}, image caption generation \cite{vinyals2014show}, driverless car technology \cite{huval2015empirical}, and other applications \cite{lecun2015deep} have required increasingly deeper neural networks. 
-%We propose \dropin as a way to train these deep networks.
+We attribute the previously mentioned need for sophisticated matching algorithms to the widespread use of hand-crafted keypoint descriptors.
+These descriptors do not require training data and are fast to compute~\cite{direct-pore,ridge-reconstruction}, but are not very robust to some of the variations to which fingerprint images are susceptible, \eg the opening and closing of pores and distortions caused by the finger pressure applied to the sensor surface.
+This causes many spurious keypoint correspondences when using simple matching criteria.
 
+There were two ways to solve this problem.
+The first one involves improving descriptors.
+While there are approaches that learn keypoint descriptors with better results than hand-crafted ones~\cite{l2net,hardnet,doap}, their use is incipient in the fingerprint recognition literature~\cite{jain-latent, zhang-pattern-rec}.
+This is probably caused by the lack of adequate keypoint annotations in publicly available fingerprint datasets, a requirement for the known approaches to learning local descriptors.
+We believe this led researchers to focus on developing more and more sophisticated matching algorithms, the second way to address the spurious correspondences problem~\cite{td-sparse, ridge-reconstruction, feature-guided}.
+A detailed analysis of previous works is given in Section~\ref{sec:related-work}.
 
-Network depth refers to the number of layers in the architecture. 
-It is well known that adding layers to neural networks makes them more expressive \cite{montufar2014number}. 
-Each year, the Imagenet Challenge \cite{Imagenet15} is held in which teams are expected, given an image, to detect, localize, or recognize an object in the image. 
-%The Imagenet Challenge, with over 1000 object categories, is considered the current benchmark for object detection, localization, and recognition tasks. 
-Deep convolutional neural networks (CNNs) have dominated the competition since Krizhevsky \etal won in 2012 \cite{Alexnet12}, and each year since, the winner of the competition used a deeper network than the previous year's winner \cite{Imagenet15, simonyan2014very, szegedy2014going}.
-%, e.g. the winner in 2012 used 8 layers while in 2014 the winner used 19 layers. 
+In this work, we approach this problem using the former approach.
+First, we show that by aligning training images, we can automatically generate the required keypoint annotations for them.
+This allows learning local descriptors for pores with a convolutional neural network (CNN) in a fully supervised manner.
+While it is common to find previous works that align fingerprint images, they do so as a step in the matching stage to discard spurious correspondences~\cite{direct-pore, td-sparse}.
+Our work, on the other hand, uses fingerprint alignment to generate training data.
+As we do this offline, and not as part of the matching method, it does not affect the computational cost to perform recognition.
+Second, we show that using the proposed descriptors with a simple matching algorithm improves the state-of-the-art performance in the standard high-resolution fingerprint recognition benchmark: the Hong Kong Polytechnic University High-Resolution-Fingerprint (PolyU-HRF) dataset~\cite{direct-pore}.
 
-However, training a very deep network is a difficult and open research problem \cite{erhan2009difficulty, glorot2010understanding, srivastava2015training}. 
-It is difficult to train very deep networks because the error norm during backpropagation can grow or vanish exponentially.
-In addition, very large training datasets are necessary when the network has millions of weights.
+Our method for fingerprint recognition consists of describing each pore with the learned descriptors, finding pore correspondences across images, and determining if the number of these correspondences is above a fixed threshold.
 
-Here we suggest a dynamic architecture that grows during the training process and allows for the training of very deep networks.
-We illustrate this with our \dropin layer, where new layers are skipped at the start of the training, as though they were not present.
-This allows the weights of the included layers to start converging.
-Over a number of iterations the \dropin layer increasingly includes activations from the inserted layers, which gradually trains the weights in theses added layers. 
+The contributions of this work are:
+\begin{itemize}
+\item we detail how aligning fingerprint images in a training set provides the required annotations to train a CNN that learns local keypoint descriptors (Section~\ref{sec:pore-description});
 
-\dropin follows the philosophy embedded within curriculum learning \cite{bengio2009curriculum}.
-With curriculum learning one starts with an easier problem and incrementally increases the difficulty.
-Here too, one starts training a shallow architecture and after convergence begins, \dropin incrementally modifies the architecture to slowly include units from the new layers.
-%In \cite{gulccehre2013knowledge} the authors build upon the ideas of curriculum learning to include intermediate levels of guidance in the learning process.  
+\item we describe our fingerprint recognition algorithm, which combines a simple matching criterion with the learned descriptors (Section~\ref{sec:rec});
+%"we describe our fingerprint recognition algorithm, which combines a simple matching criterion with the descriptors learned from data annotated using our method (Section~\ref{sec:rec});" or something like it, to emphasize here in the contributions, that we use the method in our paper. maybe in the previous item or not at all?
 
-In addition, \dropin can be used in a mode analogous to dropout \cite{srivastava2014dropout} for the regularization of a deep neural network during training.  
-Instead of setting random activations to zero, as is done in dropout, \dropin sets these activations to the activations from a previous layer.
-% leading to a more robust trained network.
-%This provides some of the benefits from regularization that dropout offers.
-We demonstrate that the ``noise'' from mixing the activations from previous layers provides regularization during training. 
-In addition, both \dropin and dropout can be viewed as training a large collection of networks with varied architectures and extensive weight sharing.
+\item we show that the proposed method yields state-of-the-art performance in the standard benchmark for the task (Section~\ref{sec:exps}).
+  To verify our claim that the need for sophisticated matching is due to the use of hand-crafted descriptors, we conduct an ablation study with the most successful pore descriptors used in previous works.
+\end{itemize}
 
-The contributions of this paper are:
-\begin{enumerate*}
-  \vspace{-10pt}
-\item A dynamic architecture that can grow during training.  
-\item The details of a \dropin layer for enabling the training of very deep networks and for regularization during training.  
-%Also, a Resize layer is described to enable using \dropin even when the two input layers' sizes are different. 
-\item Examples of successfully training deep architectures that cannot be trained with conventional methods on MNIST, CIFAR-10, and ImageNet.
-%\item A method to discover an optimal architecture for a given application and dataset.
-\end{enumerate*}
-
-%-------------------------------------------------------------------------
-
-
+%---------------------------------------------------------------------
 \section{Related work}
-%There has been a limited amount of work in recent years on how to train very deep networks.  
-Methods for training very deep networks  have centered on initialization of the network weights or developing new architectures and \dropin is in the latter category.  
-%There has been somewhat more work on regularizing the networks, this has come manly in the form of dropout.  
-%We will now provide a brief review of the current state of initialization of network weights, new architecture for very deep networks, and regularization of networks.  We will also mention how \dropin will relate to this methods.  
+\label{sec:related-work}
 
+%---------------------------------------------------------------------
+\begin{figure*}[t]
+  \begin{center}
+    \setlength{\unitlength}{\textwidth}
+    \begin{picture}(1, 0.2)
+      \thicklines
+      \put(0.015, 0.155){(I)}
+      \put(0.01, 0.025){(II)}
+      \put(0.05, 0.11){\includegraphics[width=0.14\textwidth]{imgs/annotation-pipeline/crop-321_2_3-0.png}}
+      \put(0.197, 0.11){\includegraphics[width=0.14\textwidth]{imgs/annotation-pipeline/crop-321_1_3-0.png}}
+      \put(0.05, -0.02){\includegraphics[width=0.14\textwidth]{imgs/annotation-pipeline/crop-272_2_3-0.png}}
+      \put(0.197, -0.02){\includegraphics[width=0.14\textwidth]{imgs/annotation-pipeline/crop-272_1_3-0.png}}
+      \put(0.1825, -0.055){(a)}
+      
+      \put(0, 0.0975){\line(1, 0){1}}
 
-\subsection{Initialization of network weights}
-Sutskever \etal \cite{sutskever2013importance} investigate the difficulty in training deep networks and conclude that both proper initialization and momentum are necessary.  Glorot and Bengio \cite{glorot2010understanding} recommend an initialization method called \textit{normalized initialization} to allow the training of deep networks.  
-%In this method weights are chosen from a distribution %$$W\sim  U[-6/\sqrt{n_j+n_{j+1}},6/\sqrt{n_j+n_{j+1}} ]$$ 
-%such that the activation variance and the backpropagation variance are maintained throughout the network.  Using normalized initialization improved convergence during training.  
-He \etal \cite{he2015delving} recently improved  upon the ``normalized initialization'' method by changing the distribution to take into account ReLU layers.  
+      \put(0.345, 0.0325){\vector(1, 0){0.03}}
+      \put(0.345, 0.1625){\vector(1, 0){0.03}}
 
-Hinton \etal \cite{hinton2006fast} proposed first training layer by layer in an unsupervised fashion so that a transformed version of the input could be realized.  
-%This method is able to capture the main variation of the input layer by layer.  Finally supervised fine-tuning occurs on the pre-trained weights.     
-Erhan  \cite{erhan2009difficulty} later characterized the mathematics of the unsupervised pre-training and offered an explanation for its success.   
+      \put(0.383, 0.11){\includegraphics[width=0.14\textwidth]{imgs/annotation-pipeline/crop-321_2_3-1.png}}
+      \put(0.53, 0.11){\includegraphics[width=0.14\textwidth]{imgs/annotation-pipeline/crop-321_1_3-1.png}}
+      \put(0.383, -0.02){\includegraphics[width=0.14\textwidth]{imgs/annotation-pipeline/crop-272_2_3-1.png}}
+      \put(0.53, -0.02){\includegraphics[width=0.14\textwidth]{imgs/annotation-pipeline/crop-272_1_3-1.png}}
+      \put(0.5165, -0.055){(b)}
 
-Sussillo and Abbott \cite{sussillo2015random} suggest an initialization scheme called \textit{Random Walk Initialization} based on scaling the initial random matrices correctly.  
-By multiplying the error gradient by a correctly scaled random matrix at each layer, an unbiased  random walk is formed.  
-%It can shown that the variance of the random walk grows only linearly with the depth of the network and thus the growing backpropagation error can be handled by increasing the size of the layers.  
-This is one of only a few papers that show the results of experiments with networks consisting of hundreds of layers.  
-%The results in this paper indicated that just adding layers does not necessarily improve accuracy results, which we also found to be true.
+      \put(0.677, 0.0325){\vector(1, 0){0.03}}
+      \put(0.677, 0.1625){\vector(1, 0){0.03}}
 
-\subsection{Developing new architecture}
+      \put(0.714, 0.11){\includegraphics[width=0.14\textwidth]{imgs/annotation-pipeline/crop-321_2_3-2-alt.png}}
+      \put(0.86, 0.11){\includegraphics[width=0.14\textwidth]{imgs/annotation-pipeline/crop-321_1_3-2-alt.png}}
+      \put(0.714, -0.02){\includegraphics[width=0.14\textwidth]{imgs/annotation-pipeline/crop-272_2_3-2-alt.png}}
+      \put(0.86, -0.02){\includegraphics[width=0.14\textwidth]{imgs/annotation-pipeline/crop-272_1_3-2-alt.png}}
+      \put(0.8475, -0.055){(c)}
 
-Raiko, \etal \cite{raiko2012deep} introduce the concept of skip connections by adding a linear transformation to the usual non-linear transformation of the input to a unit.  
-Skip connections separate the linear and non-linear portions of the activations and allow the linear part to ``skip'' to higher layers.
-This is similar to \dropin in some ways, but the purpose of \dropin differs from that of skip connections, and \dropin does not need to learn any parameters.
-%Furthermore, the skip connection experiments in their paper are with  shallower networks compared to those considered here.
+    \end{picture}
+  \end{center}
+  \vspace{14pt}
+  \caption{Automatic pore annotation pipeline.
+  (a) A fingerprint dataset for which images have subject labels is the input to our method.
+  Images in the same row belong to the same subject, \ie images in the first row belong to subject (I), images in the second row belong to subject (II).
+  (b) For each subject, a reference image is picked arbitrarily and every other image of that subject is aligned to it.
+  The left images are the references for their subjects.
+  The right images are transformed only to show the found alignment.
+  (c) Pores that are not visible in some image of its subject are discarded. The remaining pores are annotated with unique labels.
+  In these images, circles of different colors correspond to different, unique pore labels.
+  Though there are colors in one image that look the same, they represent different labels.
+  Notice how the alignment is used only to find pore correspondences; the images are unchanged by the end of the annotation process.
+  Best viewed in color.
+  }
+  \label{fig:annotation}
+\end{figure*}
+%---------------------------------------------------------------------
 
-Romero \etal \cite{romero2014fitnets} suggest training a thin, deep student network (called a \textit{fitnet}) from a larger but shallower teacher network.  
-The authors accomplish this by utilizing the output of the teacher's hidden layers as a hint for the student's hidden layers.
+We focus our review on fingerprint recognition works that use pores as keypoints, PolyU-HRF as benchmark, or that learn keypoint descriptors.
 
-Srivastava \etal \cite{srivastava2015highway, srivastava2015training} propose a new architecture, which they named \textit{Highway Networks}, where the output of a layer's neuron contains a combination of the input and the output. 
-Highway networks use carry gates inspired by long short-term memory (LSTM) recurrent neural networks (RNNs) to regulate how much of the input is carried to the next layer.  
-The authors %state that network depth is crucial for the recent success of neural networks and 
-demonstrate that their structure permits training networks of hundreds of layers (up to 900 layers) \cite{srivastava2015highway, srivastava2015training}. 
-These new parameters are learned along with the other parameters of the network.   
-Zhang \etal \cite{Zhang2015highway} applied highway networks to LSTM recurrent neural networks.
-\dropin is a simpler approach than highway networks as it does not contain gate parameters that need to be learned.
+Direct Pore descriptors (hereon called DP descriptors for simplicity) are obtained by normalizing fingerprint patches around pores for contrast and rotation variations~\cite{direct-pore}.
+This means that using such descriptors requires computing the fingerprint orientation at every pore location.
+In the first work that uses them, first, mutual nearest neighbors are used as correspondences.
+This initial correspondence set is filtered using Random Sample Consensus (RANSAC)~\cite{ransac} and the final number of correspondences is used as score.
 
-Breuel \cite{breuel2015possible} discusses a dynamic network that he describes as a biologically plausible ``reconfigurable'' network.
-In this network different units are weighted dynamically to produce different configurations.  This allows a single network to perform multiple tasks.
-%In other words, it is as though a network is composed of different classifiers, each implemented by a different configuration.  Each configuration is created by a control mechanism that sets an additional group of parameters.
-\dropin represents a different type of dynamic network that grows during training rather than reconfigures for each task.
+The matching algorithm of this method was improved by using tangent distance and sparse representations to find the initial set of correspondences and replacing RANSAC with weighted RANSAC (WRANSAC)~\cite{wransac}.
+The overall method is called TDSWR~\cite{td-sparse}.
+While it greatly improves recognition results, the use of sparse representations in the correspondence establishment step requires solving an NP-Hard optimization problem~\cite{sparse-is-hard}.
+The authors approach it by solving instead an $\ell_1$-regularized least squares problem.
+This surrogate problem can be solved polynomially, but it forfeits theoretical guarantees of sparse representations and still involves solving a linear program with many variables and constraints.
 
-\subsection{Regularization during training}
-The well-known dropout \cite{hinton2012improving, srivastava2014dropout} method is an effective means to improve the training  of deep neural networks.   
-During training dropout randomly zeros a neuron's output activation with a probability $p$, called the \textit{dropout ratio},  so that the network cannot rely on a particular configuration.
-This reduces overfitting to the training data and the resulting network is more robust and better generalizes to unseen data.  
-While dropout ``samples from an exponential number of different `thinned' networks'' \cite{srivastava2014dropout}, \dropin samples from an exponential number of different thinner and shallower sub-networks.
-Like dropout, \dropin randomly changes the configuration so that the network cannot rely on a particular configuration. 
+The latest improvement of DP-based approaches is the use of pores in the neighborhood of minutiae.
+This method consists of hierarchically combining the matching scores of TDSWR obtained using two different subsets of pores.
+The first set consists of all pores; the second one only considers pores that are spatially close to minutiae, which the authors call distinctive pores~\cite{feature-guided}.
+This approach indirectly uses minutiae to recognize fingerprints, as local descriptors of pores that are close to minutiae can be seen as descriptors of the minutiae themselves.
+Other methods also report better scores when combining pore-only matching scores with that of minutiae~\cite{direct-pore, td-sparse}.
 
-Baldi and Sadowski \cite{baldi2013understanding} provide a theoretical basis for understanding dropout,  demonstrating that dropout regulates the training and prevents overfitting by approximating an average of a  large ensemble of networks.  
-A similar theoretical understanding (and benefits) can also apply to \dropinNS.
+Affine Fourier Moment-Matching (AFMM)~\cite{su-pores-deep} considers solving a different optimization problem to match fingerprints.
+It aims to minimize the energy cost function between the second-degree Fourier moments of the input fingerprint images using gradient descent.
+The first variant of this method, AFMM-G, considers the sums of the energy cost functions for ridge patterns, minutiae, and pores.
+The second and better variant is called AFMM-B.
+It proposes to first divide the gallery fingerprint image into non-overlapping blocks.
+Then, for each block, a sliding window iterates over the query fingerprint to find the image region with the smallest energy cost function.
+If this match is below a certain threshold, a correspondence is established.
+The matching score is the total number of correspondences.
+AFMM-B, then, requires that for every block and every possible sliding window position, an optimization problem be solved with gradient descent.
+For partial fingerprints, the authors use 12 blocks.
+They do not report results for full fingerprint images.
 
-%Wan \etal \cite{wan2013regularization} suggest dropconnect, which randomly sets a subset of weights to zero (in contrast to randomly setting a subset of activations to zero, as is done by dropout).
-%A recent paper by Wu \etal \cite{wu2015flip} suggests an interesting modification to dropout that they call split dropout.  In each iteration, instead of zeroing activations or weights, they create two random, thinned sub-networks each iteration and train each separately.
+Another approach altogether involves describing pores using SIFT descriptors~\cite{sift} to establish pore correspondences.
+This method discards spurious correspondences by reconstructing fingerprint ridges using pore detections.
+Matches are scored, then, using a spatially informed metric over pairs of correspondences~\cite{ridge-reconstruction}.
 
-%-------------------------------------------------------------------------
+The first approach, to the best of our knowledge, to learn local keypoint descriptors for fingerprint images was used for latent fingerprints and uses minutiae as keypoints~\cite{jain-latent}.
+It trains a CNN patch descriptor in a dataset of rolled fingerprint images. 
+To establish minutiae correspondences for training, it uses traditional fingerprint minutiae matching methods, discarding low-confidence correspondences as spurious.
+One disadvantage of this approach, when compared to aligning fingerprints, is that might allow false minutiae correspondences that have high-confidence scores to be in the training set.
+We also believe that this approach might not add hard minutiae correspondences to the training set because traditional minutiae matching algorithms are sub-optimal. % replace sub-optimal here
 
-\begin{figure}[tb]
-\begin{center}
-%\fbox{\rule{0pt}{2in} \rule{0.9\linewidth}{0pt}}
-   \includegraphics[width=0.9\linewidth]{diagram.png}
-\end{center}
-  \vspace{-10pt}
-   \caption{Diagram of traditional vs \dropin training method.  The \dropin method sends activations from Layer $ {\ell} $ to Layer $ {\ell+1} $ with a ratio $p$ and from Layer $ {\ell-1} $ to Layer $ {\ell+1}$ (thus skipping Layer $\ell$) with a ratio $q=1-p$.
-}
-\label{fig:diagram}
-  \vspace{-10pt}
-\end{figure}
+GlobalNet~\cite{zhang-pattern-rec} is a CNN trained to generate global image descriptors for 2000dpi partial fingerprint images.
+Fingerprint recognition is done by determining if image descriptors for the input images are sufficiently similar.
 
-%-------------------------------------------------------------------------
+MinutiaeNet~\cite{zhang-pattern-rec} claims to do something very similar to what we do in this work: describing local neighborhoods of keypoints and match partial fingerprints by finding correspondences amongst the generated descriptors.
+What it actually does is, first, cropping ${320 \times 320}$ patches around the center of each minutia.
+The patches are then described using a CNN; recognition is done using all the resulting descriptors.
+We believe this setup is better framed as performing recognition using an ensemble of global image descriptors, in which each descriptor is obtained from random crops of the original image, than matching with local keypoint descriptors.
+In the global image descriptor setting, almost the entirety of the image is visible in each described sub-image.
+Each of the MinutiaNet patches contains more than a fourth of the entire source image, which has dimensions ${480 \times 800}$, and there are more than four minutiae per image.
+For the local keypoint descriptor setting, on the other hand, sub-images are restricted to small image regions around the keypoints.
+While we admit that there is no exact definition of what ``small image regions'' means in this context, we also remark that using an ensemble of global image descriptors is known to improve recognition~\cite{vggface}.
 
-\section{\dropin method}
-In this section we provide a mathematical basis for \dropin as well as some implementation details.
+Another similarity to our work is that MinutiaNet is trained with triplet loss, albeit with modifications proposed by its authors.
+The authors defend that these modifications are necessary to improve training convergence, but we did not find that that was necessary to train our CNN.
 
-\subsection{Model description}
-\label{sec:model}
-There are two modes of running \dropinNS: first to gradually include skipped layers, which we refer to as \textit{gradual \dropinNS}, and second as a regularizer, which we named \textit{regularizing \dropinNS}.
-Figure \ref{fig:diagram} provides a visual reference as to how the \dropin unit works.
+Finally, the results of the last two methods, GlobalNet and MinutiaNet, are not reproducible.
+This is so because the only dataset for which they report results is not publicly available.
+Besides that, we argue that the evaluation protocol we follow is more rigorous.
+While the dataset used in those experiments has 1,800 images, more than PolyU-HRF, the authors split it in a way that 90\% of the images are in the training set.
+This split is considerably easier than PolyU-HRF's because it not only provides a much bigger training set - 1620 against 210 - but it also tests in fewer images and subject identities - 180 against 1480.
+Furthermore, the number of subjects exclusively in the test set in PolyU-HRF, at least 113, is greater than the total number of subjects in their test set, 30.
 
-Gradual \dropin initially passes on only the activations from the previous layer, effectively skipping the new layers.  
-For each iteration number, $\tau$, the ratio $ p $ is computed as $ p = \tau / d$ for \dropin length $d$, which is the number of iterations over which $q = 1 - p$ reduces from 1 to 0. 
-Then the number of activations copied from layer $ {\ell-1} $ drops as  $ q \times n = (1 - p) \times n $, where $n$ is the total number of activations in the layer ${\ell-1}$.  
-The remaining activations are accepted from the new layer $ {\ell} $ and backpropagation trains the weights of these newly added units.
+%----------------------------------------------------------------------
+\section{CNN pore description}
+\label{sec:pore-description}
+In this work, we aim to train a CNN to describe pores such that multiple instances of a same pore have more similar descriptors than two distinct pores.
+It is important to notice that subject labels do not coincide with pore labels: a single subject has many pores, and, therefore, many pore labels per image.
 
-For regularizing \dropinNS, the \dropin probability ratio $p$ is set to a static value in $[0,1]$.
-In this case, \dropin works analogously with dropout but instead of setting values to zero, they are set to the activations of a previous layer (e.g., $ {\ell-1} $).
-The choice of which activations come from which layer is done in an evolving random fashion each iteration.
+Since the learning approach we employ requires supervision, we must have an annotated dataset.
+In this situation, this means that every pore must receive a unique label.
+No fingerprint image dataset provides such annotations, to the best of our knowledge.
+We believe this is because such labeling task would require workers to annotate hundreds of pores per image and a few images per subject, which would be expensive, time-consuming and burdensome.
 
-We follow the notation in the dropout paper \cite{srivastava2014dropout} to show this more formally.
-Namely, we start with a neural network composed of some number of layers, $L$, where $ \ell \in [1, 2, \dots, L] $ is the layer index.
-Also, $ \mathbf{y}^{(\ell)} $ represents the vector of outputs from layer $ {\ell} $ and is the input to the next layer $ {\ell+1} $.  Let $ \mathbf{x} $ be the data input to the first layer. 
-In addition, $ \mathbf{W}^{(\ell)} $ and $ \mathbf{b}^{(\ell)} $ are the weights and biases at layer $ \ell $.  
-To allow us to track the evolving nature of the network, we include the training iteration number, $\tau$, and the layer's unit index number, $\lambda^{(\ell)}$.
-% as such, $y^{(\ell)}(\tau, \lambda)$.
+Thus, we devised an automated procedure for annotating pores that works by aligning fingerprint images.
+Figure~\ref{fig:annotation} illustrates its overall structure.
+Images are iteratively aligned to a reference image that belongs to the same subject.
+This alignment process uses hand-crafted descriptors to establish pore correspondences and it also enforces spatial coherence using the alignment of the previous iteration.
+The final alignment allows discarding pores outside the overlap area and assigning unique labels to the remaining ones.
 
-The first equation for gradual \dropin is a vector of zeros then ones, which is designated as: 
-\begin{eqnarray}
-\mathbf{r}^{(\ell)}(\tau,\lambda^{(\ell)}) =\begin{cases} 0 &\lambda^{(\ell)}< q \times n \\
-1 & \mbox{otherwise}.
-\end{cases}\end{eqnarray}
-%The size of  $ \mathbf{r}^{(\ell)} $ is the number of activations output from either the previous and the new layer.  %In order to handle situations where the number of activations is different between  the previous and new layers, we implemented a Resize layer in Caffe that can be used to modify the number of output activations.
-%The Resize layer will be discussed in more detail later.
-%As described above, initially  $ \mathbf{r}^{(\ell)} $ is a vector of all zeros, then the last $  size[ \mathbf{r}^{(\ell)}] \times (iteration / dropin\_length) $ are set to one.
-For regularizing \dropinNS, the  equation for $ \mathbf{r}^{(\ell)}(\tau, \lambda^{(\ell)})$ with a probability ratio $ p $ is:
+As we stated before, establishing correspondences based on hand-crafted descriptors causes many spurious correspondences.
+Since we are specifically annotating a dataset to learn a robust descriptor, such a descriptor is not yet available to be used for alignment.
+However, the previous methods are not unsuited to alignment, because it can be more costly to run and is an easier task than matching.
+Alignment can be more computationally costly because it is only executed once, to annotate the training data for the CNN.
+It is the trained CNN that will be used for matching.
+Matching is a harder task than alignment because it is required to work for both positive image pairs, \ie images that belong to the same subject, and negative pairs, \ie images that do not belong to the same subject.
+Alignment, on the other hand, is required to work only on positive pairs.
+We describe the annotation process in detail next.
+
+%----------------------------------------------------------------------
+\subsection{Automatic pore annotation}
+\label{sec:alignment}
+
+Since for alignment we are using hand-crafted descriptors, preprocessing is essential.
+First, we apply a median blur, to denoise the image, and we equalize the images' contrast with CLAHE~\cite{clahe}.
+Both are established preprocessing steps in the fingerprint community~\cite{ridge-reconstruction}. % add another ref
+
+% MUST MENTION THAT NOTHING IN THIS SECTION MODIFIES IMAGES IN THE TRAINING SET AND THAT THE IMAGES OF THE TEST SET NEVER TAKE PART IN THIS PROCESS.
+% THIS IS ONLY FOR TRAINING DATA ANNOTATION
+
+After, we compute SIFT~\cite{sift} descriptors for each pore.
+SIFT descriptors have been previously used to perform pore-based fingerprint recognition with good results~\cite{ridge-reconstruction}.
+While there are other domains in which SIFT was sometimes shown to be inferior to other techniques, it was the first descriptor we tried.
+Since we were successful and aligning fingerprint images is not the purpose of this paper, we only tried SIFT.
+
+First, we find correspondences between SIFT descriptors in images $I_1$ and $I_2$ using the original SIFT criterion: descriptors must be mutual nearest neighbors and pass a distance ratio check for their second nearest neighbors~\cite{sift}.
+
+With this initial set of correspondences, we align $I_1$ and $I_2$ using the closed form solution to the absolute orientation problem~\cite{horn}.
+The overlap between images is determined using the alignment and pores outside of it are discarded.
+We repeat this process, but in iteration ${i + 1}$ we consider the following metric for pores $p_1$ of $I_1$ and $p_2$ of $I_2$ to find descriptor correspondences:
 \begin{equation}
-\mathbf{r}^{(l)}(\tau,\cdot) \sim Bernoulli(p), 
+  \label{eq:alignment}
+  d_{i + 1}(p_1, p_2) = d_{\mathit{SIFT}}(p_1, p_2) + \frac{\lambda}{w_i + \epsilon} ||p_1 - T_i(p_2)||^2,
 \end{equation}
-i.e.,  a 0-1 vector where each value is distributed as a Bernoulli random variable with probability $p$.  
-
-Once $ \mathbf{r} $  is set, the remaining equations (dropping $\tau$ and $\lambda^{(\ell)}$ for simplicity) are the same for both modes -- namely for layer $ {\ell+1}$:
-\begin{equation}
-\mathbf{\tilde{y}}^{(\ell)} = \mathbf{r}^{(\ell)} \times \mathbf{y}^{(\ell)}  \\
-\end{equation}
-\begin{equation}
-z^{(\ell+1)}_i  = \mathbf{w}^{(\ell+1)}_i \mathbf{\tilde{y}}^{(\ell)} + b_i^{(\ell+1)} \\
-\end{equation}
-\begin{equation}
-\mathbf{y}^{(\ell+1)} = f ( z_i^{(\ell)} ) + ( 1 - \mathbf{r}^{(\ell)} )  \mathbf{y}^{(\hat{\ell})},
-\end{equation}
-where $ \hat{\ell} $ is any layer less than layer $ {\ell+1}$.
-These equations are similar to those for dropout, except instead of some of the outputs being zero, they are set to the values from a previous layer, $ \mathbf{y}^{(\hat{\ell})} $.
-
-
-\subsection{Implementation}
-\label{sec:code}
-
-We implemented our method in Caffe \cite{Caffe14} by creating a new layer called \dropinNS.
-The parameters for the \dropin layer include a $dropin\_ratio$, $ q = 1 - p$ (Figure \ref{fig:diagram}), and a $dropin\_length$, $d$, as described in Section \ref{sec:model}.
-
-\dropin requires that the size of both the new layer and the previous layer be the same.
-Hence, we also implemented a Resize layer to allow reshaping a layer's output to a user-specified size.
-The Resize layer modifies its input, which is $ \mathbf{y}^{(\hat{\ell})},$ into a user-specified height, width, and number of channels/filters. 
-%The parameters are $num$, $channels$, $height$, $width$, and $back$, where $num$ is the batch size, $channels$ is the number of filters, $height$ and $width$ are the height and width of the filters respectively, and $back$ is a boolean indicating if the resize is for back propagation.
-%Since Caffe treats data as blobs, the actual method which performs the resizing is is added to the Blob class in Caffe. 
-%The bulk of the processing takes place in the actual Blob resize method. 
-%The Resize layer copies the input layer, calls the blob resize method, and returns the resized blob as the output.  
-The Resize layer allows \dropin to work with any two layers, even when the sizes of $ \mathbf{y}^{(\ell)}$ and $ \mathbf{y}^{(\hat{\ell})} $ are different.
-
-%-----------------------------------------------------------------------
-
-\section{Experiments}
-\label{sec:experiments}
-
-The purpose of this section is to demonstrate the effectiveness of \dropin on several standard datasets but with  architectures that are not trainable with standard methods.
-No attempt was made to optimize the architecture or hyper-parameters for higher accuracy because our main objective was to show that a deep architecture that will not converge without \dropinNS, will converge with it.
-However, the results in Sections  \ref{sec:alexnet} and \ref{sec:vgg}  also demonstrate an increase in accuracy by using a deeper network for Imagenet.
-
-%In the followgin subsections below, \dropin is used for training CNN architectures with MNIST,  CIFAR-10, and ImageNet datasets.
-%We found that in all cases \dropin permitted training an otherwise untrainable architecture.
-All of the following experiments were run with Caffe (downloaded August 31, 2015) using CUDA 7.0 and Nvidia's CuDNN.  
-%For training larger networks, we utilized the multi-gpu implementation of Caffe.  
-These experiments were run on a 64 node cluster with 8 Nvidia Titan Black GPUs, 128 GB memory, and dual Intel Xenon E5-2620 v2 CPUs per node.  
-
-The following subsections depict, in table form, the structure of several networks.  We use the naming convention \{layer type\}\{layer number\}-\{number of outputs\}(filter size).  
-For example, conv1\_2-32$(5\times 5)$ represents a convolutional layer numbered 1\_2 with 32 outputs and filters sized $5\times 5$.  
-\dropin layers are denoted as dropin $(\ell + (\ell + 1))$, as depicted in Figure \ref{fig:diagram}.
-
-In Section \ref{sec:mnist} we show that very deep networks are trainable when using gradual \dropin on expanded LeNet with MNIST data.  In Section \ref{sec:cifar} we show the effect of \dropin length on training accuracy for expanded CIFAR-10 network and that a small performance gain is possible with added layers.
-In Section \ref{sec:alexnet} we show that an expanded AlexNet architecture increases accuracy and is trainable only with gradual \dropin.  
-In Section \ref{sec:vgg} the VGG16 network is trained using gradual \dropin without the need to transfer weights from a shallower network.  
-%-----------------------------------------------------------------------
-
-\begin{table}[htb]
-\begin{center}
-  \begin{tabular}{| c | c |}
-    \hline
-      LeNet & LeNet(2N) {\color{red}+ \dropin} \\ \hline
-    
-     \multicolumn{2}{|c|}{data $(28\times 28 )$} \\ \hline
-     conv1\_1-20$(5\times 5)$ & conv1\_1-20$(5\times 5)$ \\ 
-%$\mbox{conv}1_1$-20(5$\times$5) & conv1\_1-20$(5\times 5)$ \\ 
-        & conv1\_2-20$(3\times 3)$ \\ 
-       & {\color{red}dropin (1\_1 + 1\_2)} \\
-        & conv1\_3-20$(3\times 3)$ \\ 
-       & {\color{red}dropin (1\_2 + 1\_3)} \\ 
-         & $\vdots$ \\ 
-        & conv1\_N-20$(3\times 3)$ \\ 
-       & {\color{red}dropin (1\_(N-1) + 1\_N)} \\ \hline
-	\multicolumn{2}{|c|}{maxpool$(2\times2)$} \\ \hline
-
-     conv2\_1-50$(5\times 5)$ & conv2\_1-50$(5\times 5)$ \\ 
-       & conv2\_2-50$(3\times 3)$ \\ 
-      & {\color{red}dropin (2\_1 + 2\_2)} \\
-      & conv2\_3-50$(3\times 3)$ \\ 
-      & {\color{red}dropin (2\_2 + 2\_3)} \\ 
-       & $\vdots$ \\ 
-      & conv2\_N-50$(3\times 3)$ \\ 
-      & {\color{red}dropin (2\_(N-1) + 2\_N)} \\ \hline
-\multicolumn{2}{|c|}{maxpool$(2\times2)$} \\ \hline
-\multicolumn{2}{|c|}{fc3-500} \\ \hline
-\multicolumn{2}{|c|}{fc4-10} \\ \hline
-\multicolumn{2}{|c|}{soft-max} \\ \hline
-  \end{tabular}
-  \caption{Network architecture for LeNet and LeNet(2N)+ \dropinNS.  }
-  \label{tab:lenet_N}
-\end{center}
-  \vspace{-20pt}
-\end{table}
-
-\begin{figure}[tbh]
-\begin{center}
-%\fbox{\rule{0pt}{2in} \rule{0.9\linewidth}{0pt}}
-%   \includegraphics[width=0.9\linewidth]{lenet10_dropin.png}
-   \includegraphics[width=1.0\linewidth]{mnist1.png}
-\end{center}
-  \vspace{-10pt}
-   \caption{Classification accuracy while training LeNet(10) + \dropin architecture with MNIST data. Curves represent different \dropin lengths, $d$.  (Best viewed in color)  
-}
-\label{fig:lenet_10}
-  \vspace{-10pt}
-\end{figure}
-
-\begin{figure}[tbh]
-\begin{center}
-\begin{subfigure}[b]{0.5\textwidth}
-        \includegraphics[width=\textwidth]{mnist2.png}
-        %\caption{\dropin length of 2,500}
-    \end{subfigure}\\
-    \begin{subfigure}[b]{0.5\textwidth}
-        \includegraphics[width=\textwidth]{mnist3.png}
-        %\caption{\dropin length of 7,500}
-    \end{subfigure}
-\end{center}
- \vspace{-10pt}
-   \caption{Classification accuracy while training LeNet(2N) + \dropinNS, for $N=5,15,25$ with MNIST data. Curves represent different network depths. (Best viewed in color)  
-}
-\label{fig:lenet_droplens}
-  \vspace{-10pt}
-\end{figure}
-
-
-%-----------------------------------------------------------------------
-
-\subsection{MNIST} \label{sec:mnist}
-This dataset consists of 70,000 grey-scale images with a resolution of 28x28\footnote{\url{http://yann.lecun.com/exdb/mnist/}}.  
-Of these, 60,000 are for training and 10,000 are for testing.  
-There are ten classes, each a different handwritten digit from zero to nine, with 7,000 images per class.  
-
-The standard network architecture for the classification of MNIST, provided in the Caffe package, is the 4-layer LeNet consisting of 2 convolutional/max-pooling layers followed by 2 fully-connected layers (see the first column of Table \ref{tab:lenet_N} for details).  
-Inspired by the work in \cite{srivastava2015training}, we increased the number of convolutional layers from two to 2N, which we denote as LeNet(2N).  
-These added layers (as seen in the second column of Table \ref{tab:lenet_N}, minus the \dropin layers shown in red) learned a $3\times 3$ convolution filter but did not change the size of the outputs.  
-We then added \dropin layers between each of the convolutional layers (as seen in the second column of Table \ref{tab:lenet_N}) and called this network LeNet(2N) + \dropinNS.
-
-We first looked at $N=5$ and created LeNet(10) and LeNet(10) + \dropin architectures.   LeNet(10) did not converge in the standard training time of 10,000 iterations given multiple realizations of the training process.  
-However, utilizing \dropin units we were able to have LeNet(2N) + \dropin  converge 10,000 iterations with the same hyper-parameters.  
-In Figure \ref{fig:lenet_10} we show results for several different \dropin lengths for this network.  These different lengths indicate the robustness of the \dropin length for simpler networks and that, in general, shorter \dropin lengths provide marginally better results.
-We note for this case that the added layers do not increase the overall accuracy of the network, as the MNIST data is quite simple compared with other classification tasks; the added layers do not provide any extra differentiation power.  
-
-
-We now look at how the number of layers affects the training with \dropinNS.  
-In Figure \ref{fig:lenet_droplens} there are two different plots, one with \dropin length of 2,500 iterations and the other with \dropin length of 7,500 iterations.  For each plot we present three different networks with 10, 30, and 50, convolutional layers (equating to N=5, 15, 25).  
-For both \dropin lengths and all three network depths, the gradual \dropin method allowed the networks to converge.  
-The deeper networks require a greater number of iterations to reach the same level of accuracy as the shallower networks, which is to be expected as they have a greater number of weights to train.  We also see that networks converge  more quickly with the shorter \dropin length,  indicating that shorter \dropin lengths are desirable.  
-
-
-
-
-%-----------------------------------------------------------------------
-
-
-\begin{table}[htb]
-\begin{center}
-  \begin{tabular}{| c | c |}
-    \hline
-     CIFAR-10 &  CIFAR-10(11 layers) {\color{red}+ \dropin}   \\ \hline
-    
-     \multicolumn{2}{|c|}{data $(32\times32\times3)$} \\ \hline
-     conv1-32$(5\times 5)$ & conv1\_1-32$(5\times 5)$ + LRN \\ 
-     maxpool$(2\times2)$ & conv1\_2-32$(5\times 5)$ + LRN\\ 
-     LRN & {\color{red}dropin (1\_1 + 1\_2)} \\ \hline
-     conv2-32$(5\times 5)$ & conv2\_1-32$(5\times 5)$ + LRN\\ 
-     maxpool$(2\times2)$ & conv2\_2-32$(5\times 5)$ + LRN\\ 
-     LRN    &					{\color{red}dropin (2\_1 + 2\_2)} \\ \hline
-     & conv3\_1-32$(5\times 5)$ + LRN\\ 
-     & conv3\_2-32$(5\times 5)$ + LRN\\ 
-     &					{\color{red}dropin (3\_1 + 3\_2)} \\ \hline
-     & conv4\_1-32$(5\times 5)$ + LRN\\ 
-     & conv4\_2-32$(5\times 5)$ + LRN\\ 
-     &					{\color{red}dropin (4\_1 + 4\_2)} \\ \hline
-     & conv5\_1-32$(5\times 5)$ + LRN\\ 
-     & conv5\_2-32$(5\times 5)$ + LRN\\ 
-     &					{\color{red}dropin (5\_1 + 5\_2)} \\ \hline
-%\multicolumn{2}{|c|}{maxpool(2x2) + LocalNorm} \\ \hline
-     conv3-64$(3\times 3)$ & conv6\_1-64$(3\times 3)$ \\  \hline
-\multicolumn{2}{|c|}{maxpool$(2\times2)$} \\ \hline
-\multicolumn{2}{|c|}{fc-10} \\ \hline
-\multicolumn{2}{|c|}{soft-max} \\ \hline
-\multicolumn{2}{|c|}{accuracy} \\ \hline
-  \end{tabular}
-  \caption{CIFAR-10 11-layer architecture, including \dropin units.}
-  \label{tab:cifarArch}
-\end{center}
-  \vspace{-25pt}
-\end{table}
-
-
-\begin{figure}[tb]
-\begin{center}
-   \includegraphics[width=1.0\linewidth]{cifar-dropin-lengths.png}
-\end{center}
-  \vspace{-10pt}
-   \caption{Test data classification accuracy while training the 11-layer CIFAR-10 architecture with \dropinNS. The curves show classification accuracies for different dropin\_lengths, $d$. (Best viewed in color)  
-}
-\label{fig:cifarDropinLen}
-  \vspace{-5pt}
-\end{figure}
-
-%-------------------------------------------------------------------------
-
-\begin{table}[tb]
-\begin{center}
-  \begin{tabular}{| c | c | c |}
-    \hline
-    Architecture & dropin\_length & Accuracy (\%) \\ \hline \hline
-   3-layer net &     & 81.4 \\ \hline
-   11-layer net & 8,000  & 81.7 \\ \hline
-   11-layer net & 16,000  & \textbf{82.3} \\ \hline
-   11-layer net & 24,000  & \textbf{82.3} \\ \hline
-  \end{tabular}
-  \caption{Final accuracy (average of last three values) results for the CIFAR-10 dataset on test data at the end of the training.  Comparison of \dropin and dropin\_lengths. }
-  \label{tab:cifarLengths}
-\end{center}
-  \vspace{-20pt}
-\end{table}
-
-
-
-%-----------------------------------------------------------------------
-
-\subsection{CIFAR-10} \label{sec:cifar}
-
-This dataset consists of 60,000 color images with a resolution of 32x32.
-Of these, 50,000 are for training and 10,000 are for testing.
-There are ten classes with 6,000 images per class. 
-
-The Caffe \cite{Caffe14} website provides the architecture and hyper-parameter settings as part of the CIFAR-10 tutorial\footnote{\url{http://caffe.berkeleyvision.org/gathered/examples/cifar10.html}}.
-The three convolutional layer architecture trains quickly and attains good accuracies.
-The convolutional layers were replicated to obtain an 11-layer model, which corresponds to the depth of one of the CIFAR-10 models in the experiments for highway networks \cite{srivastava2015training}. 
-The detailed architectures are compared in Table \ref{tab:cifarArch}.
-As shown in the table, the sizes of each of the layers entering the \dropin layer were kept the same for simplicity.
-For every convolutional layer, the weight initialization was Gaussian with standard deviation of 0.01 and the bias initialization was constant, set to 0.
-Each convolutional layer was followed by a rectified linear unit and local normalization.
-%The parameters for every local normalization were local size = $3$, alpha = $5 \times 10^{-5}$, beta = $0.75$, and norm region = WITHIN CHANNEL.
-The length of the training, the learning rates, and schedule were modified to run over 32,000 iterations.
-This modification trained satisfactorily and provided a reasonable comparison.
-
-Numerous attempts at training this 11-layer network without the \dropin layers failed to converge.
-Similar attempts to train this network with the \dropin layers did successfully converge, which is a primary result of this study.
-
-Experiments were performed varying the \dropin length.
-Figure \ref{fig:cifarDropinLen} shows the accuracy curves for $ dropin\_length = 8,000, 16,000, 24,000$,  and Table \ref{tab:cifarLengths} compares the final accuracies.
-The final accuracies show a marginal improvement for longer versus shorter lengths but for CIFAR-10 the results are relatively independent of the length value.
-Furthermore, the final accuracies from the 11-layer architecture are less than 1\% better than the original 3-layer architecture, which implies that for the CIFAR-10 dataset, the deeper networker  provides  only marginal improvement.
-
-
-
-%-------------------------------------------------------------------------
-
-\begin{table}[htb]
-\begin{center}
-  \begin{tabular}{| c | c |}
-    \hline
-     AlexNet  & AlexNet (13 layers) {\color{red}+ \dropin} \\ \hline
-    
-     \multicolumn{2}{|c|}{data $(227\times227\times3)$} \\ \hline
-     conv1\_1-96$(11\times 11)$ & conv1\_1-96$(11\times 11)$ \\ 
-      & conv1\_2-96$(11\times 11)$ \\ 
-     &					{\color{red}dropin (1\_1 + 1\_2)} \\ \hline
-	\multicolumn{2}{|c|}{maxpool$(2\times2)$ + LocalNorm} \\ \hline
-     conv2\_1-256$(5\times 5)$ & conv2\_1-256$(5\times 5)$ \\ 
-      & conv2\_2-256$(5\times 5)$ \\ 
-     &					{\color{red}dropin (2\_1 + 2\_2)} \\ \hline
-\multicolumn{2}{|c|}{maxpool$(2\times2)$ + LocalNorm} \\ \hline
-     conv3\_1-384$(3\times 3)$ & conv3\_1-384$(3\times 3)$ \\ 
-      & conv3\_2-384$(3\times 3)$ \\ 
-     &					{\color{red}dropin (3\_1 + 3\_2)} \\ \hline
-%\multicolumn{3}{|c|}{maxpool(2x2)} \\ \hline
-     conv4\_1-384$(3\times 3)$ & conv4\_1-384$(3\times 3)$ \\ 
-      & conv4\_2-384$(3\times 3)$ \\
-     &					{\color{red}dropin (4\_1 + 4\_2)} \\ \hline
-%\multicolumn{2}{|c|}{maxpool(2x2)} \\ \hline
-     conv5\_1-256$(3\times 3)$ & conv5\_1-256$(3\times 3)$ \\ 
-      & conv5\_2-256$(3\times 3)$ \\
-     &					{\color{red}dropin (5\_1 + 5\_2)} \\ \hline
-\multicolumn{2}{|c|}{maxpool$(2\times2)$} \\ \hline
-\multicolumn{2}{|c|}{fc6-4096} \\ \hline
-\multicolumn{2}{|c|}{fc7-4096} \\ \hline
-\multicolumn{2}{|c|}{fc8-1000} \\ \hline
-\multicolumn{2}{|c|}{soft-max} \\ \hline
-  \end{tabular}
-  \caption{Network architecture for AlexNet and modified version of AlexNet, AlexNet (13 layers) + \dropin.  }
-  \label{tab:alexnet13}
-\end{center}
-  \vspace{-15pt}
-\end{table}
-
-
-
-\begin{figure}[htb]
-\begin{center}
-%\fbox{\rule{0pt}{2in} \rule{0.9\linewidth}{0pt}}
-   \includegraphics[width=.901\linewidth]{dropin_Alex_lengths.png}
-\end{center}
-  \vspace{-15pt}
-   \caption{Comparison of various \dropin lengths, $d$.  Validation data classification accuracy while training the AlexNet (13 layers) + \dropin architecture with ImageNet data. (Best viewed in color) 
-}
-\label{fig:AlexLengths}
-  \vspace{-5pt}
-\end{figure}
-
-
-\begin{table}[tb]
-\begin{center}
-  \begin{tabular}{| c | c | c |}
-    \hline
-    Architecture & dropin\_length & Accuracy (\%) \\ \hline \hline
-   AlexNet &     & 58.0 \\ \hline
-   13 layers + \dropin & 25,000  & \textbf{62.2} \\ \hline
-   13 layers + \dropin & 75,000  & 62.1 \\ \hline
-   13 layers + \dropin & 150,000  & 60.8 \\ \hline
-   13 layers + \dropin & 300,000  & 59.3 \\ \hline
-  \end{tabular}
-  \caption{Comparison of \dropin and dropin\_lengths, $d$. The table shows final accuracy (average of last three values) results for the ImageNet dataset on validation data at the end of the training.}
-  \label{tab:dropinLengths}
-\end{center}
-  \vspace{-20pt}
-\end{table}
-
-%-----------------------------------------------------------------------
-
-\subsection{ImageNet / AlexNet}
-\label{sec:alexnet}
-
-ImageNet\footnote{\url{www.image-net.org/}} \cite{Imagenet15} is a large image database based on the nouns in  WordNet.
-This image database, used for the ImageNet Large Scale Visual Recognition Challenge, is commonly used as a basis of comparison in the deep learning literature.
-The database contains 1.2 million training and 50,000 testing images covering 1,000 categories.
-
-The Caffe website provides the architecture and hyper-parameter files for a slightly modified AlexNet. %\footnote{\url{caffe.berkeleyvision.org/gathered/examples/imagenet.html}}.
-We downloaded the architecture and hyper-parameter files from the website and we expanded the architecture from 8 layers to 13 layers by duplicating each of the convolutional layers, which is shown (minus the \dropin layers shown in red) in columns 1 and 2, respectively, of Table \ref{tab:alexnet13}.
-The AlexNet (13 layers) + \dropin includes a \dropin layer between every duplicated layer used to create AlexNet (13 layers).
-Multiple attempts at training the AlexNet (13 layers) architecture in the conventional manner did not converge.
-%In the training results reported in this section, all weights were initialized the same so as to avoid differences due to different random initializations.
-In the tests with the expanded architecture, the hyper-parameters were kept the same as provided by the Caffe website (even though our experiments with \dropin indicate that tuning them could improve the results).
-%In particular, a better learning rate and schedule is likely to improve the results but we left this as future work.
-
-Experiments were run varying the \dropin hyper-parameter \textit{dropin\_length}.
-Table \ref{tab:dropinLengths} shows final accuracy results after training for 450,000 iterations with a range of lengths. 
-Figure \ref{fig:AlexLengths} compares the accuracy during training of these experiments.
-In contrast to the results with CIFAR-10, the \dropin length makes a difference with ImageNet.
-We believe that this is because the deeper architecture increases the classification accuracy for larger datasets, hence  the improvement with smaller \dropin lengths is more prominent.
-
-From Figure \ref{fig:AlexLengths} and Table \ref{tab:dropinLengths},  we can conclude that shorter lengths are better than the longer ones.
-If the length is less than the first scheduled drop in the learning rate at iteration 100,000, then the network is better trained.
-However, the difference between $dropin\_length = 75,000$ and 25,000 is negligible implying that lengths less than the first scheduled learning rate drop are equivalent.
-%The curve for $dropin\_length = 75000$ in Figure \ref{fig:AlexLengths} shows a significant improvement in accuracy until 75,000 and after iteration 75,000 the training curve proceeds like a typical training curve.
-
-
-%-------------------------------------------------------------------------
-
-%\begin{table}[htb]
-%\begin{center}
-%  \begin{tabular}{| c | c | c |}
-%    \hline
-%    VGG8 & VGG13 & VGG16 \\ \hline
-%    
-%     \multicolumn{3}{|c|}{data (224x224 RGB)} \\ \hline
-%     conv1\_1-64$(3\times 3)$& conv1\_1-64$(3\times 3)$ & conv1\_1-64$(3\times 3)$ \\ 
-%     & conv1\_2-64$(3\times 3)$ & conv1\_2-64$(3\times 3)$ \\ \hline
-%	\multicolumn{3}{|c|}{maxpool(2x2)} \\ \hline
-%     conv2\_1-128$(3\times 3)$ & conv2\_1-128$(3\times 3)$ & conv2\_1-128$(3\times 3)$ \\ 
-%     & conv2\_2-128$(3\times 3)$ & conv2\_2-128$(3\times 3)$ \\ \hline
-%\multicolumn{3}{|c|}{maxpool(2x2)} \\ \hline
-%     conv3\_1-256$(3\times 3)$ & conv3\_1-256$(3\times 3)$ & conv3\_1-256$(3\times 3)$ \\ 
-%     & conv3\_2-256$(3\times 3)$ & conv3\_2-256$(3\times 3)$ \\
-%     &			& conv3\_3$(3\times3)$ \\ \hline
-%\multicolumn{3}{|c|}{maxpool(2x2)} \\ \hline
-%     conv4\_1-512$(3\times 3)$ & conv4\_1-512$(3\times 3)$ & conv4\_1-512$(3\times 3)$ \\ 
-%     & 					   conv4\_2-512$(3\times 3)$ & conv4\_2-512$(3\times 3)$ \\
-%     &						& 							conv4\_3-512$(3\times 3)$ \\ \hline
-%\multicolumn{3}{|c|}{maxpool(2x2)} \\ \hline
-%     conv5\_1-512$(3\times 3)$ & conv5\_1-512$(3\times 3)$ & conv5\_1-512$(3\times 3)$ \\ 
-%     &						  conv5\_2-512$(3\times 3)$ & conv5\_2-512$(3\times 3)$ \\
-%     &			& conv5\_3-512$(3\times 3)$ \\ \hline
-%\multicolumn{3}{|c|}{maxpool(2x2)} \\ \hline
-%\multicolumn{3}{|c|}{FC-4096} \\ \hline
-%\multicolumn{3}{|c|}{FC-4096} \\ \hline
-%\multicolumn{3}{|c|}{FC-1000} \\ \hline
-%\multicolumn{3}{|c|}{soft-max} \\ \hline
-%    
-%  \end{tabular}
-%  \caption{Network architectures for VGG8, VGG13, and VGG16.  The layers follow the naming convention, \{type\}\{layer number\}\{\_sublayer number\}-\{number of outputs\}\{filter size\}.  See the text for additional settings.}
-%  \label{tab:vgg}
-%\end{center}
-%\end{table}
-
-%\begin{table}[htb]
-%  \vspace{-10pt}
-%\begin{center}
-%  \begin{tabular}{| c | c |}
-%    \hline
-%    VGG8 &  VGG16 \\ \hline
-%    
-%     \multicolumn{2}{|c|}{data (224x224 RGB)} \\ \hline
-%     conv1\_1-64$(3\times 3)$& conv1\_1-64$(3\times 3)$ \\ 
-%     &  conv1\_2-64$(3\times 3)$ \\ \hline
-%	\multicolumn{2}{|c|}{maxpool(2x2)} \\ \hline
-%     conv2\_1-128$(3\times 3)$ & conv2\_1-128$(3\times 3)$ \\ 
-%     &   conv2\_2-128$(3\times 3)$ \\ \hline
-%\multicolumn{2}{|c|}{maxpool(2x2)} \\ \hline
-%     conv3\_1-256$(3\times 3)$ & conv3\_1-256$(3\times 3)$ \\ 
-%     &  conv3\_2-256$(3\times 3)$ \\
-%     &			 conv3\_3$(3\times3)$ \\ \hline
-%\multicolumn{2}{|c|}{maxpool(2x2)} \\ \hline
-%     conv4\_1-512$(3\times 3)$ & conv4\_1-512$(3\times 3)$ \\ 
-%     & 					     conv4\_2-512$(3\times 3)$ \\
-%     &						 							conv4\_3-512$(3\times 3)$ \\ \hline
-%\multicolumn{2}{|c|}{maxpool(2x2)} \\ \hline
-%     conv5\_1-512$(3\times 3)$ & conv5\_1-512$(3\times 3)$ \\ 
-%     &						   conv5\_2-512$(3\times 3)$ \\
-%     &			 conv5\_3-512$(3\times 3)$ \\ \hline
-%\multicolumn{2}{|c|}{maxpool(2x2)} \\ \hline
-%\multicolumn{2}{|c|}{FC-4096} \\ \hline
-%\multicolumn{2}{|c|}{FC-4096} \\ \hline
-%\multicolumn{2}{|c|}{FC-1000} \\ \hline
-%\multicolumn{2}{|c|}{soft-max} \\ \hline
-%    
-%  \end{tabular}
-%  \caption{Network architectures for VGG8, VGG13, and VGG16.  The layers follow the naming convention, \{type\}\{layer number\}\{\_sublayer number\}-\{number of outputs\}\{filter size\}.  See the text for additional settings.}
-%  \label{tab:vgg}
-%\end{center}
-%  \vspace{-20pt}
-%\end{table}
-\begin{table}[htb]
-  \vspace{-5pt}
-\begin{center}
-  \begin{tabular}{| c | c |}
-    \hline
-     VGG8 & VGG16 {\color{red}+ DropIn} \\ \hline
-    
-     \multicolumn{2}{|c|}{data $(224\times224\times3)$} \\ \hline
-      conv1\_1-64$(3\times 3)$ & conv1\_1-64$(3\times 3)$ \\ 
-      								& conv1\_2-64$(3\times 3)$ \\ 
-      								& {\color{red}dropin (1\_1 + 1\_2)}\\ \hline
-	\multicolumn{2}{|c|}{maxpool$(2\times2)$} \\ \hline
-      conv2\_1-128$(3\times 3)$ & conv2\_1-128$(3\times 3)$ \\ 
-      & conv2\_2-128$(3\times 3)$ \\  
-      & {\color{red}dropin (2\_1 + 2\_2)}\\ \hline
-\multicolumn{2}{|c|}{maxpool$(2\times2)$} \\ \hline
-     conv3\_1-256$(3\times 3)$ & conv3\_1-256$(3\times 3)$ \\ 
-     &conv3\_2-256$(3\times 3)$ \\
-     &  {\color{red}dropin (3\_1 + 3\_2)}\\ 
-     &			 conv3\_3-256$(3\times 3)$ \\
-     &		  {\color{red}dropin (3\_2 + 3\_3)}\\ \hline 
-\multicolumn{2}{|c|}{maxpool$(2\times2)$} \\ \hline
-      conv4\_1-512$(3\times 3)$& conv4\_1-512$(3\times 3)$ \\ 
-      &conv4\_2-512$(3\times 3)$ \\
-      & {\color{red}dropin (4\_1 + 4\_2)}\\ 
-     &			 conv4\_3-512$(3\times 3)$ \\ 
-     &  {\color{red}dropin (4\_2 + 4\_3)}\\ \hline
-\multicolumn{2}{|c|}{maxpool$(2\times2)$} \\ \hline
-     conv5\_1-512$(3\times 3)$ & conv5\_1-512$(3\times 3)$ \\ 
-     &conv5\_2-512$(3\times 3)$ \\
- &{\color{red}dropin (5\_1 + 5\_2)}\\ 
-  &   			 conv5\_3-512$(3\times 3)$ \\ 
-   &  			      {\color{red} dropin (5\_2 + 5\_3)}\\ \hline
-\multicolumn{2}{|c|}{maxpool$(2\times2)$} \\ \hline
-\multicolumn{2}{|c|}{fc6-4096} \\ \hline
-\multicolumn{2}{|c|}{fc7-4096} \\ \hline
-\multicolumn{2}{|c|}{fc8-1000} \\ \hline
-\multicolumn{2}{|c|}{soft-max} \\ \hline
-    
-  \end{tabular}
-  \caption{Network architectures for VGG8 and VGG16 + \dropinNS.  See the text for additional settings.}
-  \label{tab:vgg_dropin}
-\end{center}
-  \vspace{-15pt}
-\end{table}
-
-
-
-\begin{figure}[]
-\begin{center}
-%\fbox{\rule{0pt}{2in} \rule{0.9\linewidth}{0pt}}
-   \includegraphics[width=1.0\linewidth]{VGG8_16.png}
-\end{center}
-  \vspace{-15pt}
-   \caption{Validation data classification accuracy while training the VGG16 + \dropin architecture with ImageNet data. (Best viewed in color)
-}
-\label{fig:vgg_plot}
-  \vspace{-10pt}
-\end{figure}
-
-%-------------------------------------------------------------------------
-
-
-\subsection{ImageNet / VGG}
-\label{sec:vgg}
-VGG$n$, a set of networks created by the Visual Geometry Group \cite{simonyan2014very}, won second place in the image classification category of the 2014 ImageNet contest.  These networks, trained on the same database as the Alexnet architecture discussed in Section \ref{sec:alexnet}, contained $ n=11,13,16,\mbox{ or }19$ layers.  In Table \ref{tab:vgg_dropin} we see the VGG16 (minus the \dropin layers shown in red) architecture alongside what we will refer to as VGG8 (not contained in the original paper).
-All convolutional layers have a stride and padding of 1 and maxpooling layers have a stride of 2. 
-In their paper, the authors describe the difficulty of training these deep networks and utilized a weight transfer method to enable the network to converge during training \cite{simonyan2014very}.
-
-%\begin{quote} The initialisation of the network weights is important, since bad initialisation can stall learning due to the instability of gradient in deep nets. To circumvent this problem, we began with training the configuration A (Table 1) [VGG13], shallow enough to be trained with random initialisation. Then, when training deeper architectures, we initialised the first four convolutional layers and the last three fullyconnected layers with the layers of net A (the intermediate layers were initialised randomly).\end{quote}
-
-While it is possible to train a deep neural network by first training a shallow network and using those weights to initialize the deeper network, we believe that in addition to being easier, training the full network with all the layers in place leads to a better trained network.  This is supported by research on feature visualization, such as in Zeiler and Fergus \cite{zeiler2014visualizing}, where they demonstrate that higher layers have more abstract representations.
-Training in place means that the learned representations will conform well to the representation at a given layer, while training a shallow network and initializing the weights of a deeper network might not.
-%Our future work includes comparing using \dropin to initializing the weights from training a separate shallow network.
-
-Instead of training smaller networks, we propose to use our gradual DropIn method.  
-For our studies, we utilized the VGG16 prototxt file referenced on the Caffe website\footnote{\url{https://gist.github.com/ksimonyan/211839e770f7b538e2d8\#file-vgg_ilsvrc_16_layers_deploy-prototxt}} 
-and set up the solver file with the appropriate parameters from the authors' paper.  Using traditional training methods, we were only able to train the VGG8 architecture;  the VGG16 failed to begin converging for multiple realizations.  Using VGG8 as a template,  we augment VGG16 with \dropin layers to create VGG16 + \dropin (see Table \ref{tab:vgg_dropin}).  
-
-Based on the evidence presented in Section \ref{sec:alexnet}, we choose to test VGG16 with a \dropin length of 60,000. We found that other lengths (100,000, 150,000, and 200,000) began to converge as well but with limited time and resources, we chose to report only this length for this paper.
-The results of training VGG16 + \dropin are shown in Figure \ref{fig:vgg_plot} alongside VGG8.  We see that with gradual \dropin the difficult to train VGG16 network does converge.  Here we see the real power of the gradual \dropin method; without training an additional shallower network we are able to directly train VGG16,  thus saving effort for the practitioner. % More experimentation is required to tune the parameters used in this experimentation.  
-
-%-------------------------------------------------------------------------
-
-\begin{table}[h]
-  \vspace{-5pt}
-\begin{center}
-  \begin{tabular}{| c | c | c |}
-    \hline
-    Case & fc6 & fc7 \\ \hline \hline
-   1 & dropout  & dropout \\ \hline
-   2 & dropout  &  \\ \hline
-   3 & dropout  & \dropin \\ \hline
-  \end{tabular}
-  \caption{The three regularization experiments shows layers with dropout or \dropin. The fully connected layers 6 and 7, are called \textit{fc6} and \textit{fc7}, respectively. }
-  \label{tab:reg}
-\end{center}
-  \vspace{-15pt}
-\end{table}
-
-
+where $d_\mathit{SIFT}$ is the distance between SIFT descriptors, $T_i$ is the alignment transformation in iteration $i$, $w_i$ is the mean squared error (MSE) of the correspondences found in iteration $i$,  $\lambda$ is a user specified parameter, and $\epsilon$ is used for numerical stability.
+This process stops in convergence or when the maximum number of iterations $t$ is reached.
+
+The second term in Equation~\ref{eq:alignment} represents the Euclidean distance, in aligned space, between the 2D coordinates of pores $p_1$ and $p_2$.
+We use this term to determine how good the current alignment is.
+The intuition behind this thinking is that a perfect alignment should have zero MSE.
+So, when the alignment has high MSE, the images are not yet well aligned.
+This means that the similarity of pore descriptors will outweigh the Euclidean distance between the pores when establishing correspondences.
+Similarly, when the alignment has low MSE, the images are better aligned.
+Thus, correspondences with similar descriptors that do not fit the current alignment are unlikely to be created, reducing spurious correspondences.
+This rationale is encoded in Equation~\ref{eq:alignment} by $w_i$, with $\lambda$ serving to control the proportion between $d_\mathit{SIFT}$ and Euclidean distance.
+
+% why can alignment use hand-crafted descriptors and matching cannot? iterative with spatial information discards false correspondences, but is costly
+% state that alignment need only work for positive pairs and that is costly. since it is only done once, it is ok
+
+Having the images aligned does not solve the dataset annotation problem in its entirety.
+One must also be able to determine what is the minimum distance between two keypoints so that they should have a different label.
+This is an issue because two fingerprint images are often not perfectly alignable with rigid transformations.
+Figure~\ref{fig:align} shows images of the same fingerprint that are not perfectly alignable due to non-rigid transformations.
+
+%----------------------------------------------------------------------
 \begin{figure}[h]
-%  \vspace{-15pt}
-\begin{center}
-%\fbox{\rule{0pt}{2in} \rule{0.9\linewidth}{0pt}}
-   \includegraphics[width=.95\linewidth]{alexnet-regularization.png}
-\end{center}
-  \vspace{-10pt}
-   \caption{Test of \dropin regularization with AlexNet. Validation data classification accuracy while training AlexNet with ImageNet data.  % See text for a discussion. 
-(Best viewed in color) 
-}
-\label{fig:regularization}
-  \vspace{-15pt}
+  \begin{center}
+    \begin{subfigure}{0.48\linewidth}
+      \includegraphics[width=\textwidth]{imgs/diff.png}
+      \caption{\label{fig:align1}}
+    \end{subfigure}
+    \begin{subfigure}{0.48\linewidth}
+      \includegraphics[width=\textwidth]{imgs/alignment-divide.png}
+      \caption{\label{fig:align2}}
+    \end{subfigure}
+  \end{center}
+  \caption{Aligned fingerprint images.
+  (a) Aligned images are superimposed in different color channels.
+  (b) Only the alignment residues for one of the images are shown.
+  These images show that fingerprints are not perfectly alignable by rigid transformations.
+  Best viewed in color.
+  }
+  \label{fig:align}
 \end{figure}
+%----------------------------------------------------------------------
 
+To address this issue, we assume that the proposed alignment is capable of perfectly aligning images, \ie the final transformation $T$ maps coordinates between aligned images without distortion.
+Hence, to generate keypoint identity annotations, we choose an arbitrary image for each subject as a reference image.
+Each pore in reference images is then assigned a unique label.
+Afterward, every other image is aligned to its corresponding reference image.
+The coordinates for the labeled pores are then found in the other images belonging to the same subject using the alignment.
+If a pore's coordinates are outside the image boundaries for some image, then this pore is discarded.
+Finally, a patch of dimensions ${33 \times 33}$ is extracted around each of the remaining pores.
+The set of pore patches and their corresponding labels form the training set.
+Notice that the training images are aligned only in the sense that we find transformations to map coordinates from one of them into the other.
+We use the transformations to annotate the data, not to transform the images themselves.
 
-%-------------------------------------------------------------------------
+Allowing the direct use of the alignment transformation to generate pore labels is one of the benefits of aligning images to annotate the dataset.
+This means that if the alignment is successful, even pores for which the hand-crafted descriptors were not able to find a confident correspondence are correctly labeled.
+The other benefit is that this approach assures that the pore annotations are spatially coherent, \ie no label is assigned to a pore in a way that is spatially incompatible with the other labels assigned by the method.
 
+%----------------------------------------------------------------------
+\subsection{Training problem formulation}
+\label{sec:desc-train}
 
-\subsection{Using \dropin for regularization}
-\label{sec:regularization}
-The original AlexNet architecture uses dropout for regularization during training in both fully connected layers and it provides a substantial increase in the network's accuracy.
-AlexNet (with 8 layers) provides a means to test \dropin regularization.
-For this experiment, three cases were run as shown in  Table \ref{tab:reg}.
-Case 1 is the original AlexNet.
+Given image patches of dimensions ${33 \times 33}$ centered on pores with corresponding pore labels, our task is to train a CNN to learn pore descriptors such that descriptors for pores with the same label are closer in $\ell_2$ space than those with different ones.
+HardNet~\cite{hardnet} showed state-of-the-art performance in the wide baseline stereo, patch verification, and instance retrieval tasks until recently~\cite{doap}.
+We can frame the fingerprint recognition problem based on finding pore descriptor correspondences as multiple instance retrieval problems.
+This allows training HardNet to learn pore descriptors in $\ell_2$ space.
+Since its architecture takes as input patches with dimensions ${32 \times 32}$, we discard the last row and the last column of the pore patches.
+Doing this enables us to use HardNet's architecture without modifications.
 
-%\begin{enumerate*}
-% \vspace{-5pt}
-%\item The original architecture (dropout in the fully connected layers 6 and 7, called fc6 and fc7, respectively),
-%\item Dropout removed from fc7 but remaining in fc6, 
-%\item \dropin in fc7 and dropout in fc6. 
-%\end{enumerate*}
+While we do not modify the network's architecture, we train it differently.
+HardNet is supposed to be trained with a mini-batch containing a single positive pair of patches.
+However, Schroff~\etal~\cite{facenet}, which proposes a very similar approach to learn face embeddings, state that the approach taken by HardNet is sub-optimal.
+None of these works provide evidence that their approaches are better than the other, but Schroff~\etal state that unreported experiments show that triplet loss works better with more examples of the same identity in each batch.
+With these considerations in mind, we employ Schroff~\etal's approach, which is called triplet semi-hard loss.
 
+Also, to improve the robustness of our descriptors, we augment the dataset as we sample mini-batches from it.
+This is done by randomly sampling a transformation that includes translating, rotating, and perturbing the contrast and brightness of each patch from a multivariate normal distribution with zero covariance.
+Since we augment after we crop the patches from the image, we treat translations and rotations as if the patch is zero-padded.
+We also linearly interpolate the image when the sampled transformation requires it.
 
+It is important to notice that our procedure for augmentation is able to simulate patches undergoing rigid transformations.
+This corresponds to a user translating and changing his/her finger's orientation with respect to the sensor from one capture session to another.
+If rigid transformations were the only concern, we could forfeit pore identity annotation altogether and augmentation alone would suffice to provide same identity patches.
+However, if a user presses his/her finger against the sensor with a different amount of pressure in a subsequent session, then there is no rigid transformation that can map the earlier image into the new one.
+This is not to mention other sources of variation for fingerprint images, such as those caused by age or the presence of sweat or dirt in the finger. % give a reference for this?
+This is why pore identity annotation is essential to our work.
 
-The results from this experiment are shown in Figure \ref{fig:regularization},
-%where the blue curve is standard AlexNet, the green curve is without dropout in layer fc7, and the red curve is with \dropin in layer fc7.
-where both \dropin and dropout probability ratios were $ 0.5 $ for all of these tests and all the other hyper-parameters were the same.
-This figure shows that removing dropout from fc7 causes visible degrading of the accuracy between iterations 150,000 and 200,000 (green curve).
-This kind of degradation does not happen with \dropinNS.
-Instead, the accuracy curve is similar to the curve with dropout (red versus blue curve) but with a small degradation in overall performance.
-We believe this degradation is because a \dropin network is more difficult to train than a dropout network.
-However, the final accuracy for the network with \dropin in fc7 is higher than from an architecture without dropout (red versus green curve).
-This experiment  demonstrates that \dropin provides some regularization since the degradation found in the case without dropout is absent.
+%----------------------------------------------------------------------
+\section{Fingerprint matching}
+\label{sec:rec}
+Given two fingerprint images $I_1$ and $I_2$ annotated with pore coordinates, the proposed method requires descriptors for each pore.
+They are described using a CNN trained following the steps in Section~\ref{sec:pore-description}.
+This results in descriptor set $D_1$, for the pores of image $I_1$, and descriptor set $D_2$, for the pores in image $I_2$.
 
+It is important to notice that the alignment in Section~\ref{sec:alignment} is not part of our fingerprint matching method, nor is the use of SIFT descriptors.
+These are used only in steps prior to the training of the CNN, which takes place once and is separate from the fingerprint matching method.
 
-%There are two implications from the accuracy from this for the first 100,000 iterations being far below that of AlexNet.
-%First, using \dropin could be  only partially utilizing the fc7 layer since half of those activations are replaced with fc6 activations.
-%Second, the change to the architecture introduced by \dropin in fc7 might make it harder to train the network and that the hyper-parameters need to be tuned.
-%Future plans include tuning the network to determine if  the \dropin architecture can produce competitive accuracies to the original AlexNet.
+Next, we establish correspondences by finding mutual nearest neighbors between the descriptors in $D_1$ and in $D_2$.
+This means that nearest neighbors for descriptors in $D_1$ are searched in $D_2$ and vice-versa.
+We further filter these correspondences using a distance ratio check for the second nearest neighbors~\cite{sift}.
 
-%-------------------------------------------------------------------------
+The recognition score, then, is the final number of established correspondences.
+If they are above a given threshold, the pair is deemed genuine, \ie the images belong to the same fingerprint; otherwise, the pair is considered an impostor pair, \ie they do not belong to the same fingerprint.
 
-\section{How to determine a good architecture}
+Our approach to fingerprint matching is considerably simpler than previous works.
+The proposed method requires aligning only training images and this only happens once, prior to the training of the CNN.
+Previous methods require alignment, either explicitly or implicitly, \eg with RANSAC, for matching~\cite{direct-pore, td-sparse}.
+Other methods require solving optimization problems or reconstructing fingerprint ridges~\cite{su-pores-deep, feature-guided, ridge-reconstruction}.
 
-One of the challenges for deep learning practitioners is to determine good choices for the hyper-parameter values and the architecture for a given application and dataset.
-\dropin and dropout provide an easier way to test choices for the architecture than running a set of experiments with many different architectures.
+%----------------------------------------------------------------------
+\section{Experiments and results}
+\label{sec:exps}
+We use the PolyU-HRF dataset~\cite{direct-pore}, the public benchmark for high-resolution fingerprint recognition, for our experiments.
 
-\dropin and dropout can allow one to test a range of architecture depths and widths, respectively.
-Since adding layers does not necessarily increase accuracy, one can run with the gradual \dropin mode to see if there is little effect, such as in Figures \ref{fig:lenet_10} and  \ref{fig:cifarDropinLen}, or visible effect, such as in Figure \ref{fig:AlexLengths}.
-Substantial improvement implies that there will be benefit from the additional depth.
+We conduct experiments to (1) compare our results to previous methods, and (2) determine if found differences are due to improved descriptors.
+To assess (2), we conduct an ablation study, keeping the entire matching method unchanged except for the used pore descriptors.
+We replace the proposed descriptors for each descriptor previously used in the literature, comparing the observed changes.
 
-Similarly, making a run where the dropout ratio varies from perhaps 0.9 to 0.1 (using a slightly modified dropout) provides guidance on the minimum number of neurons per layer.
-When decreasing the probability that neurons are retained (as shown in Figure 9 of Srivastava \etal \cite{srivastava2014dropout}), the error typically has a range of the probability ratios where the error plateaus but at some threshold probability the error increases.
-By multiplying the number of neurons in a layer by this threshold probability, one can approximately determine the minimum number of neurons one must retain where there is marginal harm to the accuracy.
+The pore description CNN is optimized using Stochastic Gradient Descent (SGD)~\cite{sgd} with early stopping.
+Our implementation uses Tensorflow~\cite{tf}, NumPy~\cite{np}, and OpenCV~\cite{opencv}.
+We make all the code required to train the CNN and to reproduce our experiments, alongside the trained model, publicly available.
 
-%One can also start from fully trained weights and fine-tuning while letting the dropout ratio increase (thinner network) or letting the \dropin ratio increase (shallower network).
-%If the effect on the accuracy is small and there is a need for computational savings, one can use the thinner and shallower network.
-%If at a certain ratio for either dropout or \dropin there is an acceleration in the error, this ratio can be used to estimate the minimum depth and neurons per layer of the architecture for this dataset. 
+%----------------------------------------------------------------------
+\subsection{PolyU-HRF dataset}
+\label{sec:dataset}
+Polyu-HRF is divided into two subsets: \textit{DBI} and \textit{DBII}.
 
-%Furthermore, since \dropin and dropout allow for incremental changes to the architecture depth and width, one of our future research directions is to investigate automatic ways to learn an architecture during training.
+\textit{DBI} consists of 210 images of partial fingerprints, with 6 images per subject, in a training set and 1,480 images, with 10 images per subject, in a test set.
+It provides the corresponding identity for each of those images and separates them in acquisition sessions.
 
-%-------------------------------------------------------------------------
+\textit{DBII} has no training set and its test set has the same number of images and subjects of \textit{DBI}'s.
+The difference is that, in \textit{DBII}, the images are of full-size fingerprints, instead of partial ones.
+Its label information is like that of \textit{DBI}.
 
+PolyU-HRF's \textit{DBI} and \textit{DBII} do not provide pore coordinate annotations, and, therefore, lack pore identity annotations for its images.
+We believe no fingerprint dataset provides this information and that this is the reason why hand-crafted features are so prevalent for this task.
+This also means that we must detect pores in the images to conduct fingerprint recognition experiments.
+
+%----------------------------------------------------------------------
+\subsection{Experimental setup}
+
+%----------------------------------------------------------------------
+\begin{figure*}
+    \begin{subfigure}{0.5\linewidth}
+      \includegraphics[width=\textwidth]{imgs/DBI-ROC.pdf}
+      \caption{\label{fig:roc1}}
+    \end{subfigure}
+    \begin{subfigure}{0.5\linewidth}
+      \includegraphics[width=\textwidth]{imgs/DBII-ROC.pdf}
+      \caption{\label{fig:roc2}}
+    \end{subfigure}
+  \caption{ROC curves for descriptor ablation study in (a) \textit{DBI} and (b) \textit{DBII}.
+  Keeping the matching method unchanged and changing the descriptor shows that the proposed descriptor is responsible for the improvement in recognition results.
+  This is observed in the entirety of the plot.
+  Best viewed in color.}
+  \label{fig:rocs}
+\end{figure*}
+%----------------------------------------------------------------------
+
+We conducted fingerprint recognition experiments for the proposed method in both subsets of PolyU-HRF destined for testing.
+The test set of \textit{DBI} is destined to evaluate performance in the partial fingerprints scenario, while \textit{DBII} is for evaluating the method with full fingerprint images.
+
+We followed the established protocol for validating fingerprint recognition methods in PolyU-HRF, which was proposed by its authors and is the same for both \textit{DBI} and \textit{DBII}~\cite{direct-pore}.
+This protocol consists of performing all 3,700 comparisons of images with the same identity but across sessions.
+These are the only genuine comparisons to be performed.
+The impostor comparisons are the 21,756 comparisons of images with different identities obtained by matching, for each subject, the first image of the first session with the first image of the second session of every other subject.
+
+In order to determine if observed differences in our results arise from the robustness of the proposed descriptor, we conduct an ablation study.
+In it, we repeat our experiment, keeping the same protocol and overall fingerprint recognition method, but replace the proposed descriptors with every other local descriptor used by previous works to describe pores.
+In one experiment, we use SIFT descriptors~\cite{ridge-reconstruction} and in the other we use DP descriptors~\cite{direct-pore, td-sparse, feature-guided}.
+
+For these other descriptors, we attempt to reproduce the local description pipeline as close as we can interpret from the work that proposes to use them as pore descriptors.
+To allow a fair comparison, we optimize the parameters for these experiments with other descriptors observing the recognition Equal Error Rate (EER) in the training set.
+The SIFT parameter values were scale of 8, median blur kernel dimensions of ${3 \times 3}$, and CLAHE clip limit of 3.
+For DP descriptors, we used ${32 \times 32}$ patches, obtained discarding the last row and column of the ${33 \times 33}$ patches centered at each pore detection.
+The distance ratio check threshold is 0.7 for both of them.
+
+PolyU-HRF's images in \textit{DBI} and \textit{DBII} are not annotated with pore coordinates.
+So, to conduct our experiments, we must first detect pores in these images.
+To this end, we use a pore detection CNN\ifcvprfinal~\cite{fcn-pore-det}\else\cite{supp-fcn-pore-det}\fi with its default parameters. 
+
+To generate the training set annotations, we empirically determined the alignment parameters by observing the results in a few training images.
+Their values are ${\lambda = 500}$, ${\epsilon = 10^{-5}}$ and ${t = 10}$.
+SIFT related parameters were used as determined previously, except for the distance ratio check threhsold, which was of 0.8.
+
+We randomly split \textit{DBI}'s training images, reserving 60\% of them for an effective training set, \ie images we actually use for training the description CNN.
+The remaining 40\% of the training images form a validation set.
+Importantly, we make this split subject-independent, \ie there are no subject identities both in the training set and in the validation set.
+Another important aspect of validation is that we perform manual hyper-parameter tuning and early stopping based directly on the end-task.
+That is, we observe the recognition EER using descriptors from the model in the current training stage.
+The distance ratio check is fixed at 0.7 during training to avoid unforeseen variations in the training dynamics.
+
+The best trained model obtained recognition EER of 0\% in the validation set.
+Its parameters are constant learning rate of $10^{-1}$, batches of size 252, with exactly 6 patches per pore, dropout rate of 0.3, triplet semi-hard loss margin of 2.0, and no weight decay.
+
+While we take steps to ensure that there is no identity that appears in both the training and validation sets to improve generalization, the default protocol of PolyU-HRF has subjects that appear in both its training and test sets.
+This setting is sub-optimal to evaluate methods based on deep neural networks, as it is known that they are able to memorize the training set~\cite{deep-learning-generalization}.
+
+We believe it is unlikely that dataset memorization represents a major issue in our evaluation.
+We argue this based on three facts.
+First, while there are subjects in both training and test sets, there is no image in the test set that is also in the training set.
+Second, our method obtains 0\% recognition EER in a validation set that has no subject overlap with the training set.
+Third, despite this overlap, most subjects in the test set are not available for training.
+
+%----------------------------------------------------------------------
+\subsection{Results}
+
+Figure~\ref{fig:rocs} presents Receiver Operating Characteristic (ROC) curves for our ablation study in \textit{DBI} and \textit{DBII}.
+Table~\ref{table:ablation} displays EERs for these experiments.
+
+%---------------------------------------------------------------------
+\begin{table}[h]
+  \begin{center}
+    \begin{tabular}{l|c|c}
+      \textbf{Descriptor}                                   & \textbf{DBI}    & \textbf{DBII} \\ \hline
+      \textbf{Proposed}                                     & \textbf{3.05\%} & \textbf{0.44\%} \\ \hline
+      SIFT                                                  & 5.87\%          & 1.71\% \\ \hline
+      DP                                                    & 5.98\%          & 2.22\% \\
+    \end{tabular}
+  \end{center}
+  \vspace{-4pt}
+  \caption{EERs for \textit{DBI} and \textit{DBII} for the descriptor ablation study.
+  Using the proposed descriptors while keeping the matching method otherwise unchanged reduces EER to almost half of the best hand-crafted descriptors' in \textit{DBI} and to almost a quarter in \textit{DBII}.
+  Best results are in boldface.
+  }
+  \label{table:ablation}
+\end{table}
+%---------------------------------------------------------------------
+
+Our ablation study provides strong evidence that the effectiveness of our approach is due to the improved descriptors.
+Replacing the proposed descriptors with SIFT ones results in 5.87\% EER in \textit{DBI}; with DP ones, it results in 5.98\%.
+This shows that, contrary to what was previously reported~\cite{direct-pore}, at least for this simple matching algorithm and partial fingerprints, the performance for SIFT and DP descriptors are very similar.
+In contrast, when using the proposed descriptors, the EER value is only 3.05\%, cutting the error almost in half.
+The effect of using learned descriptors is even more significant in \textit{DBII}: the EER, 0.44\%, is almost a quarter of SIFT's, 1.71\%, and less than a fifth of DP's, which is 2.22\%.
+The ROC curves also show that for the entire plot, our results are better.
+
+Table~\ref{table:results} compare our results with previously reported methods in terms of EER for both subsets.
+We note that Su~\etal~\cite{su-pores-deep} do not report results for \textit{DBII} and that is why its entry is blank in Table~\ref{table:results}.
+Our results are only worse than methods that leverage the use of minutiae when comparing EER for both the partial fingerprints in \textit{DBI} and the full fingerprints in \textit{DBII}.
+This confirms that the proposed method is the state-of-the-art in pore-based fingerprint recognition for high-resolution images, according to the PolyU-HRF benchmark.
+
+%---------------------------------------------------------------------
+\begin{table}[h]
+  \begin{center}
+    \begin{tabular}{l|c|c}
+      \textbf{Method}                                                        & \textbf{DBI}    & \textbf{DBII} \\ \hline
+      Liu \etal \cite{feature-guided}*                                       & \textbf{2.17\%} & \textbf{0.17\%} \\ \hline
+      \textbf{Proposed}                                                      & \textbf{3.05\%} & \textbf{0.44\%} \\ \hline
+      Liu \etal \cite{td-sparse}                                             & 3.25\%          & 0.53\% \\ \hline
+      Su \etal \cite{su-pores-deep}*                                         & 3.66\%          & - \\ \hline
+      \ifcvprfinal Pamplona \fi Segundo \& Lemes \cite{ridge-reconstruction} & 3.74\%          & 0.76\% \\ \hline
+      Zhao \etal \cite{direct-pore}*                                         & 12.40\%         & 5.93\% \\ \hline
+      Zhao \etal \cite{direct-pore}                                          & 20.49\%         & 7.05\% \\
+    \end{tabular}
+  \end{center}
+  \vspace{-4pt}
+  \caption{EERs for fingerprint recognition in \textit{DBI} and \textit{DBII}.
+  * marks methods that consider both minutiae and pores as keypoints.
+  Our method outperforms all previous methods that use only on pores for recognition.
+  We note that Su~\etal~\cite{su-pores-deep} does not report results for \textit{DBII} and that is why its entry is blank.
+  Best results for methods using only pores and overall methods are in boldface.
+  }
+  \label{table:results}
+\end{table}
+%---------------------------------------------------------------------
+
+Observe that combining minutiae information with that of pores improves the result of fingerprint recognition.
+In \textit{DBI}, Zhao~\etal's~\cite{direct-pore} results go from 20.49\% to 12.40\% and Liu~\etal's~\cite{feature-guided} goes from 3.25\% to 2.17\%.
+The same effect occurs in \textit{DBII}.
+This is evidence that combining the proposed descriptors somehow with minutiae could yield even better results.
+
+This comparison also confirms our hypothesis that more robust descriptors do not need the sophisticated matching methods previously used in the literature.
+The previous methods either use the way in which we establish correspondences as an intermediate step~\cite{direct-pore, td-sparse, feature-guided}, involve solving complex optimization problems~\cite{td-sparse, feature-guided, su-pores-deep}, or require reconstructing fingerprint ridges~\cite{ridge-reconstruction}.
+We believe this shows that they are more complex than the algorithm presented in Section~\ref{sec:rec}.
+
+It is also interesting to remark that the only method to present better results quantified by EER than ours does so when combining already sophisticated matching methods with minutiae information.
+Other methods present higher EER, even when using minutiae information for matching.
+
+%----------------------------------------------------------------------
 \section{Conclusion}
 
-The major result of this paper is that deeper architectures that cannot converge using standard training methods, become trainable by slowly adding in the new layers during the training.  
-In addition, there are indications that  \dropin layers help regularize the training of a network. 
-We found in general that if the shallow network is trainable, then the deeper network, where  additional layers are added by a \dropin layer, is also trainable.  
-%However, if the dataset is relatively small, a deeper network might not provide much improvement, as shown with the CIFAR-10 results.  
-With a large dataset like ImageNet, adding additional layers increases accuracy.
+In this work, we detailed how aligning fingerprint images allows us to automatically annotate a training set with keypoint labels.
+Our method iteratively establishes correspondences based on the similarity of hand-crafted keypoint descriptors and aligns positive pairs of images with them.
+This process is more computationally expensive than our matching algorithm.
+However, it has no impact in the running time of recognition since it only takes place once, prior to training the CNN.
+Finally, to show the usefulness of that approach, we annotated the training set of the default benchmark for high-resolution fingerprint recognition with pore labels and used those labels for training the CNN we used in our experiments.
 
-We have not yet explored training with tailored \dropin lengths for different \dropin layers in a network.
-In addition, comparing \dropin to initializing the weights from training a separate shallow network has not yet been tested; these are planned for future work and will be reported elsewhere.  
-Also we plan to test \dropin within other architectures such as recurrent neural networks.
-Future work also includes training networks with hundreds of layers using asynchronous \dropinNS, where layers are added starting at different iterations.
-In addition, we wish to test training where the entire very deep network is initially very thin (few parameters to train) and units are added to all the layers during the training.
-Furthermore, we plan to study if a methodology can be developed to learn from the data how to automatically optimize the architecture during training and thus learn to adapt to an application based on its data.
+We see as our main contribution the substantial empirical evidence to corroborate our hypothesis that improving local descriptors allows the use of simple matching rules to improve high-resolution fingerprint recognition.
+We both (1) obtain the state-of-the-art performance in the default benchmark for high-resolution, pore-based fingerprint recognition using a method that fulfills these criteria, (2) and conduct an ablation study with the most successful descriptors used in the literature to confirm that the improvement is due to better descriptors.
+% put "210 (minus validation) images for training only!" somewhere here in the conclusion and in other places, probably the intro and when comparing to minutianet, which has 0.9*1800
 
-%-------------------------------------------------------------------------
+% "our work could reorient the fields efforts towards improving descriptos, a largely ignored aspect of fingerprint recognition, but one we prove is essential, still unexplored and with large improvement margin"
+% matching algorithms are getting close to complexity theory barriers, such as NP-Hardness. improving descriptors is a path to continuing improving fingerprint recognition without addressing such problems
 
+Our method, expectedly, has limitations.
+The most significant, in our opinion, has to do with using the data to learn the descriptor.
+It is known that deep learning approaches suffer from domain variability~\cite{domain-gan}.
+Fingerprint images obtained from different sensors vary considerably.
+This can be seen by comparing images in PolyU-HRF~\cite{direct-pore} and in the proprietary dataset used by MinutiaNet~\cite{zhang-pattern-rec}.
+The question, then, is if this could impact the performance of using a CNN trained with images from one sensor in images obtained from a different sensor.
 
-{\small
+Future work should investigate if domain variability represents a limitation of our method.
+This would involve testing the trained CNN in a dataset of images from a different sensor.
+As of the writing of this work, this would require collecting a new dataset or obtaining approval of use from the maintainers of a proprietary high-resolution fingerprint dataset.
+PolyU-HRF is the only publicly available dataset for high-resolution fingerprints, to the best of our knowledge.
+If such an investigation finds that domain variability impacts the method significantly, one could solve it in either a supervised manner, which would involve labeling fingerprints from several sensors, or an unsupervised manner, \eg using domain adversarial training~\cite{domain-gan}.
+
+A straightforward way to improve our method would be to replace the triplet-based loss we use to train our CNN with histogram loss~\cite{histogram-loss}.
+Descriptors that use this loss~\cite{doap} have recently surpassed HardNet's performance in instance retrieval and are the new state-of-the-art for this task.
+
+Using minutiae somehow in the proposed fingerprint matching method also appears likely to be able to improve our results.
+Previous work~\cite{feature-guided, td-sparse} show that this holds potential to make recognition significantly more discriminative.
+This would probably involve adding steps to the matching algorithm to detect and find correspondences for minutiae but the performance improvement could outweigh the increased computational cost for high-security environments.
+
+Another promising line of work is the use of a global fingerprint texture descriptor, like GlobalNet~\cite{zhang-pattern-rec}, either combined with or side-stepping keypoint-based recognition altogether.
+This may prove difficult for the proposed PolyU-HRF protocol since it only allows 210 images to be used for training.
+The original dataset does not reserve images for validation, which must then be taken from the training set.
+
+Finally, we made the code required to reproduce our experiments publicly available.
+We believe this substantially improves the transparency, reproducibility, and the usefulness of our work.
+
+\ifcvprfinal
+\section*{Acknowledgments}
+This work was funded by Universidade Federal da Bahia (UFBA) and Akyiama Solu\c c\~oes Tecnol\'ogicas.
+The Titan Xp we used was donated by the NVIDIA Corporation.
+\fi{\small
 \bibliographystyle{ieee}
-\bibliography{dropin.bib}
+\bibliography{main}
 }
+
 
 \end{document}

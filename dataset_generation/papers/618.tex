@@ -1,0 +1,619 @@
+% This is samplepaper.tex, a sample chapter demonstrating the
+% LLNCS macro package for Springer Computer Science proceedings;
+% Version 2.20 of 2017/10/04
+%
+% Based on CVPR 07 and LNCS, with modifications by DAF, AZ and elle, 2008 and AA, 2010, and CC, 2011; TT, 2014; AAS, 2016; AAS 2018
+
+\documentclass[runningheads]{llncs}
+%
+\usepackage{graphicx}
+% Used for displaying a sample figure. If possible, figure files should
+% be included in EPS format.
+%
+\usepackage{amsmath,amssymb} % define this before the line numbering.
+\usepackage{color}
+% If you use the hyperref package, please uncomment the following line
+% to display URLs in blue roman font according to Springer's eBook style:
+% \renewcommand\UrlFont{\color{blue}\rmfamily}
+\usepackage{algorithm}
+\usepackage{algorithmicx}
+\usepackage[noend]{algpseudocode}
+\usepackage{multirow}
+\usepackage[width=122mm,left=12mm,paperwidth=146mm,height=193mm,top=12mm,paperheight=217mm]{geometry}
+
+\usepackage[caption=false]{subfig}
+\usepackage{caption} 
+
+\usepackage{hyperref}
+\usepackage{breakcites}
+
+\makeatletter
+\newcommand{\printfnsymbol}[1]{%
+  \textsuperscript{\@fnsymbol{#1}}%
+}
+\makeatother
+
+\begin{document}
+%
+\title{Mask TextSpotter: An End-to-End Trainable Neural Network for Spotting Text with Arbitrary Shapes} 
+% Replace with your title
+
+\titlerunning{Mask TextSpotter}
+% Replace with a meaningful short version of your title
+%
+\author{Pengyuan Lyu\thanks{Authors contribute equally.}\inst{1}\orcidID{0000-0003-3153-8519
+} \and
+Minghui Liao\printfnsymbol{1}\inst{1}\orcidID{0000-0002-2583-4314} \and
+Cong Yao\inst{2}\orcidID{0000-0001-6564-4796} \and
+Wenhao Wu\inst{2} \and \\
+Xiang Bai\thanks{Corresponding author.}\inst{1}\orcidID{0000-0002-3449-5940}}
+%
+%Please write out author names in full in the paper, i.e. full given and family names. 
+%If any authors have names that can be parsed into FirstName LastName in multiple ways, please include the correct parsing, in a comment to the volume editors:
+%\index{Lastnames, Firstnames}
+%(Do not uncomment it, because you may introduce extra index items if you do that, we will use scripts for introducing index entries...)
+\authorrunning{Pengyuan Lyu, Minghui Liao, Cong Yao, Wenhao Wu, Xiang Bai}
+% Replace with shorter version of the author list. If there are more authors than fits a line, please use A. Author et al.
+%
+
+\institute{
+% School of Electronic Information and Communications, \\
+Huazhong University of Science and Technology \and
+Megvii (Face++) Technology Inc. \\
+% \email{lncs@springer.com}\\
+% \url{http://www.springer.com/gp/computer-science/lncs} \and
+% ABC Institute, Rupert-Karls-University Heidelberg, Heidelberg, Germany\\
+% \email{\{abc,lncs\}@uni-heidelberg.de}
+\email{lvpyuan@gmail.com, mhliao@hust.edu.cn, yaocong2010@gmail.com, wwh@megvii.com, xbai@hust.edu.cn}
+}
+%
+\maketitle              % typeset the header of the contribution
+%
+\begin{abstract}
+Recently, models based on deep neural networks have dominated the fields of scene text detection and recognition. In this paper, we investigate the problem of scene text spotting, which aims at simultaneous text detection and recognition in natural images. An end-to-end trainable neural network model for scene text spotting is proposed. The proposed model, named as Mask TextSpotter, is inspired by the newly published work Mask R-CNN. Different from previous methods that also accomplish text spotting with end-to-end trainable deep neural networks, Mask TextSpotter takes advantage of simple and smooth end-to-end learning procedure, in which precise text detection and recognition are acquired via semantic segmentation. Moreover, it is superior to previous methods in handling text instances of irregular shapes, for example, curved text. Experiments on ICDAR2013, ICDAR2015 and Total-Text demonstrate that the proposed method achieves state-of-the-art results in both scene text detection and end-to-end text recognition tasks.
+
+\keywords{Scene Text Spotting \and Neural Network \and Arbitrary Shapes}
+\end{abstract}
+%
+%
+%
+
+\section{Introduction}
+In recent years, scene text detection and recognition have attracted growing research interests from the computer vision community, especially after the revival of neural networks and growth of image datasets. Scene text detection and recognition provide an automatic, rapid approach to access the textual information embodied in natural scenes, benefiting a variety of real-world applications, such as geo-location~\cite{zhu2018cascaded}, instant translation, and assistance for the blind.  
+
+Scene text spotting, which aims at concurrently localizing and recognizing text from natural scenes, have been previously studied in numerous works~\cite{wang2011end,jaderberg2016reading}. However, in most works, except~\cite{Li_2017_ICCV} and~\cite{Busta_2017_ICCV}, text detection and subsequent recognition are handled separately. Text regions are first hunted from the original image by a trained detector and then fed into a recognition module. This procedure seems simple and natural, but might lead to sub-optimal performances for both detection and recognition, since these two tasks are highly correlated and complementary. On one hand, the quality of detections larges determines the accuracy of recognition; on the other hand, the results of recognition can provide feedback to help reject false positives in the phase of detection.
+
+% Problems of existing end-to-end methods
+Recently, two methods~\cite{Li_2017_ICCV,Busta_2017_ICCV} that devise end-to-end trainable frameworks for scene text spotting have been proposed. Benefiting from the complementarity between detection and recognition, these unified models significantly outperform previous competitors. However, there are two major drawbacks in~\cite{Li_2017_ICCV} and~\cite{Busta_2017_ICCV}. First, both of them can not be completely trained in an end-to-end manner. \cite{Li_2017_ICCV} applied a curriculum learning paradigm~\cite{bengio2009curriculum} in the training period, where the sub-network for text recognition is locked at the early iterations and the training data for each period is carefully selected. Busta~\emph{et al.}~\cite{Busta_2017_ICCV} at first pre-train the networks for detection and recognition separately and then jointly train them until convergence. There are mainly two reasons that stop ~\cite{Li_2017_ICCV} and~\cite{Busta_2017_ICCV} from training the models in a smooth, end-to-end fashion. One is that the text recognition part requires accurate locations for training while the locations in the early iterations are usually inaccurate.The other is that the adopted LSTM~\cite{lstm} or CTC loss~\cite{graves2006connectionist} are difficult to optimize than general CNNs. The second limitation of~\cite{Li_2017_ICCV} and~\cite{Busta_2017_ICCV} lies in that these methods only focus on reading horizontal or oriented text. However, the shapes of text instances in real-world scenarios may vary significantly, from horizontal or oriented, to curved forms.
+
+\begin{figure}[!b]
+\begin{center}
+\includegraphics[width=0.8\linewidth]{figures/introduction.pdf}
+\end{center}
+\caption{Illustrations of different text spotting methods. The left presents horizontal text spotting methods~\cite{liao2017textboxes,Li_2017_ICCV}; The middle indicates oriented text spotting methods~\cite{Busta_2017_ICCV}; The right is our proposed method. Green bounding box: detection result; Red text in green background: recognition result.}
+\label{fig:introduction}
+\end{figure}
+
+In this paper, we propose a text spotter named as \emph{Mask TextSpotter}, which can detect and recognize text instances of arbitrary shapes. Here, \textit{arbitrary shapes} mean various forms text instances in real world. Inspired by Mask R-CNN~\cite{he2017mask}, which can generate shape masks of objects, we detect text by segment the instance text regions. Thus our detector is able to detect text of arbitrary shapes. Besides, different from the previous sequence-based recognition methods \cite{shi2016robust,shi2017end,lee2016recursive} which are designed for 1-D sequence, we recognize text via semantic segmentation in 2-D space, to solve the issues in reading irregular text instances. Another advantage is that it does not require accurate locations for recognition. Therefore, the detection task and recognition task can be completely trained end-to-end, and benefited from feature sharing and joint optimization.
+
+We validate the effectiveness of our model on the datasets that include horizontal, oriented and curved text. The results demonstrate the advantages of the proposed algorithm in both text detection and end-to-end text recognition tasks. Specially, on ICDAR2015, evaluated at a single scale, our method achieves an F-Measure of 0.86 on the detection task and outperforms the previous top performers by $13.2\%-25.3\%$ on the end-to-end recognition task.
+
+% Our contributions
+The main contributions of this paper are four-fold. (1) We propose an end-to-end trainable model for text spotting, which enjoys a simple, smooth training scheme. (2) The proposed method can detect and recognize text of various shapes, including horizontal, oriented, and curved text. (3) In contrast to previous methods, precise text detection and recognition in our method are accomplished via semantic segmentation. (4) Our method achieves state-of-the-art performances in both text detection and text spotting on various benchmarks.
+
+\section{Related Work}
+
+\subsection{Scene Text Detection}
+In scene text recognition systems, text detection plays an important role~\cite{zhu2016scene}. A large number of methods have been proposed to detect scene text \cite{epshtein2010detecting,neumann2010method,neumann2012real,yao2012detecting,huang2014robust,kang2014orientation,zhang2015symmetry,jaderberg2016reading,tian2015text,zhang2015symmetry,zhong2016deeptext,liao2017textboxes,yao2016scene,zhang2016multi,liu2017deep,he2017single,tian2016detecting,shi2017detecting,zhou2017east,he2017deep,lyu2018multi,liao2018rotation}. 
+% Most conventional methods of text detection are designed for detecting horizontal text with handcraft features. Some methods based on SWT \cite{epshtein2010detecting,huang2013text} and MSER \cite{neumann2010method,neumann2012real,huang2014robust} first detect character candidates and then group character candidates to words or text lines. 
+In \cite{jaderberg2016reading}, Jaderberg \emph{et al.} use Edge Boxes \cite{zitnick2014edge} to generate proposals and refine candidate boxes by regression. 
+Zhang \emph{et al.} \cite{zhang2015symmetry} detect scene text by exploiting the symmetry property of text. 
+% Recently, deep learning based methods have become the mainstream of scene text detection. 
+Adapted from Faster R-CNN \cite{ren2015faster} and SSD \cite{liu2016ssd} with well-designed modifications, \cite{zhong2016deeptext,liao2017textboxes} are proposed to detect horizontal words.
+
+% Multi-Oriented Text
+Multi-oriented scene text detection has become a hot topic recently. Yao \emph{et al.} \cite{yao2016scene} and Zhang \emph{et al.} \cite{zhang2016multi} detect multi-oriented scene text by semantic segmentation. 
+% Liu \emph{et al.} \cite{liu2017deep} and He \emph{et al.} \cite{he2017single} design  multi-oriented anchors \cite{ren2015faster} or default boxes \cite{liu2016ssd} to detect oriented text. 
+Tian \emph{et al.} \cite{tian2016detecting} and Shi \emph{et al.} \cite{shi2017detecting} propose methods which first detect text segments and then link  them into text instances by spatial relationship or link predictions.
+Zhou \emph{et al.} \cite{zhou2017east} and He \emph{et al.} \cite{he2017deep} regress text boxes directly from dense segmentation maps. 
+Lyu \emph{et al.} \cite{lyu2018multi} propose to detect and group the corner points of the text to generate text boxes. Rotation-sensitive regression for oriented scene text detection is proposed by Liao \emph{et al.} \cite{liao2018rotation}.
+
+% curved text
+% Arbitrary shape text detection has gradually draw the attention of researchers due to the application requirements in real-life scenario. 
+Compared to the popularity of horizontal or multi-oriented scene text detection, there are few works focusing on text instances of arbitrary shapes. 
+Recently, detection of text with arbitrary shapes has gradually drawn the attention of researchers due to the application requirements in the real-life scenario. In \cite{risnumawan2014robust}, Risnumawan \emph{et al.} propose a system for arbitrary text detection based on text symmetry properties. In~\cite{CK2017}, a dataset which focuses on curve orientation text detection is proposed. Different from most of the above-mentioned methods, we propose to detect scene text by instance segmentation which can detect text with arbitrary shapes.
+
+
+\subsection{Scene Text Recognition}
+
+Scene text recognition~\cite{yao2014strokelets,shi2018aster} aims at decoding the detected or cropped image regions into character sequences. The previous scene text recognition approaches can be roughly split into three branches: character-based methods, word-based methods, and sequence-based methods. The character-based recognition methods \cite{bissacco2013photoocr,jaderberg2014deep} mostly first localize individual characters and then recognize and group them into words. In \cite{Jaderberg14c}, Jaderberg \emph{et al.} propose a word-based method which treats text recognition as a common English words (90k) classification problem. Sequence-based methods solve text recognition as a sequence labeling problem. In \cite{shi2017end}, Shi \emph{et al.} use CNN and RNN to model image features and output the recognized sequences with CTC \cite{graves2006connectionist}. In \cite{lee2016recursive,shi2016robust}, Lee \emph{et al.} and Shi \emph{et al.} recognize scene text via attention based sequence-to-sequence model.
+
+The proposed text recognition component in our framework can be classified as a character-based method. However, in contrast to previous character-based approaches, we use an FCN \cite{long2015fully} to localize and classify characters simultaneously. Besides, compared with sequence-based methods which are designed for a 1-D sequence, our method is more suitable to handle irregular text (multi-oriented text, curved text \emph{et al.}).
+
+\subsection{Scene Text Spotting}
+
+Most of the previous text spotting methods \cite{jaderberg2016reading,liao2017textboxes,SynthText,liao2018textboxes++} split the spotting process into two stages. They first use a scene text detector \cite{jaderberg2016reading,liao2017textboxes,liao2018textboxes++} to localize text instances and then use a text recognizer \cite{Jaderberg14c,shi2017end} to obtain the recognized text. In \cite{Li_2017_ICCV,Busta_2017_ICCV}, Li \emph{et al.} and Busta \emph{et al.} propose end-to-end methods to localize and recognize text in a unified network, but require relatively complex training procedures. Compared with these methods, our proposed text spotter can not only be trained end-to-end completely, but also has the ability to detect and recognize  arbitrary-shape (horizontal, oriented, and curved) scene text.
+
+
+\subsection{General Object Detection and Semantic Segmentation}
+
+With the rise of deep learning, general object detection and semantic segmentation have achieved great development. A large number of object detection and segmentation  methods \cite{girshick2014rich,fastrcnn,ren2015faster,dai2016r,lin2017feature,liu2016ssd,redmon2016you,long2015fully,dai2016instance,li2017fully,he2017mask} have been proposed. Benefited from those methods, scene text detection and recognition have achieved obvious progress in the past few years. Our method is also inspired by those methods. Specifically, our method is adapted from a general object instance segmentation model Mask R-CNN~\cite{he2017mask}. However, there are key differences between the mask branch of our method and that in Mask R-CNN. Our mask branch can not only segment text regions but also predict character probability maps, which means that our method can be used to recognize the instance sequence inside character maps rather than predicting an object mask only.
+
+\section{Methodology}
+\begin{figure}[!b]
+\begin{center}
+\includegraphics[width=0.75\linewidth]{figures/pipeline.pdf}
+\end{center}
+\caption{Illustration of the architecture of the our method.}
+\label{fig:pipeline}
+\end{figure}
+
+The proposed method is an end-to-end trainable text spotter, which can handle various shapes of text. It consists of an instance-segmentation based text detector and a character-segmentation based text recognizer.
+\subsection{Framework}\label{sec:framework}
+
+The overall architecture of our proposed method is presented in Fig.~\ref{fig:pipeline}. Functionally, the framework consists of four components: a feature pyramid network (FPN)~\cite{lin2017feature} as backbone, a region proposal network (RPN)~\cite{ren2015faster} for generating text proposals, a Fast R-CNN~\cite{ren2015faster} for bounding boxes regression, a mask branch for text instance segmentation and character segmentation. 
+% In the training phase,  firstly, the RPN generates a lot of text proposals. Then the features of the proposals are fed into the RCNN branch and the Mask branch by applying RoI Align~\cite{he2017mask} on the FPN backbone. The RCNN branch performs classification and regression to produce horizontal text bounding boxes (the green bounding box) and the Mask branch predicts the global text instance segmentation map and the character segmentation map to generate accurate text regions (the white region) and recognition results (the character regions with colors).
+In the training phase, a lot of text proposals are first generated by RPN, and then the RoI features of the proposals are fed into the Fast R-CNN branch and the mask branch to generate the accurate text candidate boxes, the text instance segmentation maps, and the character segmentation maps.
+
+\noindent\textbf{Backbone} Text in nature images are various in sizes. In order to build high-level semantic feature maps at all scales, we apply a feature pyramid structure~\cite{lin2017feature} backbone with ResNet~\cite{resnet} of depth 50.
+FPN uses a top-down architecture to fuse the feature of different resolutions from a single-scale input,  which improves accuracy with marginal cost.
+\\
+\textbf{RPN}
+% function; why extract features from different stages; RoI align; No special design
+RPN is used to generate text proposals for the subsequent Fast R-CNN and mask branch. Following ~\cite{lin2017feature}, we assign anchors on different stages depending on the anchor size. Specifically, the area of the anchors are set to \{$32^2, 64^2, 128^2, 256^2, 512^2$\} pixels on five stages \{$P_2, P_3, P_4, P_5, P_6$\} respectively. Different aspect ratios \{$0.5,1,2$\} are also adopted in each stages as in ~\cite{ren2015faster}. In this way, the RPN can handle text of various sizes and aspect ratios. RoI Align~\cite{he2017mask} is adapted to extract the region features of the proposals. Compared to RoI Pooling~\cite{fastrcnn}, RoI Align preserves more accurate location information, which is quite beneficial to the segmentation task in the mask branch. Note that no special design for text is adopted, such as the special aspect ratios or orientations of anchors for text, as in previous works~\cite{liao2017textboxes,he2017single,liu2017deep}.
+
+\noindent\textbf{Fast R-CNN}
+% function: refine 
+The Fast R-CNN branch includes a classification task and a regression task. The main function of this branch is to provide more accurate bounding boxes for detection. The inputs of Fast R-CNN are in $7 \times 7$ resolution, which are generated by RoI Align from the proposals produced by RPN.
+
+\noindent\textbf{Mask Branch}
+There are two tasks in the mask branch, including a global text instance segmentation task and a character segmentation task. As shown in Fig.~\ref{fig:mask_branch}, giving an input RoI, whose size is fixed to $16*64$, through four convolutional layers and a de-convolutional layer, the mask branch predicts 38 maps (with $32*128$ size), including a global text instance map, 36 character maps, and a background map of characters. 
+% global word map
+The global text  instance map can give accurate localization of a text region, regardless of the shape of the text instance.
+% character map
+The character maps are maps of 36 characters, including 26 letters and 10 Arabic numerals. The background map of characters, which excludes the character regions, is also needed for post-processing.
+
+\begin{figure}[!b]
+\begin{center}
+\includegraphics[width=0.8\linewidth]{figures/mask_branch.pdf}
+\end{center}
+\caption{Illustration of the mask branch. Subsequently, there are four convolutional layers, one de-convolutional layer, and a final convolutional layer which predicts maps of 38 channels (1 for global text instance map; 36 for character maps; 1 for background map of characters).}
+\label{fig:mask_branch}
+\end{figure}
+
+\subsection{Label Generation}
+For a training sample with the input image $I$ and the corresponding ground truth,  we generate targets for RPN, Fast R-CNN and mask branch. Generally, the ground truth contains $P=\{p_{1}, p_{2}...p_{m} \}$ and $C=\{c_{1}=(cc_{1},cl_{1}),c_{2}=(cc_{2},cl_{2}), ... , c_{n}=(cc_{n},cl_{n})\}$, where $p_{i}$ is a polygon which represents the localization of a text region, $cc_{j}$ and $cl_{j}$ are the category and location of a character respectively. Note that, in our method $C$ is not necessary for all training samples. 
+
+% \begin{figure}[!tp]
+% \begin{center}
+% \includegraphics[width=0.85\linewidth]{figures/label_generation_1.pdf}
+% \end{center}
+% \caption{Label generation of mask branch. Left: the blue box is a proposal yielded by RPN, the red polygon and yellow boxes are ground truth polygon and character boxes, the green box is the horizontal rectangle which covers the polygon with minimal area. Right: the global map (top) and the character map (bottom).}
+% \label{fig:label_generation}
+% \end{figure}
+
+\begin{figure}[!b]
+\begin{center}
+\captionsetup[subfigure]{justification=centering}
+    \centering
+\subfloat[\label{fig:label_generation}]{%
+       \includegraphics[width=0.4\textwidth]{figures/label_generation_1.pdf}
+     }
+\subfloat[\label{fig:pixel_voting}]{%
+       \includegraphics[width=0.5\textwidth]{figures/pixel_voting.pdf}
+     }
+\end{center}
+ \caption{(a) Label generation of mask branch. Left: the blue box is a proposal yielded by RPN, the red polygon and yellow boxes are ground truth polygon and character boxes, the green box is the horizontal rectangle which covers the polygon with minimal area. Right: the global map (top) and the character map (bottom). (b) Overview of the pixel voting algorithm. Left: the predicted character maps; right: for each connected regions, we calculate the scores for each character by averaging the probability values in the corresponding region.}
+\label{fig:denser-box}
+\end{figure}
+
+We first transform the polygons into horizontal rectangles which cover the polygons with minimal areas. And then we generate targets for RPN and Fast R-CNN following \cite{fastrcnn,ren2015faster,lin2017feature}. There are two types of target maps to be generated for the mask branch with the ground truth $P$, $C$ (may not exist) as well as the proposals yielded by RPN: a global map for text instance segmentation and a character map for character semantic segmentation. 
+%  Given a roi proposal $r$, a text bounding polygon $p_{i}$ and some corresponding characters $c$ , we 
+Given a positive  proposal $r$, we first use the matching mechanism of \cite{fastrcnn,ren2015faster,lin2017feature} to obtain the best matched horizontal rectangle. The corresponding polygon as well as characters (if any) can be obtained further. Next, the matched polygon and character boxes are shifted and resized to align the proposal and the target map of $H\times W$ as  the following formulas:
+
+\begin{equation}
+B_{x}=(B_{x_0}-min(r_{x})) \times W / (max(r_{x})-min(r_{x}))
+\end{equation}
+\begin{equation}
+B_{y}=(B_{y_0}-min(r_{y})) \times H / (max(r_{y})-min(r_{y}))
+\end{equation}
+where $(B_{x},B_{y})$ and $(B_{x_0},B_{y_0})$ are the updated and original vertexes of the polygon and all character boxes; $(r_{x}, r_{y})$ are the vertexes of the proposal $r$.
+
+After that, the target global map can be generated by just drawing the normalized polygon on a zero-initialized mask and filling the polygon region with the value $1$. 
+% For character map, to avoid characters overlapping with each other, we shrink all normalized character boxes to the eighth size of the origin boxes. Then we generate character map by drawing the shrunk character boxes on a zero-initialized mask and filling the box regions with their corresponding category indexes. If $C$ doesn't exist, all pixels in the character map are set to -1 and will be ignored when optimizing. An example of the targets generation of mask branch is shown in Fig.~\ref{fig:label_generation}.
+The character map generation is visualized in Fig.~\ref{fig:label_generation}. We first shrink all character bounding boxes by fixing their center point and shortening the sides to the fourth of the original sides. Then, the values of the pixels in the shrunk character bounding boxes are set to their corresponding category indices and those outside the shrunk character bounding boxes are set to $0$. If there are no character bounding boxes annotations, all values are set to $-1$.
+
+\subsection{Optimization}
+% rpn loss + rcnn loss + mask branch loss(global + char_seg)
+As discussed in Sec.~\ref{sec:framework}, our model includes multiple tasks. We naturally define a multi-task loss function:
+\begin{equation}
+L = L_{rpn} + \alpha_1 L_{rcnn} + \alpha_2 L_{mask},
+\end{equation}
+where $L_{rpn}$ and $L_{rcnn}$ are the loss functions of RPN and Fast R-CNN, which are identical as these in~\cite{ren2015faster} and~\cite{fastrcnn}. 
+The mask loss $L_{mask}$ consists of a global text instance segmentation loss $L_{global}$ and a character segmentation loss $L_{char}$:
+\begin{equation}
+L_{mask} = L_{global} + \beta L_{char},
+\end{equation}
+where $L_{global}$ is an average binary cross-entropy loss and $L_{char}$ is a weighted spatial soft-max loss. In this work, the $\alpha_1$, $\alpha_2$, $\beta$, are empirically set to $1.0$.
+
+\subsubsection{Text instance segmentation loss}
+The output of the text instance segmentation task is a single map. Let $N$ be the number of pixels in the global map, $y_n$ be the pixel label ($y_n \in {0,1}$), and $x_n$ be the output pixel, we define the $L_{global}$ as follows:
+\begin{equation}
+L_{global} = -\frac{1}{N}\sum_{n=1}^{N}\left [ y_n \times log(S(x_n)) + (1-y_n) \times log(1- S(x_n)) \right ]
+\end{equation}
+where $S(x)$ is a sigmoid function.
+% \begin{equation}
+% S(x) = \frac{1}{1+e^{-x}}
+% \end{equation}
+
+\subsubsection{Character segmentation loss}
+The output of the character segmentation consists of 37 maps, which correspond to 37 classes (36 classes of characters and the background class). Let $T$ be the number of classes, $N$ be the number of pixels in each map. The output maps X can be viewed as an $N \times T$ matrix. In this way, the weighted spatial soft-max loss can be defined as follows:
+
+\begin{equation}
+L_{char} = -\frac{1}{N}\sum_{n=1}^{N}W_n\sum_{t=0}^{T-1} Y_{n,t} log(\frac{e^{X_{n,t}}}{\sum_{k=0}^{T-1} e^{X_{n,k}}}),
+\end{equation}
+
+where $Y$ is the corresponding ground truth of $X$. The weight $W$ is used to balance the loss value of the positives (character classes) and the background class. Let the number of the background pixels be $N_{neg}$, and the background class index be $0$, the weights can be calculated as:
+
+\begin{equation}
+  W_i = 
+  \begin{cases}
+    1& \text{if } Y_{i,0}=1, \\
+    N_{neg} / (N - N_{neg})& \text{otherwise}
+  \end{cases}
+\end{equation}
+
+
+Note that in inference, a sigmoid function and a soft-max function are applied to generate the global map and the character segmentation maps respectively.
+
+
+\subsection{Inference}
+
+Different from the training process where the input RoIs of mask branch come from RPN, in the inference phase, we use the outputs of Fast R-CNN as proposals to generate the predicted global maps and character maps, since the Fast R-CNN outputs are more accurate. 
+
+Specially, the processes of inference are as follows: first, inputting a test image, we obtain the outputs of Fast R-CNN as \cite{ren2015faster} and filter out the redundant candidate boxes by NMS; and then, the kept proposals are fed into the mask branch to generate the global maps and the character maps; finally the predicted polygons can be obtained directly by calculating the contours of text regions on global maps, the character sequences can be generated by our proposed \textit{pixel voting} algorithm on character maps.
+
+% \begin{figure}[!bp]
+% \begin{center}
+% \includegraphics[width=0.8\linewidth]{figures/pixel_voting.pdf}
+% \end{center}
+% \caption{Overview of the pixel voting algorithm. Left: the predicted character maps; right: for each connected regions, we calculate the scores for each character by averaging the probability values in the corresponding region.}
+% \label{fig:pixel_voting}
+% \end{figure}
+
+% \begin{algorithm}
+% \scriptsize
+% \caption{Pixel Voting} 
+% \hspace*{0.02in} {\bf Input:} 
+% Background map $B$, Character maps $C$ 
+% \begin{algorithmic}[1]
+% % \State Generating $Bins$ by spitting $B$ with $G$. 
+% \State Generating connected regions $R$ on the binarized background map
+% \State $S\leftarrow \varnothing$
+% \For{$r$ in $R$} 
+%     \State $scores \leftarrow \varnothing $
+%     \For{$c$ in $C$}
+%         \State mean = Average(c[r])
+%         \State $scores \leftarrow$ scores + {mean}
+%     \EndFor
+    
+%     \State $S \leftarrow$ S + {Argmax(scores)}
+% \EndFor
+% \State \Return $S$
+% \end{algorithmic}
+% \label{pixel_voting}
+% \end{algorithm}
+
+% \noindent\textbf{Pixel Voting} We decode the predicted character maps into character sequences by our proposed pixel voting algorithm. 
+% The background map is first binarized, and then some connected regions can be found on the binarized background map which contains the localization information of individual characters. The categories of those characters can be obtained by the character maps. Specifically, for each connected region, we calculate the means of all pixels in the connected region for each character map. The one with the maximum mean value is defined as the category of the current connected region. The specific processes are shown in Algorithm~\ref{pixel_voting}. Based on a simple prior that the writing habit of English is from left to right, we rank all characters yielded by our pixel voting algorithm according to the x-coordinates of the center points of connected regions, and the final sequence can be generated by grouping all ranked characters.
+
+
+% We first binarize the background map, where the values are from $0$ to $255$, with a threshold of $192$. 
+% Then we obtain all character regions according to connected regions in the binarized map. We calculate the mean values of each region for all character maps. The values can be seen as the character classes probability of the region. The character class with the largest mean value will be assigned to the region. The specific processes are shown in Algorithm~\ref{pixel_voting}. After that, we group all the characters from left to right according to the writing habit of English. The detailed calculation is described in the Algorithm 1 in the paper.
+\noindent\textbf{Pixel Voting} We decode the predicted character maps into character sequences by our proposed pixel voting algorithm. We first binarize the background map, where the values are from $0$ to $255$, with a threshold of $192$. 
+Then we obtain all character regions according to connected regions in the binarized map. We calculate the mean values of each region for all character maps. The values can be seen as the character classes probability of the region. The character class with the largest mean value will be assigned to the region. After that, we group all the characters from left to right according to the writing habit of English. 
+
+\noindent\textbf{Weighted Edit Distance} Edit distance can be used to find the best-matched word of a predicted sequence with a given lexicon. However, there may be multiple words matched with the minimal edit distance at the same time, and the algorithm can not decide which one is the best. The main reason for the above-mentioned issue is that all operations (delete, insert, replace) in the original edit distance algorithm have the same costs, which does not make sense actually. 
+% For example, when  an ``i" in a sequence need to be replaced, the candidate character ``1" should have a smaller cost than the candidate character ``m", because ``1" is more similar with ``i" than ``m" and  is more likely to be identified as ``i". 
+% Inspired by~\cite{yao2014unified}, we propose a weighted edit distance algorithm. Compared with the original edit distance algorithm, we use different weights to compute the costs of different operations. 
+
+% Specifically, in pixel voting stage, we can obtain the probabilities of all character categories for every character in the predicted sequence, and the weights can be obtained according to the probabilities. For the delete operation, the cost is the probability of the current character; for the insert operation, the cost is the mean probability of the two characters which are adjacent to the insertion position; for the replace operation, the cost is computed as: $max(1-s_{1}/s_{2},0)$, where $s_{1}$ and $s_{2}$ are the probabilities of candidate character and the predicted character which is to be replaced. We show in experiments that the proposed weighted edit distance is more effective than the original edit distance algorithm.
+\begin{figure}[!bp]
+\begin{center}
+\includegraphics[width=0.8\linewidth]{figures/wed.pdf}
+\end{center}
+\caption{Illustration of the edit distance and our proposed weighted edit distance. The red characters are the characters will be deleted, inserted and replaced. Green characters mean the candidate characters. $p_{index}^c$ is the character probability, $index$ is the character index and $c$ is the current character.}
+\label{fig:wed}
+\end{figure}
+
+Inspired by~\cite{yao2014unified}, we propose a weighted edit distance algorithm. As shown in Fig.~\ref{fig:wed}, different from edit distance,  which assign the same cost for different operations, the costs of our proposed weighted edit distance depend on the character probability $p_{index}^c$ which yielded by the pixel voting. Mathematically, the weighted edit distance between two strings $a$ and $b$, whose length are $|a|$ and $|b|$ respectively, can be described as $D_{a,b}(|a|,|b|)$, where
+% \footnotesize
+\begin{equation}{\qquad D_{a,b}(i,j)={\begin{cases}\max(i,j)&{\text{ if }}\min(i,j)=0,\\\min {\begin{cases} D_{a,b}(i-1,j)+C_d\\ D_{a,b}(i,j-1)+C_i\\ D_{a,b}(i-1,j-1)+C_r \times 1_{(a_{i}\neq b_{j})}\end{cases}}&{\text{ otherwise.}}\end{cases}}}
+\end{equation}
+% \normalsize
+where $1_{(a_{i}\neq b_{j})}$ is the indicator function equal to 0 when $a_{i}=b_{j}$ and equal to 1 otherwise; $D_{a,b}(i,j)$ is the distance between the first $i$ characters of $a$ and the first $j$ characters of $b$; $C_d$, $C_i$, and $C_r$ are the deletion, insert, and replace cost respectively. In contrast, these costs are set to $1$ in the standard edit distance.
+
+
+\section{Experiments}
+
+To validate the effectiveness of the proposed method, we conduct experiments and compare with other state-of-the-art methods on three public datasets: a horizontal text set ICDAR2013 \cite{karatzas2013icdar}, an oriented text set ICDAR2015 \cite{karatzas2015icdar} and a curved text set Total-Text \cite{CK2017}.
+
+\subsection{Datasets}
+% \textbf{SynthText} is a synthetic dataset proposed by \cite{SynthText}, including about 800000 images. There are a large number of multi-oriented text instances, which are annotated detailedly with word-level, character-level rotated bounding boxes, as well as text sequences.
+\textbf{SynthText} is a synthetic dataset proposed by \cite{SynthText}, including about 800000 images. Most of the text instances in this dataset are multi-oriented and annotated  with word and character-level rotated bounding boxes, as well as text sequences.
+\\
+\textbf{ICDAR2013} is a dataset proposed in Challenge 2 of the ICDAR 2013 Robust Reading Competition \cite{karatzas2013icdar} which focuses on the horizontal text detection and recognition in natural images. There are 229 images in the training set and 233 images in the test set. Besides, the bounding box and the transcription are also provided for each word-level and character-level text instance. 
+\\
+\textbf{ICDAR2015} is proposed in Challenge 4 of the ICDAR 2015 Robust Reading Competition \cite{karatzas2015icdar}. Compared to ICDAR2013 which focuses on ``focused text" in particular scenario, ICDAR2015 is more concerned with the incidental scene text detection and recognition. It contains 1000 training samples and 500 test images. All training images are annotated with word-level quadrangles as well as corresponding transcriptions. Note that, only localization annotations of words are used in our training stage.
+\\
+\textbf{Total-Text} is a comprehensive scene text dataset proposed by \cite{CK2017}. Except for the horizontal text and oriented text, Total-Text also consists of a lot of curved text. Total-Text contains 1255 training images and 300 test images. All images are annotated with polygons and transcriptions in word-level. Note that, we only use the localization annotations in the training phase.
+
+
+\subsection{Implementation details}
+\noindent\textbf{Training} Different from previous text spotting methods which use two independent models \cite{jaderberg2014deep,liao2017textboxes} (the detector and the recognizer) or alternating training strategy \cite{Li_2017_ICCV}, all subnets of our model can be trained synchronously and end-to-end. The whole training process contains two stages: pre-trained on SynthText and fine-tuned on the real-world data. 
+
+In the pre-training stage, we set the mini-batch to $8$, and all the shorter edge of the input images are resized to $800$ pixels while keeping the aspect ratio of the images. The batch sizes of RPN and Fast R-CNN are set to $256$ and $512$ per image with a $1:3$ sample ratio of positives to negatives. The batch size of the mask branch is $16$. In the fine-tuning stage, data augmentation and multi-scale training technology are applied due to the lack of real samples. Specifically, for data augmentation, we randomly rotate the input pictures in a certain angle range of $[-15^\circ, 15^\circ]$. Some other augmentation tricks, such as modifying the hue, brightness, contrast randomly, are also used following \cite{liu2016ssd}. For multi-scale training, the shorter sides of the input images are randomly resized to three scales (600, 800, 1000). Besides, following \cite{Li_2017_ICCV}, extra 1162 images for character detection from \cite{zhong2016deeptext} are also used as training samples. The mini-batch of images is kept to 8, and in each mini-batch, the sample ratio of different datasets is set to $4:1:1:1:1$ for SynthText, ICDAR2013, ICDAR2015, Total-Text and the extra images respectively. The batch sizes of RPN and Fast R-CNN are kept as the pre-training stage, and that of the mask branch is set to $64$ when fine-tuning.
+
+We optimize our model using SGD with a weight decay of 0.0001 and momentum of 0.9. In the pre-training stage, we train our model for 170k iterations, with an initial learning rate of 0.005. Then the learning rate is decayed to a tenth at the 120k iteration. In the fine-tuning stage, the initial learning rate is set to 0.001, and then be decreased to 0.0001 at the 40k iteration. The fine-tuning process is terminated at the 80k iteration.
+
+\textbf{Inference} In the inference stage, the scales of the input images depend on different datasets. After NMS, 1000 proposals are fed into Fast R-CNN. False alarms and redundant candidate boxes are filtered out by Fast R-CNN and NMS respectively. The kept candidate boxes are input to the mask branch to generate the global text instance maps and the character maps. Finally, the text instance bounding boxes and sequences are generated from the predicted maps.
+
+We implement our method in Caffe2 and conduct all experiments on a regular workstation with Nvidia Titan Xp GPUs. The model is trained in parallel and evaluated on a single GPU.
+
+\subsection{Horizontal text}
+We evaluate our model on ICDAR2013 dataset to verify its effectiveness in detecting and recognizing horizontal text. We resize the shorter sides of all input images to 1000 and evaluate the results on-line.
+
+The results of our model are listed and compared with other state-of-the-art methods in Table~\ref{tab_icdar2013} and Table~\ref{tab_detection}. As shown, our method achieves state-of-the-art results among detection, word spotting and end-to-end recognition. Specifically, for detection, though evaluated at a single scale, our method outperforms some previous methods which are evaluated at multi-scale setting \cite{hu2017wordsup,he2017deep} (F-Measure: $91.7\%$  \emph{v.s.}  $90.3\%$); for word spotting, our method is  comparable to the previous best method; for end-to-end recognition,  despite  amazing results have been achieved by \cite{liao2017textboxes,Li_2017_ICCV}, our method is still beyond them by $1.1\%-1.9\%$.
+
+\subsection{Oriented text}
+We verify the superiority of our method in detecting and recognizing oriented text by conducting experiments on ICDAR2015. We input the images with three different scales: the original scale ($720 \times 1280$) and two larger scales where shorter sides of the input images are 1000 and 1600 due to a lot of small text instance in ICDAR2015.  We evaluate our method on-line and compare it  with other methods in Table~\ref{tab_icdar2015} and Table~\ref{tab_detection}. Our method outperforms the previous methods by a large margin both in detection and recognition. For detection, when evaluated at the original scale, our method achieves the F-Measure of $84\%$, higher than the current best one \cite{he2017deep}  by $3.0\%$, which evaluated at multiple scales. When evaluated at a larger scale, a more impressive result can be achieved (F-Measure: $86.0\%$), outperforming the competitors by at least $5.0\%$. Besides, our method also achieves remarkable results on word spotting and end-to-end recognition. Compared with the state of the art, the performance of our method has significant improvements by $13.2\%-25.3\%$, for all evaluation situations.
+\begin{table}[ht]
+\begin{centering}
+\caption{Results on ICDAR2013. ``S", ``W" and ``G" mean recognition with strong, weak and generic lexicon respectively.}
+\label{tab_icdar2013}
+\begin{tabular}{|c|c|c|c|c|c|c|c|}
+\hline 
+\multirow{2}{*}{Method} & \multicolumn{3}{c|}{Word Spotting} & \multicolumn{3}{c|}{End-to-End} & \multirow{2}{*}{FPS}\tabularnewline
+\cline{2-7} 
+ & S & W & G & S & W & G & \tabularnewline
+\hline 
+\hline
+%Deep2Text II + \cite{yin2014robust}  & 84.8 & 83.4 & 78.9 & 81.8  & 79.5  & 77.0 & - \tabularnewline
+Jaderberg \emph{et al.} \cite{jaderberg2016reading} & 90.5  & - & 76 & 86.4 & - & - & - \tabularnewline
+\hline 
+ FCRNall+multi-filt \cite{SynthText} & - & - & 84.7 & - & - & - &  - \tabularnewline
+ \hline 
+Textboxes \cite{liao2017textboxes}  & 93.9  & 92.0  & 85.9 & 91.6 & 89.7 & 83.9 & - \tabularnewline
+ \hline 
+Deep text spotter \cite{Busta_2017_ICCV} & 92 & 89 & 81 & 89 & 86 & 77 & \textbf{9} \tabularnewline
+\hline 
+Li \emph{et al.} \cite{Li_2017_ICCV}  &\textbf{94.2} &\textbf{92.4} &\textbf{88.2} &91.1 &89.8 &84.6 & 1.1 \tabularnewline
+\hline 
+\hline
+ Ours  &92.5 &92.0 &\textbf{88.2} &\textbf{92.2} &\textbf{91.1} &\textbf{86.5} &4.8   \tabularnewline
+\hline
+\end{tabular}
+\par\end{centering}
+\end{table}
+
+\begin{table}[ht]
+\begin{centering}
+\caption{Results on ICDAR2015. ``S", ``W" and ``G" mean recognition with strong, weak and generic lexicon respectively.}
+\label{tab_icdar2015}
+\begin{tabular}{|c|c|c|c|c|c|c|c|}
+\hline 
+\multirow{2}{*}{Method} & \multicolumn{3}{c|}{Word Spotting} & \multicolumn{3}{c|}{End-to-End} & \multirow{2}{*}{FPS}\tabularnewline
+\cline{2-7} 
+ & S & W & G & S & W & G & \tabularnewline
+\hline 
+\hline
+Baseline OpenCV3.0 + Tesseract\cite{karatzas2015icdar}  & 14.7 & 12.6 & 8.4 & 13.8  & 12.0  & 8.0 & - \tabularnewline
+\hline 
+TextSpotter \cite{neumann2016real} & 37.0  & 21.0 & 16.0 & 35.0 & 20.0 & 16.0 & 1 \tabularnewline
+\hline 
+Stradvision \cite{karatzas2015icdar} & 45.9  & - & - & 43.7 & - & - & - \tabularnewline
+\hline 
+TextProposals + DictNet \cite{gomez2017textproposals,Jaderberg14c} & 56.0 & 52.3 & 49.7 & 53.3 & 49.6 & 47.2 &  0.2 \tabularnewline
+\hline 
+HUST\_MCLAB \cite{shi2017detecting,shi2017end} & 70.6 & - & - & 67.9 & - & - &  - \tabularnewline
+ \hline 
+Deep text spotter \cite{Busta_2017_ICCV} & 58.0 & 53.0 & 51.0 & 54.0 & 51.0 & 47.0 & \textbf{9.0} \tabularnewline
+\hline 
+\hline
+ Ours (720)  &71.6  &63.9  &51.6  &71.3  &62.5  &50.0  &6.9   \tabularnewline
+\hline
+ Ours (1000)  &77.7  &71.3  &58.6  &77.3  &69.9  &60.3  &4.8   \tabularnewline
+\hline
+ Ours (1600)  &\textbf{79.3}  &\textbf{74.5}  &\textbf{64.2}  &\textbf{79.3}  &\textbf{73.0}  &\textbf{62.4}  &2.6   \tabularnewline
+\hline
+\end{tabular}
+\par\end{centering}
+\end{table}
+
+\begin{figure}[!tbp]
+\begin{center}
+\includegraphics[width=0.8\linewidth]{figures/visu.pdf}
+\end{center}
+\caption{Visualization results of ICDAR 2013 (the left), ICDAR 2015 (the middle) and Total-Text (the right).}
+\label{fig:visu}
+\end{figure}
+
+
+\begin{table}[ht]
+\begin{centering}
+\caption{The detection results on ICDAR2013 and ICDAR2015. For ICDAR2013, all methods are evaluated  under the ``DetEval” evaluation protocol. The short sides of the input image in ``Ours (det only)" and ``Ours'' are set to $1000$.}
+\label{tab_detection}
+\begin{tabular}{|c|c|c|c|c|c|c|c|c|}
+\hline 
+\multirow{2}{*}{Method} & \multicolumn{3}{c|}{ICDAR2013} & \multirow{2}{*}{FPS} & \multicolumn{3}{c|}{ICDAR2015} & \multirow{2}{*}{FPS}\tabularnewline
+\cline{2-4} \cline{6-8} 
+ & Precision & Recall & F-Measure &  & Precision & Recall & F-Measure & \tabularnewline
+\hline 
+\hline
+Zhang \emph{et al.} \cite{zhang2016multi} & 88.0 & 78.0 & 83.0 & 0.5 & 71.0 & 43.0 &  54.0 & 0.5 \tabularnewline
+\hline 
+Yao \emph{et al.} \cite{yao2016scene} & 88.9 & 80.2 & 84.3 & 1.6 & 72.3 & 58.7 & 64.8 & 1.6  \tabularnewline
+\hline 
+CTPN \cite{tian2016detecting} & 93.0 & 83.0  & 88.0 & 7.1 & 74.0 & 52.0 & 61.0 & -  \tabularnewline
+\hline 
+Seglink \cite{shi2017detecting} & 87.7 & 83.0 & 85.3  & \textbf{20.6} & 73.1 & 76.8 & 75.0 & - \tabularnewline
+\hline 
+EAST \cite{zhou2017east} & - & - & - & - & 83.3 & 78.3 & 80.7 & -   \tabularnewline
+\hline 
+SSTD \cite{he2017single} & 89.0 & 86.0  & 88.0 & 7.7 & 80.0 & 73.0 &  77.0 & \textbf{7.7} \tabularnewline
+\hline 
+Wordsup \cite{hu2017wordsup} & 93.3 & 87.5 & 90.3 & 2 & 79.3 & 77.0 & 78.2 & 2  \tabularnewline
+\hline 
+He \emph{et al.} \cite{he2017deep} & 92.0 & 81.0 & 86.0 & 1.1 & 82.0 & 80.0 & 81.0 & 1.1 \tabularnewline
+\hline 
+\hline
+Ours (det only) &94.1  &88.1  &91.0  &4.6   &85.8   &\textbf{81.2}  &83.4  &4.8 \tabularnewline
+\hline 
+Ours &\textbf{95.0}  &\textbf{88.6}  &\textbf{91.7}  &4.6   &\textbf{91.6}  &81.0  &\textbf{86.0} &4.8 \tabularnewline
+\hline
+\end{tabular}
+\par\end{centering}
+\end{table}
+
+\subsection{Curved text}
+\begin{figure}[!tp]
+\begin{center}
+\includegraphics[width=0.8\linewidth]{figures/comparisons.pdf}
+\end{center}
+\caption{Qualitative comparisons on Total-Text without lexicon. Top: results of TextBoxes~\cite{liao2017textboxes}; Bottom: results of ours.}
+\label{fig:visu_compare}
+\end{figure}
+
+Detecting and recognizing arbitrary text (e.g. curved text) is a huge superiority of our method beyond other methods. We conduct experiments on Total-Text to verify the robustness of our method in detecting and recognizing curved text. Similarly, we input the test images with the short edges resized to 1000.  The evaluation protocol of detection is provided by \cite{CK2017}.
+% ~\footnote{https://github.com/cs-chan/Total-Text-Dataset}. 
+The evaluation protocol of end-to-end recognition follows ICDAR 2015 while changing the representation of polygons from four vertexes to an arbitrary number of vertexes in order to handle the polygons of arbitrary shapes.
+
+\begin{table}[!tp]
+\begin{centering}
+\caption{Results on Total-Text. ``None" means recognition without any lexicon. ``Full" lexicon contains all words in test set.}
+\label{tab_total}
+\begin{tabular}{|c|c|c|c|c|c|}
+\hline 
+\multirow{2}{*}{Method} & \multicolumn{3}{c|}{Detection} & \multicolumn{2}{c|}{End-to-End}\tabularnewline
+\cline{2-6} 
+ & Precision & Recall & F-Measure & None & Full\tabularnewline
+
+\hline 
+\hline
+Ch$^,$ng \emph{et al.} \cite{CK2017} &40.0 &33.0 &36.0 &-  & - \tabularnewline
+\hline
+Liao \emph{et al.} \cite{liao2017textboxes} &62.1 &45.5  &52.5 & 36.3 & 48.9 \tabularnewline
+\hline 
+\hline 
+Ours &\textbf{69.0} &\textbf{55.0}  &\textbf{61.3} &\textbf{52.9} &\textbf{71.8} \tabularnewline
+\hline 
+\end{tabular}
+\par\end{centering}
+\end{table}
+
+To compare with other methods, we also trained a model \cite{liao2017textboxes} using the code in \cite{liao2017textboxes} \footnote{https://github.com/MhLiao/TextBoxes} 
+with the same training data. As shown in Fig.~\ref{fig:visu_compare}, our method has a large superiority on both detection and recognition for curved text. The results in Table~\ref{tab_total} show that our method exceeds \cite{liao2017textboxes} by $8.8$ points in detection and at least $16.6\%$ in end-to-end recognition. The significant improvements of detection mainly come from the more accurate localization outputs which encircle the text regions with polygons rather than the horizontal rectangles. Besides, our method is more suitable to handle sequences in 2-D space (such as curves), while the sequence recognition network used in \cite{liao2017textboxes,Li_2017_ICCV,Busta_2017_ICCV} are designed for 1-D sequences.
+
+
+\subsection{Speed}
+
+Compared to previous methods,  our proposed method exhibits a good speed-accuracy trade-off. It can run at 6.9 FPS with the input scale of $720 \times 1280$. Although a bit slower than the fastest method \cite{Busta_2017_ICCV},  it exceeds \cite{Busta_2017_ICCV} by a large margin in accuracy. Moreover, the speed of ours is about 4.4 times of \cite{Li_2017_ICCV} which is the current state-of-the-art on ICDAR2013.
+
+\subsection{Ablation Experiments}
+Some ablation experiments, including ``With or without character maps", ``With or without character annotation", and ``With or without weighted edit distance", are discussed in the Supplementary.
+
+\section{Conclusion}
+In this paper, we propose a text spotter, which detects and recognizes scene text in a unified network and can be trained end-to-end completely. Comparing with previous methods, our proposed network is very easy to train and has the ability to detect and recognize irregular text (e.g. curved text). The impressive  performances on all the datasets which  includes  horizontal text,  oriented text and curved text,  demonstrate the effectiveness and robustness of our method for text detection and end-to-end text recognition.
+
+\section*{Acknowledgements}
+This work was supported by National Key R\&D Program of China No. 2018YFB1\\004600, NSFC 61733007, and NSFC 61573160, to Dr. Xiang Bai by the National Program for Support of Top-notch Young Professionals and the Program for HUST Academic Frontier Youth Team.
+%
+% ---- Bibliography ----
+%
+% BibTeX users should specify bibliography style 'splncs04'.
+% References will then be sorted and formatted in the correct style.
+%
+\bibliographystyle{splncs04}
+\bibliography{reference}
+%
+% \begin{thebibliography}{8}
+% \bibitem{ref_article1}
+% Author, F.: Article title. Journal \textbf{2}(5), 99--110 (2016)
+
+% \bibitem{ref_lncs1}
+% Author, F., Author, S.: Title of a proceedings paper. In: Editor,
+% F., Editor, S. (eds.) CONFERENCE 2016, LNCS, vol. 9999, pp. 1--13.
+% Springer, Heidelberg (2016). \doi{10.10007/1234567890}
+
+% \bibitem{ref_book1}
+% Author, F., Author, S., Author, T.: Book title. 2nd edn. Publisher,
+% Location (1999)
+
+% \bibitem{ref_proc1}
+% Author, A.-B.: Contribution title. In: 9th International Proceedings
+% on Proceedings, pp. 1--2. Publisher, Location (2010)
+
+% \bibitem{ref_url1}
+% LNCS Homepage, \url{http://www.springer.com/lncs}. Last accessed 4
+% Oct 2017
+% \end{thebibliography}
+
+\title{Supplementary of Mask TextSpotter}
+\titlerunning{Mask TextSpotter}
+% Replace with a meaningful short version of your title
+%
+\author{Pengyuan Lyu\thanks{Authors contribute equally.}\inst{1} \and
+Minghui Liao\printfnsymbol{1}\inst{1} \and
+Cong Yao\inst{2} \and
+Wenhao Wu\inst{2} \and \\
+Xiang Bai\thanks{Corresponding author.}\inst{1}}
+%
+%Please write out author names in full in the paper, i.e. full given and family names. 
+%If any authors have names that can be parsed into FirstName LastName in multiple ways, please include the correct parsing, in a comment to the volume editors:
+%\index{Lastnames, Firstnames}
+%(Do not uncomment it, because you may introduce extra index items if you do that, we will use scripts for introducing index entries...)
+\authorrunning{Pengyuan Lyu, Minghui Liao, Cong Yao, Wenhao Wu, Xiang Bai}
+% Replace with shorter version of the author list. If there are more authors than fits a line, please use A. Author et al.
+%
+
+\institute{
+% School of Electronic Information and Communications, \\
+Huazhong University of Science and Technology \and
+Megvii (Face++) Technology Inc. \\
+% \email{lncs@springer.com}\\
+% \url{http://www.springer.com/gp/computer-science/lncs} \and
+% ABC Institute, Rupert-Karls-University Heidelberg, Heidelberg, Germany\\
+% \email{\{abc,lncs\}@uni-heidelberg.de}
+\email{lvpyuan@gmail.com, mhliao@hust.edu.cn, yaocong2010@gmail.com, wwh@megvii.com, xbai@hust.edu.cn}
+}
+\maketitle
+\section{Ablation Experiments}
+%
+\begin{table}
+\begin{centering}
+\caption{Ablation experimental results. ``Ours (a)":  without character annotations from the real images; ``Ours (b)": without weighted edit distance.}
+\label{tab_discussion}
+\begin{tabular}{|c|c|c|c|c|c|c|c|c|c|c|c|c|}
+\hline 
+\multirow{3}{*}{Method} & \multicolumn{6}{c|}{ICDAR2013} & \multicolumn{6}{c|}{ICDAR2015}\tabularnewline
+\cline{2-13} 
+ & \multicolumn{3}{c|}{Word Spotting} & \multicolumn{3}{c|}{End-to-End} & \multicolumn{3}{c|}{Word Spotting} & \multicolumn{3}{c|}{End-to-End}\tabularnewline
+\cline{2-13} 
+ & S & W & G & S & W & G & S & W & G & S & W & G\tabularnewline
+\hline 
+Ours(a) &91.8 &90.3 &85.9 &90.7 &89.4 &84.6 &76.9 &71.6 &61.6 &76.6 &69.9 &59.8 \tabularnewline
+\hline 
+Ours(b) &91.4  &90.5  &84.3  &91.3  &89.9  &83.8  &75.9  &67.5  &56.8  &76.1  &67.1  &56.7 \tabularnewline
+\hline 
+Ours &\textbf{92.5}  &\textbf{92.0}  &\textbf{88.2} &\textbf{92.2}  &\textbf{91.1}  &\textbf{86.5}  &\textbf{79.3}  &\textbf{74.5}  &\textbf{64.2}  &\textbf{79.3}  &\textbf{73.0}  &\textbf{62.4} \tabularnewline
+\hline 
+\end{tabular}
+\par\end{centering}
+\end{table}
+
+\noindent\textbf{With or without character maps} We train a model named ``Ours(det only)" which removes the subnet of the character maps from the original network to explore the effect of training detection and recognition jointly. As shown in Table 3 in the paper, the detection results of ``Ours" exceed ``Ours(det only)" by $0.7\%$ and $2.6\%$ on ICDAR2013 and ICDAR2015 respectively,  which demonstrate that the detection task can  benefit from the recognition task when jointly training.
+\\
+\textbf{With or without real-world character annotation} The experiment without real-world character annotations is also conducted. As shown in Table~\ref{tab_discussion},  although ``Ours(a)" is trained without any real-world character annotation, it still achieves competitive performances. More specifically, for horizontal text (ICDAR2013), it decrease ``Ours", which is trained with a few real-world character annotations, by  $0.7\%-2.3\%$ on various settings; on ICDAR2015, ``Ours(a)" still outperforms all other previous methods by a large margin.
+\\
+\textbf{With or without weighted edit distance} We conduct experiments to verify the effectiveness of our proposed weighted edit distance. The method of using original edit distance is named ``Ours(b)" and the results are shown in Table~\ref{tab_discussion}. As shown, weighted edit distance can boost the performance by at most 7.4 points of all experiments. %In general, the larger lexicon leads to more performance gains.
+\end{document}

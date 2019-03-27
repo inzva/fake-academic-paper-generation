@@ -1,0 +1,425 @@
+% last updated in April 2002 by Antje Endemann
+% Based on CVPR 07 and LNCS, with modifications by DAF, AZ and elle, 2008 and AA, 2010, and CC, 2011; TT, 2014; AAS, 2016
+
+\documentclass[runningheads]{llncs}
+
+\usepackage{amsmath,amssymb} % define this before the line numbering.
+\usepackage{graphicx}
+\usepackage{amsmath,amssymb} % define this before the line numbering.
+%\usepackage{ruler}
+\usepackage{color}
+\usepackage{tabularx}
+
+\usepackage{float}
+
+\newfloat{figtab}{htb}{fgtb}
+\makeatletter
+  \newcommand\figcaption{\def\@captype{figure}\caption}
+  \newcommand\tabcaption{\def\@captype{table}\caption}
+\makeatother
+
+\usepackage[width=122mm,left=12mm,paperwidth=146mm,height=193mm,top=12mm,paperheight=217mm]{geometry}
+\begin{document}
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+\newcolumntype{C}[1]{>{\centering\arraybackslash}p{#1}}
+\newcolumntype{R}[1]{>{\raggedleft\arraybackslash}p{#1}}
+% \renewcommand\thelinenumber{\color[rgb]{0.2,0.5,0.8}\normalfont\sffamily\scriptsize\arabic{linenumber}\color[rgb]{0,0,0}}
+% \renewcommand\makeLineNumber {\hss\thelinenumber\ \hspace{6mm} \rlap{\hskip\textwidth\ \hspace{6.5mm}\thelinenumber}}
+% \linenumbers
+% self-defined command
+\makeatletter
+\DeclareRobustCommand\onedot{\futurelet\@let@token\@onedot}
+\def\@onedot{\ifx\@let@token.\else.\null\fi}
+
+\def\eg{\emph{e.g}\onedot} \def\Eg{\emph{E.g}\onedot}
+\def\ie{\emph{i.e}\onedot} \def\Ie{\emph{I.e}\onedot}
+\def\cf{\emph{c.f}\onedot} \def\Cf{\emph{C.f}\onedot}
+\def\etc{\emph{etc}\onedot} \def\vs{\emph{vs}\onedot}
+\def\wrt{w.r.t\onedot} \def\dof{d.o.f\onedot}
+\def\etal{\emph{et al}\onedot}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\pagestyle{headings}
+\mainmatter
+\def\ECCV18SubNumber{1608}  % Insert your submission number here
+
+\title{Dynamic Sampling Convolutional Neural Networks} % Replace with your title
+
+\titlerunning{Dynamic Sampling Convolutional Neural Networks}
+
+
+\authorrunning{Jialin Wu, Dai Li, Yu Yang, Chandrajit Bajaj, Xiangyang Ji}
+\author{Jialin Wu$^{\dag \ddag}$\thanks{Authors contribute equally}, Dai Li$^{\ddag \star}$, Yu Yang$^{\ddag}$, Chandrajit Bajaj$^{\dag}$, Xiangyang Ji$^{\ddag}$}
+%Please write out author names in full in the paper, i.e. full given and family names. 
+%If any authors have names that can be parsed into FirstName LastName in multiple ways, please include the correct parsing, in a comment to the volume editors:
+%\index{Lastnames, Firstnames}
+%(Do not uncomment it, because you may introduce extra index items if you do that...)
+
+\institute{ The University of Texas at Austin$^{\dag}$, Tsinghua University$^{\ddag}$\\
+	\email{ \{jialinwu, bajaj\}@cs.utexas.edu}\\
+	\email{ \{lidai15, yang-yu16\}@mails.tsinghua.edu.cn}\\
+	\email{ \{xyji\}@tsinghua.edu.cn}\\
+}
+
+
+\maketitle
+
+
+
+\begin{abstract}
+We present Dynamic Sampling Convolutional Neural Networks (DSCNN), where the position-specific kernels learn from not only the current position but also multiple sampled neighbour regions. During sampling, residual learning is introduced to ease training and an attention mechanism is applied to fuse features from different samples. And the kernels are further factorized to reduce parameters. The multiple sampling strategy enlarges the effective receptive fields significantly without requiring more parameters. While DSCNNs inherit the advantages of DFN \cite{de2016dynamic}, namely avoiding feature map blurring by position-specific kernels while keeping translation invariance, it also efficiently alleviates the overfitting issue caused by much more parameters than normal CNNs. Our model is efficient and can be trained end-to-end via standard back-propagation. We demonstrate the merits of our DSCNNs on both sparse and dense prediction tasks involving object detection and flow estimation. Our results show that DSCNNs enjoy stronger recognition abilities and achieve 81.7\% in VOC2012 \cite{Everingham10} detection dataset. Also, DSCNNs obtain much sharper responses in flow estimation on FlyingChairs dataset\cite{DFIB15} compared to multiple FlowNet models' baselines.
+\keywords{Dynamic sampling convolution, object detection, flow estimation}
+\end{abstract}
+\section{Introduction}
+Convolutional Neural Networks have recently made significant progress in both sparse prediction tasks including image classification \cite{NIPS2012_4824,He_2016_CVPR,wang2017residual}, 
+object detection \cite{dai2016r,ren2015faster,Girshick_2015_ICCV} and dense prediction tasks such as semantic segmentation  \cite{Long_2015_CVPR,dai2016instance,li2016fully}, 
+optical flow estimation \cite{dosovitskiy2015flownet,ilg2016flownet,sun2017pwc}, \etc. 
+Generally, deeper \cite{simonyan2014very,szegedy2015going,He_2016_CVPR} architectures can provide richer features due to more trainable parameters and larger receptive fields. For instance, ResNet \cite{He_2016_CVPR} introduces short-cut connection and residual learning to enable the stack of over 100 convolutional layers.
+
+Most neural network architectures mainly adopt spatially shared kernels which work well in general cases. However, during training phase, the gradients at each spatial position may not share the same descent direction, which can decrease losses at every positions. 
+These phenomenon are quite ubiquitous when multiple objects appear in a single image in object detection or multiple object with different motion direction and speeds in flow estimation, which make the spatially shared kernels more likely to produce blurred feature maps.\footnote{Please see the examples and detailed analysis in the Supplementary Material.} The primary reasons are that even though the kernels are far from optimal for every position, the global gradients, which are the spatially summation of the gradients over entire feature maps, can be close to zero. 
+Because they are used in the update process, the back-propagation process could quite often stall or make very slow progress.
+
+Adopting position-specific kernels can alleviate the unshareable descent direction issue and take advantage of the gradients at each position (\ie\local gradients) since kernel parameters are not spatially shared. In order to maintain the translation invariance, Brabandere \etal\ \cite{de2016dynamic} propose a general paradigm called Dynamic Filter Networks (DFN) and verify them on the moving MNIST dataset \cite{srivastava2015unsupervised}. However, DFNs \cite{de2016dynamic} only generate the dynamic position-specific kernels for their own specific positions. As a result, the kernels can only receive the gradients from their own position ($i.e.$ square of kernel size), which is usually more unstable, noisy and harder to converge than normal CNN.
+
+\begin{figure}[!t]
+\centering
+\includegraphics[width=0.9\linewidth,trim={1.5cm 10.5cm 1.5cm 1.5cm},clip]{erf_demo.pdf}
+\caption{Visualization of the effective receptive field (ERF). Yellow circles denote the positions on the object and the red region denotes the corresponding ERF. Best view in color.}
+\label{fig:erf_demo}
+\end{figure}
+
+Having a properly enlarged receptive field is another important consideration when designing CNN architectures. Adopting stacked convolutional layers with small kernels (\ie\$3\times 3$) \cite{simonyan2014very} is more preferable than larger kernels (\ie\$7\times 7$) \cite{NIPS2012_4824}, because the former one obtains the same receptive fields with fewer parameters. 
+However, the effective receptive fields (ERF) \cite{Luo2016UnderstandingTE} only occupy a fraction of the full theoretical receptive field due to some weak connections and inactivated ReLUs. In practice, it has been shown that adopting dilation strategies \cite{chen2016deeplab} can further improve performance \cite{dai2016r,li2016fully}, which means that enlarging receptive fields in a single layer is still beneficial.  However, despite these enhancements, effective receptive fields of these CNNs are still not large enough and require improvements in some applications.
+
+Therefore, we present DSCNNs to solve the limited ERF and unshareable descent direction issues by utilizing dynamically generated position-specific kernels. In particular, DSCNNs achieve large ERFs via a sampling strategy where each kernel convolves with features from both their own specific position and multiple sampled neighbouring regions. As illustrated in Fig. \ref{fig:erf_demo}, with ResNet-50 as pretrained model, adding a single DSCNN layer can significantly enlarge the ERF, which further yields significant improvements on the representation abilities. Moreover, since our kernels at each position are dynamically generated, DSCNNs also benefit from the local gradients. 
+
+We verify our DSCNNs performance of object detection on the VOC benchmark \cite{Everingham10} and flow estimation on FlyingChairs dataset \cite{DFIB15}. Extensive experimental results demonstrate the effectiveness of our new approach. We achieve 81.7\% with CoupleNets detection head ($v.s.$ 80.4\% for CoupleNets) in object detection on VOC2012, and 2.06 aEPE  ($v.s.$ 2.19 for FlowNetC) in flow estimation on FlyingChairs. 
+These results indicate that our DSCNNs are general and beneficial for both sparse and dense prediction tasks with demonstrable improvements over strong baseline models. Our codes will be made publicly available.
+
+\section{Related Work}
+\noindent\textbf{Dynamic Filter Networks.}
+Dynamic Filter Networks \cite{de2016dynamic} are first proposed by Brabandere \etal\to provide custom parameters for different input data. This architecture is powerful and more flexible since the kernels are dynamically conditioned on inputs. Recently, several task-oriented objectives and extensions have been developed. Deformable ConvNets \cite{dai2017deformable} can be seen as an extension of DFNs that discovers geometric-invariant features. Segmentation-aware convolution \cite{harley2017segmentation} explicitly takes advantage of prior segmentation information to refine feature boundaries via attention masks. 
+Cross convolution \cite{xue2016visual} learns the translation from one frame to another via motion information. Different from the models mentioned above, our DSCNNs aim at constructing large receptive fields and receiving local gradients to produce sharper and more semantic feature maps. \\
+
+\noindent\textbf{Receptive Field.}
+Properly enlarging receptive field is one of the most important consideration in modern CNN's architecture design. Wenjie \etal \propose the concept of effective receptive field (ERF) and the mathematical measure using partial derivatives. The experimental results verify that the ERF usually occupies only a small fraction of the theoretical receptive field \cite{Luo2016UnderstandingTE} which is the input region that an output unit depends on. And, this has attracted lots of research especially in deep learning based computer vision. For instance, pooling strategies are ubiquitous in CNNs which scale down the feature maps so that output units can observe more input feature with the same kernel size. 
+Chen \etal\\cite{chen2016deeplab} propose dilated convolution with hole algorithm and achieve better results on semantic segmentation. 
+Dai \etal\\cite{dai2017deformable} propose to dynamically learn the spatial offset of the kernels at each position so that those kernels can observe wider regions in the bottom layer with irregular shapes. 
+However, some applications such as large motion estimation and large object detection even require larger ERF which is one of the motivation of our DSCNNs. \\
+
+\noindent\textbf{Residual Learning.}
+Generally, residual learning reduces the difficulties of directly learning the objectives by learning their residual discrepancies of the identity function. 
+ResNets \cite{He_2016_CVPR} are proposed to learn residual features of identity mapping via short-cut connection and helps deepen CNNs to over 100 layers easily. There have been plenty of works adopting residual learning to alleviate the problem of divergence and generate richer features. Kim \etal\\cite{kim2016multimodal} adopt residual learning to model multimodal data in visual QA. Long \etal\\cite{long2016unsupervised} learn residual transfer networks for domain adaptation. Besides, Fei Wang \etal\\cite{wang2017residual} apply residual learning to alleviate the problem of repeated features in attention model. We apply residual learning strategy to learn residual discrepancy for identical convolutional kernels. By doing so, we ensure valid gradients' back-propagation so that the DSCNNs can easily converge in real-world datasets. \\
+
+\noindent\textbf{Attention Mechanism.}
+For the purpose of recognizing important features in deep learning unsupervisedly, attention mechanisms have been applied to lots of vision tasks including image classification \cite{wang2017residual}, semantic segmentation \cite{harley2017segmentation}, action recognition \cite{sharma2015action,wu2016action}, \etc. 
+Current visual attention mechanisms mainly consist of hard attention versions and soft attention versions. In hard attention \cite{mnih2014recurrent,ba2014multiple}, most methods adopt sequential processing strategies, which extract features from one or several specific image areas and then decide next areas to focus on. Those methods often require sequential resampling which is computational costly and can not be accelerated via GPUs. In soft attention mechanisms \cite{sharma2015action,xu2015show,wang2017residual}, weights are generated to identify the important parts from different features using prior information. 
+Sharma \etal\\cite{sharma2015action} use previous states in LSTMs as prior information to have the network focus on more meaningful contents in the next frame and get better results for action recognition. Fei Wang \etal\\cite{wang2017residual} benefit from lower-level features and learn attention for higher-level feature maps in a residual manner. In contrast, our attention mechanism aims at combining features from multiple samples via learning weights for each positions' kernels at each sample.
+
+\section{Dynamic Sampling Convolution}
+Firstly, we present the overall structure of our DSCNN in Sec. \ref{sec:3.1}, then introduce dynamic sampling strategies concretely in Sec. \ref{sec:3.2}. This design allows kernels at each position to take advantage of larger receptive fields and the local gradients. Moreover, attention mechanisms are utilized to enhance the performance of DSCNNs, which is demonstrated in Sec. \ref{sec:3.3}. Finally, Sec. \ref{sec:3.4} explains implementation details of our DSCNNs, especially for parameters reduction and residual learning techniques.
+\subsection{Network Overview}
+\label{sec:3.1}
+In this subsection, we introduce the DSCNNs' overall architecture. As illustrated in Fig. \ref{fig:network_structure}, our DSCNNs consist of three branches, namely kernel branch, feature branch and attention branch via conventional convolutional layers with $C'(C+k^2)$, $C$, $C'(s^2+k^2)$ output channels respectively. More complicated architectures in each branch may yield better results, but it is not the focus of this work. Our DSCNNs are compatible modules in modern CNNs. With $C_0$ channels' input feature maps, the feature branch firstly produces $C$ channels intermediate features. Secondly, the kernel branch generates position-specific kernels at each position to sample multiple neighbour regions in the feature branch's $C$ channels' feature maps via convolution. We efficiently implement the kernel branch by conventional CNNs, which requires $C'Ck^2$ channels by default, and further introduce a parameter reduction method that reduces the required numbers of channels in the kernel branch to $C'(C+k^2)$. Thirdly, the attention branch outputs the corresponding attention weights for each position's kernels during sampling. And the DSCNNs output feature maps with $C'$ channels preserving the original spatial dimensions $H$ and $W$ in the whole process.
+
+\begin{figure}[!t]
+\centering
+\includegraphics[width=0.9\linewidth,height=5cm,trim={1.5cm 1.6cm 1.5cm 1.5cm},clip]{model.pdf}
+\caption{Overview of the Dynamic Sampling Convolutional Neural Networks (DSCNN). 
+Our model consists of three branches: (1) the kernel branch generates position-specific kernels;
+(2) the feature branch generates features to be position-specifically convolved;
+(3) the attention branch generates attention weights to fuse features from each sampled neighbour region. Same color indicates features correlated to the same spatial sampled regions in features branch and after dynamically sampled. }
+\label{fig:network_structure}
+\end{figure}
+
+\subsection{Dynamic Sampling Convolution}
+\label{sec:3.2}
+This subsection demonstrates the dynamic sampling convolution, which enjoys both large receptive fields and the local gradients. In particular, the DSCNNs firstly generate position-specific kernels from the kernel branch and then convolve these kernels with features from multiple sampled neighbour regions in the feature branch, resulting in very large receptive fields. 
+
+Denoting $\textbf{X}^{l}$ as the feature maps from $l^{th}$ layer (or intermediate features from the feature branch) with shape $(C,H,W)$, conventional convolutional layer with spatially shared kernels $\textbf{W}$ can be formulated as 
+\begin{equation}
+    \textbf{X}_{y,x}^{l+1,v} = \sum\limits_{u = 1}^{C}\sum\limits_{j = 0}^{k - 1}\sum\limits_{i = 0}^{k-1} \textbf{X}^{l,u}_{y+j,x+i}\textbf{W}^{v,u}_{j,i}
+    \label{eq:norm_conv}
+\end{equation}
+where $u,v$ denote the indices of the input and output channels, $x,y$ denote the spatial coordinates and $k$ indicates the kernel size.
+
+In contrast, the DSCNNs treat generated features in kernel branch, which is spatially dependent, as convolutional kernels. Thus, this scheme requires the kernel branch to generate kernels $\mathcal{W}(X^l)$ from $X^{l}$ to map the $C$-channel features in the feature branch to $C'$-channel ones\footnote{$\mathcal{W}(X^l)$ denotes the kernels $\mathcal{W}$ is generated from $X^l$, and we omit the $(X^l)$ when there is no ambiguity.}. 
+Detailed kernel generation methods will be described in Sec. \ref{sec:3.4} and the supplementary material.
+
+As we aim at very large receptive fields and more stable gradients, we not only convolve the generated position-specific kernels with features at their own positions in the feature branch, but also sample their $s^2$ neighbour regions as additional features shown in Eq. \ref{eq:dynamic_sampling_conv}. Therefore, we have more learning samples for each position-specific kernel than DFN \cite{de2016dynamic} and thus more stable gradients. Also, since we obtain more diverse kernels (\ie\position-specific) than conventional CNNs, we can robustly enrich the feature space. 
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.6\linewidth,trim={0cm 8cm 6cm 0cm},clip]{sample.pdf}
+\caption{Illustration of our multiple sampling strategy. Each position obtains its own kernels from the kernel branch and samples with the $s^2$ neighbour regions in the feature maps in the feature branch with a sample stride $\gamma$. The red square denotes the sampling point and same color indicates features correlated to the same spatial sampled regions in features branch and after dynamically sampled.}
+\label{fig:dense_sample}
+\end{figure}
+
+As shown in Fig. \ref{fig:dense_sample}, each position (\eg \the red square) outputs its own kernels in the kernel branch and uses the generated kernels to sample the corresponding multiple neighbour regions (\ie \the cubes in different colors) in the feature branch. Assuming we have $s^2$ sampled regions for each position with sample stride $\gamma$, kernel size $k$, the sampling strategy outputs feature maps with shape $(s^2, C', H, W)$ which obtain approximately $(s\gamma)^2$ times larger receptive fields. And applying stride and dilation on kernels are straightforward extensions which can further enlarge the receptive fields.  
+
+Formally, the dynamic sampling convolution thus can be formulated as
+\begin{equation}
+    \hat{\textbf{X}}_{\alpha,\beta,y,x}^{l+1,v} = \sum\limits_{u = 1}^{C}\sum\limits_{i = 0}^{k-1}\sum\limits_{j = 0}^{k-1} \textbf{X}_{\hat{y}+j,\hat{x}+i}^{l,u}\mathcal{W}^{v,u}_{y,x,j,i},
+    \label{eq:dynamic_sampling_conv}
+\end{equation}\\
+where $\hat{x}= x+\alpha\gamma$ and $\hat{y}= y+\beta\gamma$ denote the coordinates of the center in sampled neighbour regions. $\mathcal{W}$ denotes the position-specific kernels generated by the kernel branch. And $\alpha, \beta$ are the indices of sampled region with sampling stride  $\gamma$. Tt is worth noting that the origin DFN models are the special case of our DSCNNs when $s=1$.
+
+\subsection{Attention Mechanism}
+\label{sec:3.3}
+In this subsection, we present our methods to fuse dynamic features $\hat{\textbf{X}}_{\alpha,\beta,y,x}^{l+1,v}$ from multiple sampled regions at each position. 
+A direct solution is to stack $s^2$ sampled features to form a $(s^2C', H, W)$ tensor or perform a pooling operation on the sample dimension (\ie \first dimension of $\hat{\textbf{X}}^{l+1}$) as outputs. However, the first choice violates translation invariance and the second choice is not aware of which samples are more important.
+
+To address this issue, we present our attention mechanism which learns attention weights for each position's kernel at each sample. Since the weights for each kernel parameter are not shared, the resolution of output feature maps can be potentially preserved. In case of $s^2$ sampled regions and kernel size $k$ at each position, we should have $s^2k^2C'$ attention weights for each position's kernels so that the weighted dynamic features $ \widetilde{\textbf{X}}$ can be formulated as 
+\begin{align}
+ \widetilde{\textbf{X}}_{\alpha,\beta,y,x}^{l+1,v} =\sum\limits_{u = 1}^{C}\sum\limits_{j = 0}^{k-1}\sum\limits_{i = 0}^{k-1} \textbf{X}_{\hat{y}+j,\hat{x}+i}^{l,u}\mathcal{W}^{v,u}_{y,x,j,i}\textbf{A}^{v,\alpha,\beta}_{\hat{y},\hat{x},j,i},
+\label{eq:attention_origin}
+\end{align}
+
+However, Eq. \ref{eq:attention_origin} requires $s^2k^2C'HW$ attention weights, which is computationally costly and easily leads to overfitting. We thus split this task into learning position attention weights $\textbf{A}^{pos} \in \mathbb{R}^{k^2 \times C'\times H\times W}$ for kernels at each position and learning sampling attention weights $\textbf{A}^{sam} \in \mathbb{R}^{s^2\times C'\times H\times W}$ for each sampled region. Therefore, Eq. \ref{eq:attention_origin} reduce to Eq. \ref{eq:attention_separate}
+\begin{align}
+ \widetilde{\textbf{X}}_{\alpha,\beta,y,x}^{l+1,v} = \textbf{A}^{sam,v}_{\alpha,\beta,y,x}\sum\limits_{u = 1}^{C}\sum\limits_{j = 0}^{k-1}\sum\limits_{i = 0}^{k-1} \textbf{X}_{\hat{y}+j,\hat{x}+i}^{l,u}\mathcal{W}^{v,u}_{y,x,j,i}\textbf{A}^{pos, v}_{\hat{y},\hat{x},j,i}
+ ,
+\label{eq:attention_separate}
+\end{align}
+where $\hat{y},\hat{x}$ share the same representations in Eq.\ref{eq:dynamic_sampling_conv}.
+
+Specifically, we use two CNN sub-branches to generate the attention weights for samples and positions respectively. The sampling attention sub-branch has $C' \times s^2 $ output channels. And for each position, the sample attention weights are generated from the current position denoted by the red box with cross in Fig.\ref{fig:attention} to coarsely predict the importance according to that position. On the other hand, the position attention sub-branch has $C' \times k^2 $ output channels. And the position attention weights are generated from each sampled regions' center denoted by black boxes with cross to model fine-grained local detailed importance based on the sampled local features. 
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth,trim={7cm 3cm 7cm 0cm},clip]{attention_new.pdf}
+\caption{At each position, we separately learn attention weights for each kernel and for each sample. Then, we combine features from multiple samples via these learned attention weights. Boxes with crosses denote the position to generate attention weights and red one denotes sampling position and black ones denote sampled positions.}
+\label{fig:attention}
+\end{figure}
+
+Therefore, the number of attention weights will be reduced to $(s^2+k^2)C'HW$ as shown in Eq. \ref{eq:attention_separate}. Further, we also manually add $1$ to each attention weight to take advantage of residual learning. \Obtaining Eq. \ref{eq:attention_separate}, we finally combine different samples via attention mechanism as 
+\begin{equation}
+    \textbf{X}_{y,x}^{l+1,v} = \sum\limits_{\alpha = 0}^{s-1}\sum\limits_{\beta = 0}^{s-1} \widetilde{\textbf{X}}_{\alpha,\beta,y,x}^{l+1,v}
+    .
+    \label{eq:attention_combine}
+\end{equation}
+
+As feature maps from previous conventional conolutional layers might still be noisy, the position attention weights help filter such noise when convolving with the dynamic kernels. And the sample attention weights indicate how much contribution each sampled neighbour region is expected to make. 
+
+\subsection{Dynamic Kernels Implementation Details}
+\label{sec:3.4}
+\noindent\textbf{Reducing Parameter.}
+Given that directly generating the position-specific kernels $\mathcal{W}$ in the conventional convolutional layers' fashion will require $C'Ck^2HW$ parameters as shown in Eq. \ref{eq:dynamic_sampling_conv}. Since $C$ and $C'$ can be relatively large (\eg\up to 256 or 512), the required output channels in the kernel branch (\ie\$C'Ck^2$) can easily get up to hundreds of thousands, which is computationally costly and intractable even in modern GPUs. Recently, several literatures have focused on reducing kernel parameters (\eg\MobileNet \cite{Howard2017MobileNetsEC}) by factorizing kernels into different parts to make CNNs efficient in modern mobile devices. Inspired by them and based on our DSCNNs' case, we describe our proposed parameter reduction method. And we provide the evaluation and comparison with state-of-art counterparts in the supplementary material. 
+
+Inspecting that the activated output feature maps in a layer usually share similar geometric characteristics across channels, we propose a novel kernel structure that splits the original kernels into two separate parts for the purpose of parameter reduction. Concretely, as illustrated in Fig. \ref{fig:kernel_reduce_param}. On the one hand, the $C \times 1 \times 1$ part $\mathcal{U}$ will be placed into the spatial center of each kernel with size $k$ to model the difference across channels. On the other hand, the $1 \times k \times k$ part $\mathcal{V}$ will be duplicated $C$ times to model the shared geometric characteristics within each channel.
+\begin{figure}[!h]
+\centering
+\includegraphics[width=0.6\linewidth,trim={0cm 12.5cm 13cm 0cm},clip]{approx}
+\caption{Illustration of the original kernel structure and our new kernel structure. We show the case of one output channel for simplicity. In the first part, $C \times 1 \times 1$ weights are placed in the center of the corresponding kernel and in the second part $k^2$ weights are duplicated $C$ times.}
+\label{fig:kernel_reduce_param}
+\end{figure}
+
+Combining the above two parts together, our method generates kernels that map $C$ channels' feature maps to $C'$ channel ones with kernel size $k$ by only $C'(C+k^2)$ parameters at each position instead of $C'Ck^2$. 
+Formally, the convolutional kernels used in Eq. \ref{eq:dynamic_sampling_conv} are formulated as
+
+\begin{align}
+\mathcal{W}^{v,u}_{y,x,j,i} =
+    \begin{cases}
+      \mathcal{U}^{v,u}_{y,x} + \mathcal{V}^{v}_{y,x,j,i}  
+      & \text{$j=i=\lfloor \frac{k-1}{2} \rfloor$}
+    \\[4pt]
+      \mathcal{U}^{v,u}_{y,x}   & \text{otherwise}
+    \end{cases}.
+    \label{eq:two_step_weight}
+\end{align} \\
+
+\noindent\textbf{Residual Learning.}
+Directly using the outputs of the kernel branch as the kernels in Eq. \ref{eq:two_step_weight} can easily lead to divergence in noisy real-world datasets. The reason is that only if the convolutional layers in kernel branch are well trained can we have good gradients back to feature branch and vice versa. Therefore, it's hard to train both of them from scratch simultaneously. Further, since kernels are not shared spatially, gradients at each position are more likely to be noisy, which makes kernel branch even harder to train and further hinders the training process of feature branch. 
+
+We adopt residual learning to address this issue, which learns the residual discrepancies of identical convolutional kernels. In particular, we add $\frac{1}{C}$ to each central position of the kernels as 
+\begin{align}
+\mathcal{W}^{v,u}_{y,x,j,i} =
+    \begin{cases}
+      \mathcal{U}^{v,u}_{y,x} + \mathcal{V}^{v}_{y,x,j,i} +
+      \frac{1}{C}
+      & \text{$j=i=\lfloor \frac{k-1}{2} \rfloor$}
+    \\[4pt]
+      \mathcal{U}^{v,u}_{y,x}   & \text{otherwise}
+    \end{cases}.
+    \label{eq:two_step_weight_residual}
+\end{align}
+Initially, since the outputs of the kernel branch are close to zero, DSCNN approximately averages features from feature branch. 
+It guarantees gradients are sufficient and reliable for back propagation to the feature branch, which inversely benefits the training process of the kernel branch. 
+
+\section{Experiments}
+We evaluate our DSCNNs via object detection and optical flow estimation tasks. 
+Our experiment results show that firstly with much larger ERF illustrated in Fig.\ref{fig:erf_fig}, DSCNNs' achieve significant improvements on recognition abilities.Secondly, with position-specific dynamic kernels and local gradients, DSCNN produces much sharper optical flow.
+
+In the following subsections, we use $w/$ denotes with, $w/o$ denotes without, $\mathcal{A}$ denotes attention mechanism and $\mathcal{R}$ denotes residual learning, $C'$ denotes the number of dynamic features. Since $C'$ in our DSCNN is relatively small ($e.g.$ 24) compared with conventional CNNs' settings, we optionally apply a post-conv layer to increase dimension to $C_1$ channels to match the conventional CNNs.
+
+\subsection{Object Detection}
+\label{sec:4.1}
+We use \textit{PASCAL VOC} datasets \cite{Everingham10} for object detection tasks. 
+Following the protocol in \cite{Girshick_2015_ICCV}, we train our DSCNNs on the union of VOC 2007 trainval and VOC 2012 trainval and test on VOC 2007 and 2012 test sets. 
+For evaluation, we use the standard mean average precision (mAP) scores with IoU thresholds 0.5.
+
+When applying our DSCNN, we insert it right between the feature extractor and the detection heads. We treat these dynamic features as complementary features, which are concatenated with original features before fed into detection head.
+In particular, we adopt ResNets as feature extractor and $7\times 7$ bin R-FCN \cite{dai2016r} or CoupleNets \cite{zhu2017couplenet} with OHEM \cite{shrivastava2016training} as detection head. During training process, following \cite{dai2017deformable}, we resize images to have a shorter side of 600 pixels and adopt SGD optimizer. And we use pre-trained and fixed RPN proposals. Concretely, the RPN network is trained separately as in the first stage of the procedure in \cite{ren2015faster}. We train 110k iterations on single GPU with learning rate $10^{-3}$ in the first 80k and $10^{-4}$ in the next 30k. 
+\begin{table}[t]
+\centering
+\begin{tabular}{l|c|c|c|c}
+\hline
+                                        & mAP(\%) on VOC12  & mAP(\%) on VOC07  & GPU   &  Time(ms) \\\hline\hline
+R-FCN \cite{dai2016r}                   & 77.6              & 79.5              & TITAN & 121              \\
+R-FCN+DSCNN                             & \textbf{79.2}     &\textbf{81.2}      & TITAN & 141           \\\hline 
+Deform. Conv. \cite{dai2017deformable}  & -                 & 80.6              & K40   & 193              \\
+CoupleNet \cite{zhu2017couplenet}       & 80.4              & 81.7              & TITAN & 157              \\
+CoupleNet+DSCNN                         & \textbf{81.7}$^\text{\dag}$   & \textbf{82.3}     & TITAN & 179          \\\hline 
+\end{tabular}
+\caption{Evaluation of the DSCNN models in VOC 2007 and 2012 detection dataset. We use $s=3$, $C'=24$, $\gamma = 1$, $C_1$ = 256 with ResNet-101 as pre-trained networks in experiments when adding DSCNN layers. $^\text{\dag}$\url{http://host.robots.ox.ac.uk:8080/anonymous/BBHLEL.html}.}
+\label{eval_voc_det}
+\end{table}
+
+As shown in Table \ref{eval_voc_det}, DSCNN improves R-FCN baseline model's mAP over 1.5\% with only $C' = 24$ dynamic features. This implies that the position-specific dynamic features are good supplement to the original feature space. And even though CoupleNets \cite{zhu2017couplenet} have already explicitly considered global information with large receptive fields, experimental results demonstrate that adding our DSCNN model is still beneficial. \\
+
+\noindent\textbf{Evaluation on Effective Receptive Field.}
+We evaluate the effective receptive fields (ERF) in the subsection. 
+As illustrated in Fig. \ref{fig:erf_fig}, with ResNet-50 as backbone network, single additional DSCNN layer provides much larger ERF than vanilla models thanks to the multiple sampling strategy. 
+With larger ERFs, the networks can effectively observe larger region at each position thus can gather information and recognize objects more easily. 
+Further, Table. \ref{eval_voc_det} experimentally verified the improvements on recognition abilities provided by our proposed DSCNNs. \\
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=\linewidth,height=6cm,trim={1.5cm 1.5cm 1.5cm 1.5cm},clip]{erf_fig.pdf}
+\caption{Visualization on the effective receptive fields. The yellow circles denote the position on the objects. The first row presents input images. The second row contains the ERF figure from vanilla ResNet-50 model. The third row contains figures of the ERF with DSCNNs. Best view in color.}
+\label{fig:erf_fig}
+\end{figure*}
+
+\noindent\textbf{Ablation Study on Numbers of Sampled Regions.}
+We perform experiments to verify the advantages of applying more sampled regions in DSCNN.
+\begin{table}[h]
+\centering
+\begin{tabular}{L{2.2cm}|C{1cm}|C{1cm}|C{1cm}||L{2.3cm}|C{1cm}|C{1cm}|C{1cm}}
+\hline
+            & $s=1$  & $s=3$  & $s=5$ & &$s=1$  & $s=3$  & $s=5$  \\\hline\hline
+$C' = 16$, $w/$ $\mathcal{A}$ & 72.1 & 78.2 & 78.1 & $C' = 24$, $w/o$ $\mathcal{A}$ &72.1 &77.4 & 77.7\\
+$C' = 24$, $w/$ $\mathcal{A}$ & 72.5 & 78.6 & 78.6 &$C' = 32$, $w/$ $\mathcal{A}$ & 72.9 & 78.6 & 78.5\\\hline
+\end{tabular}
+\caption{Evaluation of numbers of samples $s$. The listed results are trained with residual learning and the post-conv layer is not applied. The experiments use R-FCN baseline and adopt ResNet-50 as pretrained networks.}
+\label{eval_sample}
+\end{table}
+Table \ref{eval_sample} evaluates the effect of sampling in the neighbour regions. In simple DFN model \cite{de2016dynamic}, where $s=1$, though attention and residual learning strategy are adopted, the accuracy is still lower than R-FCN baseline (77.0\%). 
+We argue the reason is that simple DFN model has limited receptive field. 
+Besides, kernels at each position only receive gradients on the identical position which esily leads to overfitting.
+With more sampled regions, we not only enlarge receptive field in feed-forward step, but also stabilize the gradients in back-propagation process. 
+As shown in Table \ref{eval_sample}, when we take $3\times 3$ samples, the mAP score surpluses original R-FCN \cite{dai2016r} by 1.6\% and gets saturated with respect to $s$ when attention mechanism is applied.  \\
+
+\noindent\textbf{Ablation Study on Attention Mechanism.}
+We verify the effectiveness of the attention mechanism in Table \ref{eval_attention} with different sample strides $\gamma$ and numbers of dynamic features $C'$. 
+In the experiments without attention mechanism, max pooling in channel dimension is adopted. 
+We observe that, in most cases, the attention mechanism helps improve mAP by more than 0.5\% in VOC2007 detection tasks. Especially as the number of dynamic features $C'$ increases ($i.e.$ 32), the attention mechanism provides more benefits, increasing the mAP by 1\%, which indicates that it can further strengthen our DSCNNs.\\
+
+\begin{table}[t]
+\centering
+\begin{tabular}{C{2cm}|C{2cm}|C{2cm}|C{2cm}|C{2cm}}
+\hline
+            & \multicolumn{2}{c|}{$w/$ $\mathcal{A}$} & \multicolumn{2}{c}{$w/o$ $\mathcal{A}$} \\\hline\hline
+            & $\gamma = 1  $        & $\gamma = 2   $      & $\gamma = 1   $       & $\gamma = 2 $         \\\hline
+$C' = 16$ & 77.8            & 78.2           & 77.4            & 77.4            \\
+$C' = 24$  & 78.1            & 78.6           & 77.4            & 77.3            \\
+$C' = 32$  & 78.6            & 78.0           & 77.6            & 77.3           \\\hline
+\end{tabular}
+\caption{Evaluation of attention mechanism with different sample strides and numbers of dynamic features. The post-conv layer is not applied. The experiments use R-FCN baseline and adopt ResNet-50 as pretrained networks.}
+\label{eval_attention}
+\end{table}
+
+\noindent\textbf{Ablation Study on Residual Learning.}
+We perform experiments to verify that with different numbers of dynamic features, residual learning contributes a lot to the convergence of our DSCNNs. 
+As shown in Table \ref{eval_residual}, without residual learning, DSCNNs can hardly converge in real-world datasets. Even though they converge, the mAP is lower than expected.
+When our DSCNNs learn in a residual fashion, however, the mAP increase about 10\% on average.  \\
+\begin{table}[h]
+\centering
+\begin{tabular}{C{2cm}|C{2cm}|C{2cm}|C{2cm}|C{2cm}}
+\hline
+             & \multicolumn{2}{c|}{ $C' = 24$ } & \multicolumn{2}{c}{$C' = 32$ } \\\hline\hline
+            & $w/$ $\mathcal{A}$        & $w/o$ $\mathcal{A}$       & $w/$ $\mathcal{A}$          & $w/o$ $\mathcal{A}$      \\\hline
+$w/$ $\mathcal{R}$    & 78.6           & 77.4           & 78.6           & 77.6           \\
+$w/o$ $\mathcal{R}$    & 68.1           &$\mathcal{F}$          & 68.7           & $\mathcal{F}$           \\\hline
+\end{tabular}
+\caption{Evaluaion of residual learning strategy in DSCNN. $\mathcal{F}$ indicates that the model fails to converge and the post-conv layer is not applied. The experiments use R-FCN baseline and adopt ResNet-50 as pretrained networks.}
+\label{eval_residual}
+\end{table}
+
+\noindent\textbf{Runtime Analysis.}
+Since our model can be implemented on GPUs efficiently and the computation at each position and sampled region can be done in a parallel fashion, the running time for the DSCNN models could have potential of only slightly slower than several convolutional layers with kernel size $s^2$. 
+Table \ref{eval_voc_det} shows the efficiency of the DSCNN models. 
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=\textwidth]{new_flow.pdf}
+\caption{Examples of Flow estimation on FlyingChairs dataset. With DSCNNs, much sharper and more detailed optical flow can be estimated compared to various FlowNet models. }
+\label{fig:opt_flow}
+\end{figure*}
+
+\subsection{Optical Flow Estimation}
+We perform experiments on optical flow estimation using the FlyingChairs dataset \cite{DFIB15}. 
+This dataset is a synthetic one with optical flow ground truth and widely used in training deep learning based flow estimation methods. 
+It consists of 22872 image pairs and corresponding flow fields. 
+In experiments we use FlowNets(S) and FlowNetC \cite{ilg2016flownet} as our baseline models, though other complicated models are also applicable. 
+All of the baseline models are fully-convolutional networks which firstly downsample input image pairs to learn semantic features then upsample the features to estimate optical flow.
+
+In experiments, our DSCNN layers are inserted in a relative shallower layer(\ie \the third conv layer) to produce sharper optical flow images. In order to capture large displacement, we apply $7\times7$ or $9\times9$ samples with a sample stride $\gamma = 2$. We adopt $C'=24$ dynamic features and an $1\times 1$ conv layer with $128$ channels as post-conv layer. After that, we use skip-connection to connect the DSCNN outputs to the corresponding upsampling layer. 
+We follow similar training process in \cite{dosovitskiy2015flownet} for fair comparison\footnote{We use 300k iterations with double batchsize}.
+As shown in Fig. \ref{fig:opt_flow}, our DSCNNs output sharper and more accurate optical flow thanks to the large receptive fields and dynamic position-specific kernels. Since each position estimates optical flow with its own kernels, our DSCNN can better identify the contours of the moving objects. 
+\begin{figtab}[!h]
+\begin{minipage}[!h]{0.45\textwidth} 
+\centering
+\includegraphics[width=\linewidth,height=\linewidth,trim={0cm 5cm 0cm 6cm},clip]{flow_figure.pdf}
+\figcaption{Training loss of flow estimation. We use moving average with window size of 2k iterations when plotting the loss curve.}
+\label{fig:flownet_loss}
+\end{minipage}% 
+  \qquad
+\begin{minipage}[!h]{0.45\textwidth} 
+\centering
+\begin{tabular}{L{3.8cm}|C{0.8cm}|C{0.8cm}}
+\hline
+	model & aEPE &  Time\\ \hline\hline
+	Spynet \cite{ranjan2016optical} & 2.63 & -\\ 
+	EpicFlow \cite{revaud2015epicflow} & 2.94 & -  \\ 
+	DeepFlow \cite{weinzaepfel2013deepflow} & 3.53 & -\\ 
+	PWC-Net \cite{sun2017pwc} & 2.26 & - \\ \hline
+	FlowNets \cite{ilg2016flownet} & 3.67 & 6ms\\ 
+	FlowNets+DSCNN, $s=7$ & \textbf{2.88} &23ms\\ \hline
+	FlowNetS \cite{ilg2016flownet}  & 2.78 & 16ms\\ 
+	FlowNetS+SegAware \cite{harley2017segmentation} & 2.36& - \\ 
+	FlowNetS+DSCNN,$s=7 $ & \textbf{2.34} &34ms\\ \hline
+	FlowNetC \cite{ilg2016flownet}  & 2.19 & 25ms\\ 
+	FlowNetC+DSCNN, $s=7$ & 2.11 &43ms\\ 
+	FlowNetC+DSCNN, $s=9$ &\textbf{2.06}&51ms\\ \hline
+\end{tabular}
+\tabcaption{aEPE and running time evaluation of optical flow estimation.}
+\label{tab:eval_flow}
+\end{minipage} 
+\end{figtab}
+
+As illustrated in Fig. \ref{fig:flownet_loss}, DSCNN models successfully relax the constraint of sharing kernels spatially and converge to a lower training loss in both FlowNets and FlowNetC models. That further indicates the advantages of local gradients in dense prediction tasks.
+
+We use average End-Point-Error (aEPE) to quantitatively measure the performance of the optical flow estimation. Table \ref{tab:eval_flow} shows that the aEPEs decrease in all baseline models by a large margin with a single DSCNN layer added. 
+In FlowNets, aEPE decreases by 0.79 which demonstrates the increased learning capacity and robustness of our DSCNN models. 
+Even though SegAware attention model \cite{harley2017segmentation} explicitly takes advantage of boundary information as additional training data, our DSCNN can still slightly outperforms them using FlowNetS as baseline model. With $s=9$ and $\gamma=2$, we have approximately $40$ times larger receptive fields which allow the FlowNet models to easily capture large displacements in flow estimation task on FlyingChairs dataset.  
+
+\section{Conclusion}
+This work introduces Dynamic Sampling Convolutional Neural Networks (DSCNN) to learn dynamic position-specific kernels and takes advantage of very large ERF and local gradients, which ensures that DSCNNs have better performance in most general tasks. With robustly enlarged ERF via the multiple sampling strategy, the DSCNNs' recognition abilities are significantly promoted. And With local gradients and dynamic kernels, DSCNNs produce much sharper output features, which is beneficial especially in dense prediction tasks such as optical flow estimation. 
+
+
+% \clearpage\mbox{}Page \thepage\ of the manuscript.
+% \clearpage\mbox{}Page \thepage\ of the manuscript.
+% \clearpage\mbox{}Page \thepage\ of the manuscript.
+% \clearpage\mbox{}Page \thepage\ of the manuscript.
+% \clearpage\mbox{}Page \thepage\ of the manuscript.
+% \clearpage\mbox{}Page \thepage\ of the manuscript.
+% \clearpage\mbox{}Page \thepage\ of the manuscript.
+% This is the last page of the manuscript.
+% \par\vfill\par
+% Now we have reached the maximum size of the ECCV 2018 submission (excluding references).
+% References should start immediately after the main text, but can continue on p.15 if needed.
+
+\bibliographystyle{splncs}
+\bibliography{egbib}
+\end{document}

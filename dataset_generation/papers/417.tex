@@ -1,0 +1,770 @@
+\documentclass{article}
+
+\usepackage[utf8]{inputenc} % allow utf-8 input
+\usepackage[T1]{fontenc}    % use 8-bit T1 fonts
+\usepackage{hyperref}       % hyperlinks
+\usepackage{url}            % simple URL typesetting
+\usepackage{booktabs}       % professional-quality tables
+\usepackage{amsfonts}       % blackboard math symbols
+\usepackage{nicefrac}       % compact symbols for 1/2, etc.
+\usepackage{microtype}      % microtypography
+
+
+% ICLR
+\usepackage{iclr2019_conference,times}
+
+\usepackage{url}
+
+% custom additions
+\usepackage{amsmath}
+\usepackage{todonotes}
+\usepackage{subcaption}
+\usepackage{float}          % pesky figures
+\usepackage{wrapfig}
+\usepackage{bm}
+
+% custom ref
+\usepackage{varioref}
+\definecolor{mydarkblue}{rgb}{0,0.08,0.45}
+\usepackage{hyperref}
+% Make the links dark blue like in ICML style
+\hypersetup{ %
+   breaklinks=true,
+   unicode=true,
+   pdftitle={},
+   pdfauthor={Klaus Greff},
+   pdfsubject={},
+   pdfkeywords={},
+   pdfborder=0 0 0,
+   pdfpagemode=UseNone,
+   colorlinks=true,
+   linkcolor=mydarkblue,
+   citecolor=mydarkblue,
+   filecolor=mydarkblue,
+   urlcolor=mydarkblue,
+   pdfview=FitH}
+\usepackage[all]{hypcap}
+\usepackage{cleveref}
+
+\usepackage[bottom]{footmisc}
+% \usepackage[sort]{natbib} % citations
+
+
+% Capitalize section in \autoref
+% \addto\extrasenglish{
+% \renewcommand{\sectionautorefname}{Section}
+% \renewcommand{\subsectionautorefname}{Section}
+% \renewcommand{\subsubsectionautorefname}{Section}
+% \renewcommand{\algorithmautorefname}{Algorithm}
+% }
+
+% \newcommand*{\Appendixautorefname}{Appendix}
+
+
+% \crefformat{footnote}{#2\footnotemark[#1]#3}
+\iclrfinalcopy % Uncomment for camera-ready version, but NOT for submission.
+
+\title{A Case for Object Compositionality in Deep Generative Models of Images}
+
+%\author{%\noindent
+%Sjoerd van Steenkiste\thanks{Work done while at Google Brain.} \\
+%Swiss AI Lab IDSIA, SUPSI, USI \\
+%\texttt{sjoerd@idsia.ch} \\
+%\And
+%Karol Kurach, Sylvain Gelly \\
+%Google Brain \\
+%\texttt{\{kkurach,sylvaingelly\}@google.com} \\
+%}
+\author{%\noindent
+Sjoerd van Steenkiste\thanks{Work done while at Google Brain.} \\
+Swiss AI Lab IDSIA, SUPSI, USI\\
+{\footnotesize\texttt{sjoerd@idsia.ch}} \\
+\And
+Karol Kurach \\
+Google Brain \\
+{\footnotesize\texttt{kkurach@google.com}} 
+\And
+Sylvain Gelly \\
+Google Brain \\
+{\footnotesize\texttt{sylvaingelly@google.com}}
+}
+
+
+\newcommand{\karol}[1]{{\color{blue} Karol: #1}}
+\newcommand{\sjoerd}[1]{{\color{red} Sjoerd: #1}}
+
+\begin{document}
+
+\maketitle
+
+
+\begin{abstract}
+Deep generative models seek to recover the process with which the observed data was generated.
+They may be used to synthesize new samples or to subsequently extract representations.
+Successful approaches in the domain of images are driven by several core inductive biases.
+However, a bias to account for the compositional way in which humans structure a visual scene in terms of objects has frequently been overlooked. 
+In this work we propose to structure the generator of a GAN to consider objects and their relations explicitly, and generate images by means of composition.
+This provides a way to efficiently learn a more accurate generative model of real-world images, and serves as an initial step towards learning corresponding object representations.
+We evaluate our approach on several multi-object image datasets, and find that the generator learns to identify and disentangle information corresponding to different objects at a representational level.
+A human study reveals that the resulting generative model is better at generating images that are more faithful to the reference distribution. 
+\end{abstract}
+
+\section{Introduction}
+% AI -> understand world -> representation -> facilitates downstream tasks -> world complex -> learned% A fundamental challenge in achieving progress towards Artificial Intelligence (AI) is to be able to understand the world from low-level sensory data~\citep{bengio2013representation, lake2017building}.% Ideally, this knowledge is captured in terms of a \emph{representation} that exposes salient factors of variation in the environment to facilitate a variety of down-stream tasks.% In order to cope with the complexity of describing abstract concepts (eg. objects) from raw data, it is highly desirable for these representations to be learned with minimal supervision. \todo{klaus: merge p1 and p2, mention objects implicitly.}% generative models -> representation learning -> structure
+Generative modelling approaches to representation learning seek to recover the process with which the observed data was generated.  % important that representation learning is in here
+It is postulated that knowledge about the generative process exposes important factors of variation in the environment (captured in terms of latent variables) that may subsequently be obtained using an appropriate posterior inference procedure.
+Therefore, the \emph{structure} of the generative model is critical in learning corresponding representations. 
+
+Deep generative models of images rely on the expressiveness of neural networks to learn the generative process directly from data~\citep{goodfellow2014generative, kingma2014stochastic, oord2016pixel}.
+Their structure is determined by the \emph{inductive bias} of the neural network, which steers it to organize its computation in a way that allows salient features to be recovered and ultimately captured in a representation~\citep{dinh2017density, donahue2017adversarial, dumoulin2017adversarially, kingma2014stochastic}.
+Recently, it has been shown that independent factors of variation, such as pose and lighting of human faces may be recovered in this way~\citep{chen2016infogan, higgins2017beta}. % alternative: Recent work (that applies these models to Representation Learning) has focused on finding the right structure to achieve this.} \todo{add more citations here to emphasize relevance.\begin{figure}[b]
+\centering
+\includegraphics[width=\linewidth]{figures/front_page_img}
+\caption{A scene (right) is generated as a composition of objects and background.}
+\label{fig:clevr_split}
+\end{figure}
+
+A promising but under-explored inductive bias in deep generative models of images is \emph{compositionality at the representational level of objects}, which accounts for the compositional nature of the visual world and our perception thereof~\citep{battaglia2013simulation, spelke2007core}.
+It allows a generative model to describe a scene as a composition of objects (entities), thereby disentangling visual information in the scene that can be processed largely independent of one another.
+It provides a means to efficiently learn a more accurate generative model of real-world images, and by explicitly considering objects at a representational level, it serves as an important first step in recovering corresponding object representations. % TODO: this is the first time that this comes up, whereas it is arguably as important. Maybe we should devalue the representation part?% our contribution and binding
+In this work we investigate object compositionality for Generative Adversarial Networks (GANs;~\cite{goodfellow2014generative}), and present a general mechanism that allows one to incorporate corresponding structure in the generator.
+Starting from strong independence assumptions about the objects in images, we propose two extensions that provide a means to incorporate dependencies among objects and background.
+In order to efficiently represent and process multiple objects with neural networks, we must account for the binding problem that arises when superimposing multiple distributed representations~\citep{hinton1984distributed}.
+Following prior work, we consider different representational slots for each object~\citep{greff2017neural, nash17}, and a relational mechanism that preserves this separation accordingly~\citep{zambaldi2018relational}. 
+
+We evaluate our approach\footnote{Code is available online at \url{https://git.io/fxJKg}.} on several multi-object image datasets, including three variations of Multi-MNIST, a multi-object variation of CIFAR10, and CLEVR.
+In particular the latter two mark a significant improvement in terms of complexity, compared to datasets that have been considered in prior work on unconditional multi-object image generation and multi-object representation learning.
+% We empirically find that the proposed structure is utilized as intended, and images are generated as compositions of objects.
+
+In our experiments we find that our generative model learns about the individual objects and the background of a scene, without prior access to this information.
+By disentangling this information at a representational level, it generates novel scenes efficiently through composing individual objects and background, as can be seen in \autoref{fig:clevr_split}.
+As a quantitative experiment we compare to a strong baseline of popular GANs (Wasserstein and Non-saturating) with recent state-of-the-art techniques (Spectral Normalization, Gradient Penalty) optimized over multiple runs.
+A human study reveals that the proposed generative model outperforms this baseline in generating better images that are more faithful to the reference distribution. 
+
+\section{Generative Adversarial Networks}
+Generative Adversarial Networks (GANs;~\cite{goodfellow2014generative}) are a powerful class of generative models that learn a stochastic procedure to generate samples from a distribution $P(X)$.
+Traditionally GANs consist of two deterministic functions: a generator $G(\bm{z})$ and a discriminator (or critic) $D(\bm{x})$.
+The goal is to find a generator that accurately transforms samples from a prior distribution $\bm{z}\sim P(Z)$ to match samples from the target distribution $\bm{x}\sim P(X)$.
+This can be done by using the discriminator to implement a suitable objective for the generator, in which it should behave \emph{adversarial} with respect to the goal of the discriminator in determining whether samples $\bm{x}$ were sampled from $P(X)$ or $G(P(Z))$ respectively.
+These objectives can be summarized as a \emph{minimax} game with the following value function:
+
+\begin{equation}
+\min_G \max_D V(D, G) = \mathbb{E}_{\bm{x} \sim P(X)} \left[\log D(\bm{x})\right] + \mathbb{E}_{\bm{z}\sim P(Z)} \left[\log(1 - D(G(\bm{z}))) \right].
+\label{eq:gan}
+\end{equation}
+
+When the generator and the discriminator are implemented with neural networks, optimization may proceed through alternating (stochastic) gradient descent updates of their parameters with respect to \eqref{eq:gan}. However, in practice this procedure might be unstable and the minimax formulation is known to be hard to optimize.
+Many alternative formulations have been proposed and we refer the reader to \cite{lucic2017gans} and \cite{kurach2018gan} for a comparison.
+
+Following the recommendations of \cite{kurach2018gan} we consider two practical reformulations of \eqref{eq:gan} in this paper: Non-Saturating GAN (NS-GAN;~\cite{goodfellow2014generative}), in which the generator maximizes the probability of generated samples being real, and Wassertein GAN (WGAN;~\cite{arjovsky2017wasserstein}) in which the discriminator minimizes the Wasserstein distance between $G(P(Z))$ and $P(X)$. For both formulations we explore two additional techniques that have proven to work best on a variety of datasets and architectures: the gradient penalty from \cite{gulrajani2017improved} to regularize the discriminator, and spectral normalization~\citep{miyato2018spectral} to normalize its gradient flow.
+
+\section{Incorporating Structure}
+% how we go about incorporating structure
+In order to formulate the \emph{structure} required to achieve object compositionality in neural networks we primarily focus on the corresponding type of generalization behavior that we are interested in.\footnote{Following \cite{battaglia2018relational} we define structure as ``the product of composing a set of known building blocks''. \emph{Structured representations} then capture this composition, and \emph{structured computations} operate over the elements and their composition as a whole.}
+It is concerned with independently varying the different visual primitives (objects) that an image is composed of, requiring these to be identified at a representational level and described in a common format. %, such that they can be varied \emph{independently}.
+We account for the binding problem~\citep{hinton1984distributed, milner1974model, von1994correlation} that may arise in combining these object representations to arrive at a final image.
+%  Conceptually this is similar to identifying \emph{disentangled} features, however  that can be varied independently, the way % OLD% A starting point in reasoning about the kind of \emph{structure} required to achieve object compositionality in neural networks is to consider the type of generalization behavior that we are interested in.\footnote{Following \cite{battaglia2018relational} we define structure as ``the product of composing a set of known building blocks''. \emph{Structured representations} then capture this composition, and \emph{structured computations} operate over the elements and their composition as a whole.} \todo{klaus: The structure we propose is motivated by...}% Two types of generalization that characterize the support of $P(X)$ are concerned with varying the salient attributes of the visual primitives that are present in an image, and with varying the different visual primitives themselves that an image is composed of.% Here our focus is on the latter type, although in essence these types are similar in that they require salient visual aspects of an image to be identified at a representational level, such that they can be varied \emph{independently}. \todo{klaus: previous bridge is in pointing out object generalization}\todo{klaus: conceptually related to disentanglement -> common format as opposed to different features.}% binding problem - OLD% A second consideration is the possibility of a binding problem when simultaneously processing information corresponding to distinct objects~\citep{hinton1984distributed, milner1974model, von1994correlation}.% In the case of GANs we are free to structure the latent space arbitrarily, however this does not prevent information from entangling and causing ambiguities at later stages in the generator.% Although a compositional solution necessarily addresses the binding problem, it is not an accurate depiction of the world.% Certain objects may affect the visual appearance of one another in subtle ways, requiring dependencies among objects to be modelled and additional care to be taken in ensuring that objects remain disentangled.\todo{Damien: This paragraph hard to understand}% summary
+In the following subsections we initially present structure that assumes strict object independence (Section~\ref{section:strict_independence}), to then relax this assumption by incorporating relational structure (Section~\ref{section:relational_structure}), and finally allow for the possibility of unstructured background and occlusion (Section~\ref{section:incorporating_background}).
+
+\begin{figure}
+    \centering
+    \includegraphics{figures/drawingv5}
+    \caption{We propose to structure the generator of a GAN to generate images as compositions of individual objects and background. In this case it consists of $K=4$ \emph{object generators} (shared weights) that each generate an image from a separate latent vector $\bm{\hat{z}}_i$. These are obtained by having each $\bm{z}_i \sim P(Z)$ participate in a \emph{relational stage}, which allows each representation to be updated as a function of all others. Alternatively $\bm{\hat{z}}_i=\bm{z}_i$ if no relations are to be modelled. On the top, a \emph{background generator} (unique weights) generates a background image from a separate latent vector $\bm{z}_b \sim P(Z_b)$, which optionally participates in the relational stage. The whole system is trained end-to-end as in the standard GAN framework, and the final image is obtained by composing (in this case using alpha compositing) the outputs of all generators.}
+    % \caption{An overview of our approach. In this case the generator consists of $K=4$ \emph{object generators} (shared weights) that each generate an image from a latent vector $z_i \sim P(Z)$. Optionally each latent vector participates in a \emph{relational stage}, allowing each representation to be updated as a function of all others. In the back, a \emph{background generator} (unique weights) generates a background image from a separate latent vector $z_b \sim P(Z_b)$. The whole system is trained end-to-end as in the standard GAN framework, and the final image is obtained by composing (alpha compositing) the outputs of all generators.}
+    \label{fig:drawing}
+\end{figure}%%%%%%%%%%%%%%%%%%%%%%%%%%  Strict Independence  %%%%%%%%%%%%%%%%%%%%%%%%%%\subsection{Strict Independence}\label{section:strict_independence}
+
+If we assume that images in $P(X)$ are composed of objects that are strictly independent of one another then (without loss of generality) we may structure our latent variables accordingly.
+For images having $K$ objects, we consider $K$ i.i.d. vector-valued random variables $Z_{i}$ that each describe an object at a representational level.
+$K$ copies of a deterministic generator $G(\bm{z})$ transform samples from each $Z_{i}$ into images, such that their superposition results in the corresponding scene:
+
+\begin{equation}
+G_{multi}([\bm{z}_1, \cdots, \bm{z}_K]) = \sum_1^K G(\bm{z}_i) \ \ , \ \ \bm{z}_i \sim P(Z)
+\label{eq:generator}
+\end{equation}
+
+When each copy of $G$ generates an image of a single object, the resulting generative model efficiently describes images in $P(X)$ in a compositional manner.
+Each object in \eqref{eq:generator} is described in terms of the same features (i.e. the $Z_i$'s are i.i.d) and the weights among the generators are shared, such that any acquired knowledge in generating a specific object is transferred across all others.
+Hence, rather than having to learn about all combinations of objects (including their individual variations) that may appear in an image, it suffices to learn about the different variations of each individual object instead.
+
+Notice that the generators in \eqref{eq:generator} cannot communicate, which prevents degenerate solutions from being learned.
+This comes at a cost in that relations among the objects cannot be modelled in this way.
+An additional concern is the sum in \eqref{eq:generator}, which assumes that images only consist of objects, and that their values can be summed in pixel-space.
+We will address these concerns in the following, using the superposition of generators as a backbone for object compositionality in our approach.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%  Relational Structure  %%%%%%%%%%%%%%%%%%%%%%%%%%%\subsection{Relational Structure}\label{section:relational_structure}
+
+In the real world objects are not strictly independent of one another.
+% A more realistic assumption about $P(X)$ does not assign equal probability to all images that can be composed from a set of primitives. \todo{klaus: relate realistic assumption to strict independence.}
+Certain objects may only occur in the presence of others, or affect their visual appearance in subtle ways (eg. shadows, lighting).
+% Certain objects only occur in the presence of others, whereas other combinations do not occur at all.% Similarly, the visual appearance of an object may be different in the presence of another.
+In order to incorporate relationships of this kind we introduce a \emph{relational stage}, in which the representation of an object is \emph{updated} as a function of all others, before each generator proceeds to generate its image. % TODO: In this way we we continue to allow for the possibility recovering corresponding object representations
+
+Following \cite{zambaldi2018relational} we consider one or more ``attention blocks'' to compute interactions among the object representations.
+At its core is Multi-Head Dot-Product Attention (MHDPA;~\cite{vaswani2017attention}) that performs non-local computation~\citep{wang2018non} or message-passing~\citep{gilmer2017neural} when one associates each object representation with a node in a graph.
+When specific design choices are made, computation of this kind provides an efficient means to learn about relations between objects and update their representations accordingly~\citep{battaglia2018relational}.
+
+A single head of an attention block updates $\bm{z}_i$ in the following way:
+
+\begin{equation}
+    \bm{q}_i, \bm{k}_i, \bm{v}_i = \text{MLP}^{(\cdot)}(\bm{z}_i) \ \ \ \ \ \bm{A} = \underbrace{softmax\big(\frac{\bm{Q}\bm{K}^{T}}{\sqrt{d}}\big)}_{\text{attention weights}}\bm{V} \ \ \ \ \ \bm{\hat{z}}_i = \text{MLP}^{\textit{ up}}(\bm{a}_i) + \bm{z}_i
+    \label{eq:attention_block}
+\end{equation}
+
+where $d=dim(\bm{v}_i)$ and each $\text{MLP}$ corresponds to a multi-layer perceptron. First, a query vector $\bm{q}_i$, a value vector $\bm{v}_i$, and a key vector $\bm{k}_i$ is computed for each $\bm{z}_i$.
+Next, the interaction of an object $i$ with all other objects (including itself) is computed as a weighted sum of their value vectors.
+Weights are determined by computing dot-products between $\bm{q}_i$ and all key vectors, followed by softmax normalization.
+Finally, the resulting update vector $\bm{a}_i$ is projected back to the original size of $\bm{z}_i$ using $\text{MLP}^{\textit{up}}$ before being added.
+
+Additional heads (modelling different interactions) use different parameters for each MLP in \eqref{eq:attention_block}.
+In this case their outputs are combined with another MLP to arrive at a final $\bm{z}_i$.
+Complex relationships among objects can be modelled by using multiple attention blocks to \emph{iteratively} update $\bm{z}_i$.
+A detailed overview of these computations can be found in Appendix~\ref{app:experiment_details}, and an overview in \autoref{fig:drawing}.
+
+% It may be difficult to model complex relationships among the object representations when only a single attention block is used. % TODO Move paragraph to appendix?% Per analogy, messages are passed only once (in a single direction), which leaves no alternative when no agreement is reached within this first round. % Therefore we additionally consider multiple iterative stages of message passing (each corresponding to an attention block) that update the latent representation of each object iteratively.% \cite{zambaldi2018relational} found that different heads (that operate on different query, value, and key vectors) may encode different relations among the objects, which we explore in this paper as well.%%%%%%%%%%%%%%%%%%%%%%%%%%%  Background Structure  %%%%%%%%%%%%%%%%%%%%%%%%%%%\subsection{Incorporating Background and Alpha Compositing}\label{section:incorporating_background}
+
+Up until this point we have assumed that an image is entirely composed of objects, which may be prohibitive for complex visual scenes. 
+For example, certain objects that only appear in the ``background'' may not occur frequently enough, nor have a regular visual appearance that allows a model to consider them as such.
+One could reason that certain visual primitives (those that can be varied independently and re-composed accordingly) will be discovered from the observed data, whereas all other remaining visual information is captured as \emph{background} by another component. 
+However, these are conflicting assumptions as the latent representations $\bm{z}_i$ (and corresponding generator) now need to describe objects that assume a regular visual appearance, as well as background that is not regular in its visual appearance at all.
+Therefore, we consider an additional generator (see Figure~\ref{fig:drawing}) having its own set of weights to generate the background from a separate vector of latent variables $\bm{z}_b \sim P(Z_b)$.
+% TODO: In this way background and objects need not be generated from the same features or using the same procedure, aiding in knowledge transfer among the object generators.
+We consider two different variations of this addition, one in which $z_b$ participates in the relational stage, and one in which it does not.
+
+A remaining challenge is in \emph{combining} objects with background and in modelling occlusion.
+A straightforward adaptation of the sum in \eqref{eq:generator} to incorporate pixel-level weights would require the background generator to assign a weight of zero to all pixel locations where objects appear, thereby increasing the complexity of generating the background exponentially.
+Instead, we require the object generators to generate an additional alpha channel for each pixel, and use alpha compositing to combine the outputs of the different generators and background through repeated application of: % ~\citep{kwak2016generating, yang2017lr}.\begin{equation}
+    \bm{x}_{new} = \frac{\bm{x}_i\bm{\alpha}_i + \bm{x}_j\bm{\alpha}_j(1 - \bm{\alpha}_i)}{\bm{\alpha}_{new}} \ \ \ \ \ \ \ \bm{\alpha}_{new} = \bm{\alpha}_i + \bm{\alpha}_j(1 - \bm{\alpha}_i)
+    \label{eq:alpha_composit}
+\end{equation}
+
+% Not before Method, since GANs are already there is text to skip past
+\section{Related Work}
+% NOTES%% LR-GAN%   - Difficult to model relations as the number of objects grows due to sequential nature%   - More complicated generator set-up, requires separate generation of appearance / mask / transformation matrix%   - ST combines image, based on mask, appearance and grid obtained from Grid generator taking transformation matrix as input %   - requires prior knowledge about #objects / maximum object size%   - evaluates on simpler datasets -- their MNIST-TWO always has 1 digit on the left and 1 on the right%   * they claim left - right as relational%   - Looks like heavy mode-collapse to me in Figure 6% Generative models & RL 
+Inductive biases aimed at object compositionality have been previously explored, both in the context of generative models and multi-object representation learning.
+One line of work models an image as a spatial mixture of image patches, utilizing \emph{multiple copies} of the same function to arrive at a compositional solution. 
+Different implementations consider RBMs~\citep{le2011learning}, VAEs~\citep{nash17}, or (recurrent) auto-encoders inspired by EM-like inference procedures~\citep{greff2016tagger, greff2017neural} to generate these patches.
+They consider objects at a representational level and recent work has shown a means to efficiently model interactions between them~\citep{steenkiste2018relational}.
+However, neither of these approaches are capable of modelling complex visual scenes that incorporate unstructured background as well as interactions among objects.
+%  Our approach is a considerable improvement in this regard, by exploring the use of GANs to generate image patches, and in formulating appropriate structure to model such scenes. % model image as a combination % Masked RBMs~\citep{le2011learning} model an image as a composition of latent patches (each generated by separate instance of an RBM) using an inferred mask to determine the mixing.% A similar approach is taken in Tagger~\citep{greff2016tagger} that models an image using multiple copies of a Ladder network that output an image as well as a mask with which they can be combined. % Neural Expectation Maximization~\citep{greff2017neural} formalized this approach as inference in a spatial mixture model using a copy of a network in each component.% A similar approach was taken in the Multi-Entity VAE~\citep{nash17}, where the KL term was used to infer latent representations that correspond to objects.% Our work improves considerably upon these methods by considering visually more complex scenes that require one to account for unstructured background, and relations among objects, which was unaccounted for by these methods.% iteratively
+A conceptually different line of work relies on recurrent neural networks to iteratively model multiple objects in an image, one at a time.
+\cite{gregor2015draw} proposes to use attention to arrive at this solution, whereas \cite{eslami2016attend} considers objects explicitly.
+This approach has also been explored in the context of GANs. 
+\cite{im2016generating} generates images iteratively by accumulating outputs of a recurrent generator, and \cite{kwak2016generating} propose to combine these outputs using alpha compositing.
+\cite{yang2017lr} extends this approach further, by considering a separate generator for the background, using spatial transformations to integrate a foreground image.
+They briefly explore multi-object image generation on a dataset consisting of two non-overlapping MNIST digits, yet their approach requires prior knowledge about the size of the objects, and the number of objects to generate.
+This is information typically unavailable in the real world and not required for our method.
+A more general concern is the difficulty in modelling relations among objects when they are generated one at a time.
+Information about the objects must be stored and updated in the memory of the RNN, which is ill-suited for this task without incorporating corresponding relational structure~\citep{santoro2018relational}.
+It prevents relations from being learned efficiently, and requires the RNN to commit to a plan in its first step, without the possibility to revisit this decision.
+
+% A conceptually different line of work relies on recurrent neural networks to iteratively model multiple objects in an image, one at a time.% \cite{gregor2015draw} combine a recurrent autoencoder with stochastic variational inference to iteratively generate an image.% They find that by using an attention mechanism to read from and write to different image locations their model generates multi-object scenes one object at the time.% Later work by \cite{eslami2016attend} structures the approximate posterior to explicitly consider images composed of multiple objects.% \cite{kwak2016generating} introduced Composite Generative Adversarial Network (CGAN) in which an RNN generates a sequence of latent states from which a shared generator produces images.% The final image is obtained using alpha blending, and it is shown that their model factorizes images in a meaningful way.% A similar approach is taken by \cite{yang2017lr} using a separate ``background'' generator to decode the latent state in the first step.% Rather than generating a foreground ``object'' directly, they factorise the generative process across pose, appearance, and shape as computed by different networks.% In contrast to our approach, they do not consider a relational mechanism to model relations among objects efficiently, and require a priori knowledge about the maximum size of an object, and the number of objects in the image.% structure in GANs
+Recent work in GANs is increasingly focusing on incorporating (domain-specific) architectural structure in the generator to generate realistic images.
+\cite{lin2018st} considers a Spatial Transformer Network as a generator, and proposes an iterative scheme to remove or add objects to a scene.
+\cite{johnson2018image} propose image generation by conditioning on explicit scene graphs to overcome the limitations of standard GANs in generating scenes composed of multiple objects that require relations to be taken into account.
+\cite{xu2018deep} propose a similar approach but condition on a stochastic and-or graph instead.
+\cite{azadi2018compositional} considers a framework to generate images composed of two objects, conditioned on images of each single object.
+In our approach we make use of an implicit graph structure (as implemented by our relational mechanism) to model relations among objects, and do not rely on prior information about individual objects (in the form of conditioning).
+
+% interaction% Interaction ?% \begin{itemize}%     \item R-NEM%     \item DM work%     \item Graph Network%     \item Kipf% \end{itemize}
+
+\section{Experiments}
+% general intro and intro into datasets + goal
+We test different aspects of the proposed structure on several multi-object datasets.
+We are particularly interested in verifying that images are generated as compositions of objects and that the relational and background structure is properly utilized.
+% In this way the incorporated structure may be exploited by a downstream task. \todo{hook to representational}  
+To that extent, we study how the incorporated structure affects the quality and the content of generated images.
+% We compare to a strong baseline incorporating $2$ popular GANs losses (Wasserstein and Non-saturating) that can be combined with  Spectral Normalization or Gradient Penalty. For each of the $4$ combinations, we optimize over $12$ sets of hyper-parameters (learning rate, lambda, etc.) using $5$ seeds.%We compare to a strong GAN baseline that incorporates 48 popular hyper-parameter configurations.% We compare to a strong baseline of GANs optimized over $240$ hyper-parameter configurations, including objective function. normalization, etc.% Datasets\paragraph{Datasets}
+We consider five multi-object datasets.\footnote{Datasets are available online at \url{https://goo.gl/Eub81x}.}
+The first three are different variations of \emph{Multi-MNIST (MM)}, in which each image consists of three MNIST digits that were rescaled and drawn randomly onto a $64 \times 64$ canvas.
+In \emph{Independent MM}, digits are chosen randomly and there is no relation among them.
+The \emph{Triplet} variation requires that all digits in an image are of the same type, requiring relations among the digits to be considered during the generative process.
+Similarly \emph{RGB Occluded MM} requires that each image consist of exactly one red, green, and blue digit. 
+The fourth dataset (\emph{CIFAR10 + MM}) is a variation of CIFAR10~\citep{krizhevsky2009learning} in which the digits from \emph{RGB Occluded MM} are drawn onto a randomly chosen (resized) CIFAR10 image.
+Our final dataset is CLEVR~\citep{johnson2017clevr}, which we downsample to $160 \times 240$ followed by center-cropping to obtain $128 \times 128$ images. 
+Samples from each dataset can be seen in in Appendix~\ref{app:samples}.
+
+% discuss comparisons again GAN but hedge expectations\paragraph{Evaluation}\begin{wrapfigure}{r}{0.45\textwidth}
+  \centering
+  \begin{subfigure}{\textwidth}
+  \includegraphics[width=0.45\textwidth]{figures/indep-multigan-3-split}
+  \end{subfigure}
+  \begin{subfigure}{\textwidth}
+  \includegraphics[width=0.45\linewidth]{figures/rel-multigan-3-split-triplet}
+  \end{subfigure}
+  \begin{subfigure}{\textwidth}
+  \includegraphics[width=0.45\linewidth]{figures/rel-multigan-3-split-rgb}
+%   \vspace{-20pt}
+  \end{subfigure}
+  \caption{Generated samples by \emph{3-GAN} on Multi-MNIST: \emph{Independent} (top), \emph{Triplet} (middle), and \emph{RGB Occluded} (bottom). The three columns on the left show the output of each object generator, and the right column the composed image.}
+  \label{fig:mm-split}
+  \vspace{-15pt}
+\end{wrapfigure}
+
+A popular evaluation metric in comparing generated images by GANs is the Fr\'{e}chet Inception Distance (FID;~\cite{heusel2017gans}).
+It computes the distance between two empirical distributions of images (one generated, and a reference set) as the Fr\'{e}chet (Wasserstein-2) distance between two corresponding multivariate Gaussian distributions that were estimated from the Inception-features computed for each image.
+Although pior work found that FID correlates well with perceived human quality of images on standard image datasets~\cite{heusel2017gans, lucic2017gans}, we find that FID is of limited use when considering image datasets in which the dominant visual aspects are determined by \emph{multiple} objects.
+Our results in Section~\ref{subsection:comparison} suggest that FID can not be used to verify whether image distributions adhere to certain properties, such as the number of objects.
+We hypothesize that this inability is inherent to the Inception embedding having been trained only for single object classification.
+
+To compensate for this we conduct two different studies among humans, 1) to compare images generated by our models to a baseline, and 2) to answer questions about the content of generated images.
+The latter allows us to verify whether generated images are probable samples from our image distribution, eg. by verifying that they have the correct number of objects.
+As conducting human evaluation of this kind is not feasible for large-scale hyper-parameter search we will continue to rely on FID to select the ``best'' models during hyper-parameter selection.
+Details of these human studies can be found in Appendix~\ref{app:experiment_details}.
+
+\paragraph{Set-up}
+Each model is optimized with ADAM~\citep{kingma2015adam} using a learning rate of $10^{-4}$, and batch size $64$ for $1$M steps. 
+We compute the FID (using $10$K samples) every $20$K steps, and select the best set of parameters accordingly.
+On each dataset, we compare GANs that incorporate our proposed structure to a strong baseline that does not.
+In both cases we conduct extensive grid searches covering on the order of 40-50 hyperparameter configurations for each dataset, using ranges that were previously found good for GAN~\citep{lucic2017gans, kurach2018gan}.
+Each configuration is ran with 5 different seeds to be able to estimate its variance.
+An overview of each hyper-parameter search can be found in Appendix~\ref{app:experiment_details}, and samples of our best models in Appendix~\ref{app:samples}.
+
+\paragraph{Composing} On \emph{Independent MM} and \emph{Triplet MM} we sum the outputs of the object generators as in~\eqref{eq:generator}, followed by clipping.
+On all other datasets we use alpha compositing \eqref{eq:alpha_composit} with a fixed order.
+In this case the object generators output an additional alpha channel, except for \emph{RGB Occluded MM} in which we obtain alpha values by thresholding the output of each object generator for simplicity.
+
+% notation\paragraph{Notation}
+In reporting our results we will break down the results obtained when incorporating structure in GAN across the different structural parts.
+In particular we will denote \emph{k-GAN} to describe a generator consisting of $K=k$ components, \emph{k-GAN rel.} if it incorporates relational structure and \emph{k-GAN ind.} if it does not.
+Additionally we will append ``\emph{bg.}'' when the model includes a separate background generator.
+Since any variation incorporates multiple components, we will use \emph{k-GAN} to refer to GANs that incorporate any of the proposed structure as a collective.
+We will use \emph{GAN} to refer to the collection of GANs with different hyperparameters in our baseline.
+
+\subsection{Qualitative Analysis}\begin{figure}
+\centering
+\begin{subfigure}[b]{\textwidth}
+  \includegraphics[width=\linewidth]{figures/rel-multiganbackground-5-split-background}
+\end{subfigure}
+\begin{subfigure}[b]{\textwidth}
+  \includegraphics[width=\linewidth]{figures/rel-multiganbackground-5-split-background2}
+\end{subfigure}
+\begin{subfigure}[b]{\textwidth}
+  \includegraphics[width=\linewidth]{figures/rel-multiganbackground-5-split-clevr}
+\end{subfigure}
+\begin{subfigure}[b]{\textwidth}
+  \includegraphics[width=\linewidth]{figures/rel-multiganbackground-5-split-clevr2}
+\end{subfigure}
+\caption{Generated samples by \emph{5-GAN rel. bg.} on \emph{CIFAR10 + MM} (top two), and CLEVR (bottom two). The left column corresponds to the output of the background generator. The next five columns are the outputs of each object generator, and the right column the composed image. Images are displayed as RGBA, with white denoting an alpha value of zero.}
+\label{fig:relational_background_splits}
+\end{figure}\paragraph{Utilizing Structure}
+In analyzing the output of each generator for \emph{k-GAN}, we consistently find that the final image is generated as a composition of images consisting of individual objects and background.
+Hence, in the process of learning to generate images, \emph{k-GAN} learns about what are individual objects, and what is background, without relying on prior knowledge or conditioning.
+By \emph{disentangling} this information at the representational level, it opens the possibility to recover corresponding object representations. 
+Examples for each dataset, can be seen in \autoref{fig:mm-split} and \autoref{fig:relational_background_splits}.
+
+In the case of CLEVR, in which images may have a greater number of objects than the number of components $K$ that was used during training, we find that the generator continues to learn a factored solution.
+Visual primitives are now made up of multiple objects, examples of which can be seen at the bottom rows in \autoref{fig:relational_background_splits}.
+A similar tendency was also found when analyzing generated images by \emph{k-GAN ind.} when k > 3 on Multi-MNIST.  
+The generator decodes part of its latent space as ``no digit'' as an attempt at generating the correct number of digits.
+
+From the generated samples in Appendix~\ref{app:samples} we observe that relations among the objects are correctly captured in most cases.
+% Additionally, we find that the relational mechanism may be used to generate the correct number of digits when $K$ is greater than the number of objects in the dataset.
+In analyzing the background generator we find that it sometimes generates a single object together with the background.
+It rarely generates more than one object, confirming that although it is capable, it is indeed more efficient to generate images as compositions of objects.
+
+\paragraph{Latent Traversal}
+We explore the degree to which the relational structure affects our initial independence assumption about objects.
+% An interesting question is the degree to which the relational mechanisms affects our initial independence assumption about objects.
+If it were to cause the latent representations to be fully dependent on one another then our approach would no longer be compositional in the strict sense.
+Note that although we have a clear intuition in how this mechanism should work, there is no corresponding constraint in the architecture. 
+We conduct an experiment in which we traverse the latent space of a single latent vector in \emph{k-GAN rel.}, by adding a random vector to the original sample with fixed increments and generating an image from the resulting latent vectors. 
+Several examples can be seen in \autoref{fig:latent_multiganbackground}.
+In the first row it can be seen that as we traverse the latent space of a single component the blue digit 9 takes on the shape of a 3, whereas the visual presentation of the others remain unaffected.
+Similarly in the second and third row the green digits are transformed, while other digits remain fixed.
+Hence, by disentangling objects at a representational level the underlying representation is more robust to common variations in image space.
+
+We observe this behavior for the majority of the generated samples, confirming to a large degree our own intuition of how the relational mechanism should be utilized. %  (88 / 100)
+When we conduct the same latent traversal on the latent space of \emph{GAN} for which the information encoding different objects is entangled, it results in a completely different scene (see \autoref{fig:latent_gan}).
+
+\begin{figure}
+\begin{subfigure}{.5\textwidth}
+  \centering
+  \includegraphics[width=.95\linewidth]{figures/gan_background_latent5}
+  \caption{GAN}
+  \label{fig:latent_gan}
+\end{subfigure}%
+\begin{subfigure}{.5\textwidth}
+  \centering
+  \includegraphics[width=.95\linewidth]{figures/latent}
+  \caption{5-GAN rel. bg.}
+  \label{fig:latent_multiganbackground}
+\end{subfigure}
+\caption{Three generated images by a) \emph{GAN} and b) \emph{5-GAN rel. bg.}, when traversing the latent space of a single (object) generator at different increments. On the right it can be seen that in each case only a single digit is transformed, whereas the visual presentation of the others remains unaffected.
+In the case of GAN (left) the entire scene changes.}
+\label{fig:relational}
+\end{figure}\subsection{Quantitative Analysis}\label{subsection:comparison}\paragraph{FID} 
+We train \emph{k-GAN} and \emph{GAN} on each dataset, and compare the FID of the models with the lowest average FID across seeds.
+On all datasets but CLEVR we find that \emph{k-GAN} compares favorably to our baseline, although typically by a small margin.
+A break-down of the FID achieved by different variations of \emph{k-GAN} reveals several interesting observations (\autoref{fig:fid_scores}).
+In particular, it can be observed that the lowest FID on \emph{Independent MM} is obtained by \emph{4-GAN} without relational structure.
+This is surprising as each component is strictly independent and therefore \emph{4-GAN ind.} is unable to consistently generate 3 digits.
+Indeed, if we take a look at the generated samples in \autoref{fig:generated_multi_gan_base_grid}, then we frequently observe that this is the case.
+It suggests that FID is unable to account for these properties of the generated images, and renders the small FID differences that we observed inconclusive. 
+\autoref{fig:fid_scores} does reveal some large FID differences across the different variations of \emph{k-GAN} on \emph{Triplet MM}, and \emph{RGB Occluded MM}.
+It can be observed that the lack of a relational mechanism on these datasets is prohibitive (as one would expect), resulting in poor FID for \emph{k-GAN ind.}
+Simultaneously it confirms that the relational mechanism is properly utilized when relations are present. 
+
+\begin{figure}
+\begin{subfigure}{.5\textwidth}
+  \centering
+  \includegraphics[width=1\linewidth]{figures/human_eval_subjective_quality_v2}
+  \caption{Comparing image quality}
+  \label{fig:human_eval_subjective}
+\end{subfigure}%
+\begin{subfigure}{0.5\textwidth}
+  \centering
+  \includegraphics[width=1\linewidth]{figures/human_eval_properties_rgb-occluded_v2}
+  \caption{Properties on RGB Occluded MM}
+  \label{fig:human_eval_properties_rgb_occluded}
+\end{subfigure}
+\caption{Results of human evaluation a) comparing the quality of the generated images by \emph{k-GAN} (k=3,4,5) to \emph{GAN} b) Properties of generated images by \emph{k-GAN} (k=3,4,5) and \emph{GAN} on \emph{RGB Occluded MM}. It can be seen that \emph{k-GAN} generates better images (a) that are more faithful to the reference distribution (b).}
+\end{figure}\paragraph{Human evaluation}
+We asked humans to compare the images generated by \emph{k-GAN rel.} (k=3,4,5) to our baseline on \emph{RGB Occluded MM}, \emph{CIFAR10 + MM} and \emph{CLEVR}, using the configuration with a background generator for the last two datasets. 
+For each model we select the 10 best hyper-parameter configurations (lowest FID), from which we each generate 100 images.
+We asked up to three raters for each image and report the majority vote or ``Equal'' if no decision can be reached.
+
+\autoref{fig:human_eval_subjective} reports the results when asking human raters to compare the visual quality of the generated images by \emph{k-GAN} to those by \emph{GAN}.
+It can be seen that \emph{k-GAN} compares favorably across all datasets, and in particular on \emph{RGB Occluded MM} and \emph{CIFAR10 + MM} we observe large differences. 
+We find that \emph{k-GAN} performs better even when $k>3$, which can be attributed to the relational mechanism, allowing all components to agree on the correct number of digits.
+
+%Observe that even when $k>3$ k-GAN compares favorably in this case.%This can attributed to the relational mechanism, which allows the model to generate (among others) the correct number of digits in this way.
+
+In a second study we asked humans to report specific properties of the generated images (number of objects, number of digits, etc.), 
+a complete list of which can be found in Appendix~\ref{app:experiment_details}.
+Here our goal was to asses if the generated images by \emph{k-GAN} are more faithful to the reference distribution.
+The results on \emph{RGB Occluded MM} are summarized in \autoref{fig:human_eval_properties_rgb_occluded}.
+It can be seen that \emph{k-GAN} more frequently generates images that have the correct number of objects, number of digits, and that satisfy all properties simultaneously (color, digit count, shapes).
+The difference between the correct number of digits and correct number of objects suggests that the generated objects are often not recognizable as digits.
+This does not appear to be the case from the generated samples in Appendix~\ref{app:samples}, suggesting that the raters may not have been familiar enough with the variety of MNIST digits.
+
+On \emph{CIFAR10 + MM} (\autoref{fig:human_eval_properties_cifar10}) it appears that \emph{GAN} is able to accurately generate the correct number of objects, although the addition of background makes it difficult to provide a comparison in this case.
+On the other hand if we look at the number of digits, then we find that \emph{k-GAN} outperforms \emph{GAN} by the same margin, as one would expect compared to the results in \autoref{fig:human_eval_properties_rgb_occluded}.
+
+In comparing the generated images by \emph{k-GAN} and \emph{GAN} on CLEVR we noticed that the former generated more crowded scenes (containing multiple large objects in the center), and more frequently generated objects with distorted shapes or mixed colors. 
+On the other hand we found cases in which \emph{k-GAN} generated scenes containing ``flying'' objects, a by-product of the fixed order in which we apply \eqref{eq:alpha_composit}.
+We asked humans to score images based on these properties, which confirmed these observations (see \autoref{fig:human_eval_properties_clevr}), although some differences are small.
+
+
+\section{Discussion}
+\vspace{-0.2cm}% KAROL% Positive things / summary of our experiment results
+The experimental results confirm that the proposed structure is beneficial in generating images of multiple objects, and is utilized according to our own intuitions.
+% Images are generated as compositions of objects, thereby associating a corresponding latent vector with each object, which may subsequently be recovered using corresponding posterior inference.% In this way we obtain a more accurate generative model of the images that is also more interpretable.% Although an object in an image may be severely occluded by another object, we may recover its identity and shape by analyzing the output of each component.% Alternatively we may use the output of each generator to serve as labels in training a model to perform instance segmentation.
+In order to benefit maximally from this structure it is desirable to be able to accurately estimate the (minimum) number of objects in the environment in advance.
+This task is ill-posed as it relies on a precise definition of ``object'' that is generally not available.
+In our experiments on CLEVR we encounter a similar situation in which the number of components does not suffice the potentially large number of objects in the environment.
+Here we find that it does not render the proposed structure useless, but instead each component considers ``primitives'' that correspond to multiple objects.
+
+One concern is in being able to accurately determine foreground, and background when combining the outputs of the object generators using alpha compositing.
+On CLEVR we observe cases in which objects appear to be flying, which is the result of being unable to route the information content of a ``foreground'' object to the corresponding ``foreground'' generator as induced by the fixed order in which images are composed.
+Although in principle the relational mechanism may account for this distinction, a more explicit mechanism may be preferred~\citep{mena2018learning}.
+% Alternatively one could learn the ordering in which images are composed in stead~\citep{mena2018learning}.% discriminator into posterior inference into FID
+We found that the pre-trained Inception embedding is not conclusive in reasoning about the validity of multi-object datasets.
+Similarly, the discriminator may have difficulties in accurately judging images from real / fake without additional structure.
+Ideally we would have a discriminator evaluate the correctness of each object individually, as well as the image as a whole.
+The use of a patch discriminator~\citep{isola2017image}, together with the alpha channel of each object generator to provide a segmentation, may serve a starting point in pursuing this direction.
+
+
+\section{Conclusion}
+We have argued for the importance of compositionality at the representational level of objects in deep generative models of images, and demonstrated how corresponding structure may be incorporated in the generator of a GAN.
+On a benchmark of multi-object datasets we have shown that the proposed generative model learns about individual objects and background in the process of synthesizing samples.
+A human study revealed that this leads to a better generative model of images.
+We are hopeful that in disentangling information corresponding to different objects at a representational level these may ultimately be recovered.
+Hence, we believe that this work is an important contribution towards learning object representations of complex real-world images without any supervision.
+
+\section*{Acknowledgements}
+
+The authors wish to thank Damien Vincent, Alexander Kolesnikov, Olivier Bachem and Klaus Greff for helpful comments and
+constructive feedback.
+The authors are grateful to Marcin Michalski and Pierre Ruyssen for their technical support. 
+
+% Ian / Tim ?
+
+
+\bibliography{references}
+\bibliographystyle{iclr2019_conference}  % NIPS
+% \bibliographystyle{plain}  % ICLR
+
+\newpage
+\appendix                                     
+
+\section{Experiment Results}
+\label{app:experiment_results}
+\subsection{Human Study Properties}\begin{figure}[h]
+\begin{subfigure}{.5\textwidth}
+  \centering
+  \includegraphics[width=1\linewidth]{figures/human_eval_properties_cifar10_v2}
+  \caption{Properties on CIFAR10 + MM}
+  \label{fig:human_eval_properties_cifar10}
+\end{subfigure}%
+\begin{subfigure}{0.5\textwidth}
+  \centering
+  \includegraphics[width=1\linewidth]{figures/human_eval_properties_clevr_v2-1}
+  \caption{Properties on CLEVR}
+  \label{fig:human_eval_properties_clevr}
+\end{subfigure}
+\caption{Results of human evaluation. Properties of generated images by \emph{k-GAN} (k=3,4,5) and \emph{GAN} on \emph{CIFAR10 + MM} (a) and CLEVR (b). Note that on CLEVR all evaluated properties are undesirable, and thus a larger number of ``False'' responses is better.}
+\end{figure}\begin{figure}[h]
+\centering
+\includegraphics[width=\linewidth]{figures/human_eval_properties_clevr_v2-2}
+\caption{Results of human evaluation. Number of (geometric) objects in generated images by \emph{k-GAN} (k=3,4,5) and \emph{GAN} on CLEVR. A value of -1 implies a majority vote could not be reached.}
+\label{fig:human_eval_properties_clevr_counts}
+\end{figure}\newpage\subsection{FID Study}\begin{figure}[h]
+\begin{subfigure}{.6\textwidth}
+  \centering
+  \includegraphics[width=\linewidth]{figures/avg_seed_base_relational_barplot_v2}
+  \label{fig:fid_scores1}
+\end{subfigure}%
+\begin{subfigure}{.4\textwidth}
+  \centering
+  \includegraphics[width=\linewidth]{figures/avg_seed_background_barplot_v2}
+  \label{fig:fid_scores2}
+\end{subfigure}
+\caption{The best FID obtained by \emph{GAN} and \emph{k-GAN} following our grid search. The best configurations were chosen based on the smallest average FID (across 5 seeds). Standard deviations across seeds are illustrated with error bars.}
+\label{fig:fid_scores}
+\end{figure}\newpage\subsubsection{Best configurations}
+
+Table~\ref{table:best_models} reports the best hyper-parameter configuration for each model that were obtained following our grid search.
+Configurations were chosen based on the smallest average FID (across 5 seeds) as reported in Figure~\ref{fig:fid_scores}.
+Each block corresponds to a dataset (from top to bottom: \emph{Independent MM}, \emph{Triplet MM}, \emph{RGB Occluded MM}, \emph{CIFAR10 + MM}, \emph{CLEVR})
+
+\begin{table}[h]
+\centering
+\begin{tabular}{llllllllrrr}
+\toprule
+      model & gan type & norm. & penalty & blocks & heads &  share &  bg. int. &  $\beta_1$ &  $\beta_2$ &  $\lambda$ \\
+\midrule
+        GAN &   NS-GAN &    spec. &    none &      x &     x &  x &       x &    0.5 &  0.999 &      10 \\
+ 3-GAN ind. &   NS-GAN &    spec. &    WGAN &      x &     x &  x &       x &    0.9 &  0.999 &       1 \\
+ 4-GAN ind. &   NS-GAN &    spec. &    WGAN &      x &     x &  x &       x &    0.9 &  0.999 &       1 \\
+ 5-GAN ind. &   NS-GAN &    spec. &    WGAN &      x &     x &  x &       x &    0.9 &  0.999 &       1 \\
+ 3-GAN rel. &   NS-GAN &    spec. &    WGAN &      1 &     1 &  no &       x &    0.9 &  0.999 &       1 \\
+ 4-GAN rel. &   NS-GAN &    spec. &    WGAN &      1 &     1 &  no &       x &    0.9 &  0.999 &       1 \\
+ 5-GAN rel. &   NS-GAN &    spec. &    WGAN &      2 &     1 &  no &       x &    0.9 &  0.999 &       1 \\
+\midrule
+        GAN &   NS-GAN &    spec. &    none &      x &     x &  x &       x &    0.5 &  0.999 &       1 \\
+ 3-GAN ind. &   NS-GAN &    spec. &    WGAN &      x &     x &  x &       x &    0.9 &  0.999 &       1 \\
+ 4-GAN ind. &   NS-GAN &    spec. &    WGAN &      x &     x &  x &       x &    0.9 &  0.999 &       1 \\
+ 5-GAN ind. &   NS-GAN &    spec. &    WGAN &      x &     x &  x &       x &    0.9 &  0.999 &       1 \\
+ 3-GAN rel. &   NS-GAN &    spec. &    WGAN &      1 &     1 &  no &       x &    0.9 &  0.999 &       1 \\
+ 4-GAN rel. &   NS-GAN &    spec. &    WGAN &      1 &     2 &  no &       x &    0.9 &  0.999 &       1 \\
+ 5-GAN rel. &   NS-GAN &    spec. &    WGAN &      2 &     1 &  no &       x &    0.9 &  0.999 &       1 \\
+\midrule
+        GAN &   NS-GAN &    spec. &    none &      x &     x &  x &       x &    0.5 &  0.999 &       1 \\
+ 3-GAN ind. &   NS-GAN &    spec. &    WGAN &      x &     x &  x &       x &    0.9 &  0.999 &       1 \\
+ 4-GAN ind. &   NS-GAN &    spec. &    WGAN &      x &     x &  x &       x &    0.9 &  0.999 &       1 \\
+ 5-GAN ind. &   NS-GAN &    spec. &    WGAN &      x &     x &  x &       x &    0.9 &  0.999 &       1 \\
+ 3-GAN rel. &   NS-GAN &        none &    WGAN &      2 &     2 &   yes &       x &    0.9 &  0.999 &       1 \\
+ 4-GAN rel. &   NS-GAN &        none &    WGAN &      2 &     2 &  no &       x &    0.9 &  0.999 &       1 \\
+ 5-GAN rel. &   NS-GAN &        none &    WGAN &      2 &     2 &   yes &       x &    0.9 &  0.999 &       1 \\
+\midrule
+            GAN &   NS-GAN &        none &    WGAN &      x &     x &  x &       x &    0.9 &  0.999 &       1 \\
+ 3-GAN ind. bg. &   NS-GAN &        none &    WGAN &      x &     x &  x &        x &    0.9 &  0.999 &       1 \\
+ 4-GAN ind. bg. &   NS-GAN &        none &    WGAN &      x &     x &  x &        x &    0.9 &  0.999 &       1 \\
+ 5-GAN ind. bg. &   NS-GAN &        none &    WGAN &      x &     x &  x &       x &    0.9 &  0.999 &       1 \\
+ 3-GAN rel. bg. &   NS-GAN &        none &    WGAN &      2 &     1 &   yes &        yes &    0.9 &  0.999 &       1 \\
+ 4-GAN rel. bg. &   NS-GAN &        none &    WGAN &      2 &     1 &   yes &        yes &    0.9 &  0.999 &       1 \\
+ 5-GAN rel. bg. &   NS-GAN &        none &    WGAN &      2 &     2 &   yes &       no &    0.9 &  0.999 &       1 \\
+\midrule
+            GAN &     WGAN &        none &    WGAN &      x &     x &  x &       x &    0.9 &  0.999 &       1 \\
+ 3-GAN ind. bg. &   NS-GAN &        none &    WGAN &      x &     x &  x &       x &    0.9 &  0.999 &       1 \\
+ 4-GAN ind. bg. &   NS-GAN &        none &    WGAN &      x &     x &  x &        x &    0.9 &  0.999 &       1 \\
+ 5-GAN ind. bg. &   NS-GAN &        none &    WGAN &      x &     x &  x &       x &    0.9 &  0.999 &       1 \\
+ 3-GAN rel. bg. &   NS-GAN &        none &    WGAN &      2 &     1 &  no &        yes &    0.9 &  0.999 &       1 \\
+ 4-GAN rel. bg. &   NS-GAN &        none &    WGAN &      1 &     2 &  no &       no &    0.9 &  0.999 &       1 \\
+ 5-GAN rel. bg. &   NS-GAN &        none &    WGAN &      2 &     2 &  no &       no &    0.9 &  0.999 &       1 \\
+\bottomrule
+\end{tabular}
+\caption{The best hyper-parameter configuration for each model as were obtained after conducting a grid search.
+Configurations were chosen based on the smallest average FID (across 5 seeds).}
+\label{table:best_models}
+\end{table}
+
+\newpage
+\section{Experiment Details}
+\label{app:experiment_details}
+\subsection{Model specifications}
+The generator and discriminator neural network architectures in all our experiments are based on DCGAN~\citep{radford2015unsupervised}.
+
+\paragraph{Object Generators}\emph{k-GAN ind.} introduces $K=k$ copies of an object generator (i.e. tied weights, DCGAN architecture) that each generate and image from an independent sample of a 64-dimensional \emph{UNIFORM(-1, 1)} prior $P(Z)$.
+
+\paragraph{Relational Structure}
+When a relational stage is incorporated (\emph{k-GAN rel.}) each of the $\bm{z}_i \sim P(Z)$ are first updated, before being passed to the generators. 
+These updates are computed using one or more \emph{attention blocks}~\citep{zambaldi2018relational}, which integrate Multi-Head Dot-Product Attention (MHDPA;~\cite{vaswani2017attention}) with a post-processing step.
+A single head of an attention block updates $\bm{z}_i$ according to \eqref{eq:attention_block}.
+
+In our experiments we use a single-layer neural network (fully-connected, 32 ReLU) followed by LayerNorm~\citep{ba2016layer} for each of $\text{MLP}^{\textit{query}}$, $\text{MLP}^{\textit{key}}$, $\text{MLP}^{\textit{value}}$.
+We implement $\text{MLP}^{\textit{up}}$ with a two-layer neural network (each fully-connected, 64 ReLU), and apply LayerNorm after summing with $\bm{z}_i$.
+Different heads in the same block use different parameters for $\text{MLP}^{\textit{query}}$, $\text{MLP}^{\textit{key}}$, $\text{MLP}^{\textit{value}}$, $\text{MLP}^{\textit{up}}$.
+If multiple heads are present, then their outputs are concatenated and transformed by a single-layer neural network (fully-connected, 64 ReLU) followed by LayerNorm to obtain the new $\bm{\hat{z}}_i$.
+If the relational stage incorporates multiple attention blocks that iteratively update $\bm{z}_i$, then we consider two variations: using unique weights for each MLP in each block, or sharing their weights across blocks.
+
+\paragraph{Background Generation}
+When a background generator is incorporated (eg. \emph{k-GAN rel. bg}) it uses the same DCGAN architecture as the object generators, yet maintains its own set of weights. 
+It receives as input its own latent sample $\bm{z}_b \sim P(Z_b)$, again using a \emph{UNIFORM(-1, 1)} prior, although one may in theory choose a different distribution.
+We explore both variations in which $\bm{z}_b$ participates in the relational stage, and in which it does not. 
+
+\paragraph{Composing} In order to obtain the final generated image, we need to combine the images generated by each generator.
+In the case of \emph{Independent MM} and \emph{Triplet MM} we simply sum the outputs of the different generators and clip their values to $(0, 1)$.
+On \emph{RGB Occluded MM} we combine the different outputs using alpha compositing, with masks obtained by thresholding the output of each generator at $0.1$.
+On \emph{CIFAR10 + MM} and \emph{CLEVR} we require each of the object generators to generate an additional alpha channel by adding an additional feature map in the last layer of the generator.
+These are then combined with the generated background (opaque) using alpha compositing, i.e. through repeated application of \eqref{eq:alpha_composit}.
+
+\subsection{Hyperparameter Configurations}
+Each model is optimized with ADAM~\citep{kingma2015adam} using a learning rate of $0.0001$, and batch size $64$ for $1\,000\,000$ steps.
+Each generator step is followed by $5$ discriminator steps, as is considered best practice in training GANs.
+Checkpoints are saved at every $20\,000^{th}$ step and we consider only the checkpoint with the lowest FID for each hyper-parameter configuration.
+FID is computed using $10\,000$ samples from a hold-out set.
+
+\paragraph{Baseline}
+We conduct an extensive grid search over 48 different GAN configurations to obtain a strong GAN baseline on each dataset.
+It is made up of hyper-parameter ranges that were found to be successful in training GANs on standard datasets~\citep{kurach2018gan}. 
+
+We consider [SN-GAN / WGAN], using [NO / WGAN] gradient penalty with $\lambda$[1 / 10].
+In addition we consider these configurations [WITH / WITHOUT] spectral normalization.
+We consider [(0.5, 0.9) / (0.5, 0.999) / (0.9, 0.999)] as ($\beta_1$, $\beta_2$) in ADAM.
+We explore 5 different seeds for each configuration.
+
+\paragraph{k-GAN}
+We conduct a similar grid search for the GANs that incorporate our proposed structure. 
+However, in order to maintain a similar computational budget to our baseline we consider a \emph{subset} of the previous ranges to compensate for the additional hyper-parameters of the different structured components that we would like to search over.
+
+In particular, we consider SN-GAN with WGAN gradient penalty, with a default $\lambda$ of 1, [WITH / WITHOUT] spectral normalization.
+We use (0.9, 0.999) as fixed values for ($\beta_1$, $\beta_2$) in ADAM.
+Additionally we consider K = [3 / 4 / 5] copies of the generator, and the following configurations for the relational structure:
+
+\begin{itemize}
+    \item Independent
+    \item Relational (1 block, no weight-sharing, 1 head)
+    \item Relational (1 block, no weight-sharing, 2 heads)
+    \item Relational (2 blocks, no weight-sharing, 1 head)
+    \item Relational (2 blocks, weight-sharing, 1 head)
+    \item Relational (2 blocks, no weight-sharing, 2 heads)
+    \item Relational (2 blocks, weight-sharing, 2 heads)
+\end{itemize}
+
+This results in 42 hyper-parameter configurations, for which we each consider 5 seeds.
+We do not explore the use of a background generator on the non-background datasets.
+Correspondingly, we \emph{only} explore variations that incorporate the background generator on the background datasets.
+In the latter case we search over an additional hyper-parameter that determines whether the latent representation of the background generator should participate in the relational stage or not.
+
+\subsection{Human Study}
+
+We asked human raters to compare the images generated by \emph{k-GAN}$(k=3,4,5)$ to our baseline on \emph{RGB Occluded MM}, \emph{CIFAR10 + MM} and \emph{CLEVR}, using the configuration with a background generator for the last two datasets. 
+For each model we select the 10 best hyper-parameter configurations, from which we each generate 100 images.
+We conduct two different studies 1) in which we compare images from \emph{k-GAN} against \emph{GAN} and 2) in which we asked raters to answer questions about the content (properties) of the images.
+
+\paragraph{Comparison}
+We asked reviewers to compare the quality of the generated images.
+We asked up to three raters for each image and report the majority vote or “none” if no decision can be reached.
+
+\paragraph{Properties}
+For each dataset we asked (up to three raters for each image) the following questions.
+
+On \emph{RGB Occluded MM} we asked:
+\begin{enumerate}
+\item How many [red, blue, green] shapes are in the image? Answers: [0, 1, 2, 3, 4, 5]
+\item How many are recognizable as digits? Answers: [0, 1, 2, 3, 4, 5]
+\item Are there exactly 3 digits in the picture, one of them green, one blue and one red? Answers: Yes / No
+\end{enumerate}
+
+On \emph{CIFAR10 + MM} we asked these same questions, and additionally asked:
+\begin{enumerate}
+\setcounter{enumi}{3}
+\item Does the background constitute a realistic scene? Answers: Yes / No
+\end{enumerate}
+
+On \emph{CLEVR} we asked the following set of questions:
+\begin{enumerate}
+\item How many shapes are in the image? Answers: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+\item How many are recognizable as geometric objects? Answers: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+\item Are there any objects with mixed colors (eg. part green part red)? Answers: Yes / No
+\item Are there any objects with distorted geometric shapes?: Answers: Yes / No 
+\item Are there any objects that appear to be floating? Answers: Yes / No
+\item Does the scene appear to be crowded? Answers: Yes / No
+\end{enumerate}
+
+\newpage
+\section{Overview of Real and Generated Samples}
+\label{app:samples}
+Generated samples are reported for the best (lowest FID) structured model, as well as the best baseline model for each dataset.
+
+\subsection{Independent Multi MNIST}\begin{figure}[h]
+    \centering
+    \includegraphics[width=\linewidth]{figures/multi-mnist-3-uniform_grid}
+    \caption{Real}
+    \label{fig:real_base_grid}
+\end{figure}\newpage\subsubsection{Structured GAN}% https://cnsviewer.corp.google.com/cns/vz-d/home/dune/multi_gan/tmp/svansteenkiste_multi_gan-base-experiment-paper/study_num_5/task_num_1/task\begin{figure}[h]
+    \centering
+    \includegraphics[width=\linewidth]{figures/best-multi_gan-base-experiment}
+    \caption{4-GAN ind. with spectral norm and WGAN penalty}
+    \label{fig:generated_multi_gan_base_grid}
+\end{figure}\newpage\subsubsection{GAN}% https://cnsviewer.corp.google.com/cns/vz-d/home/dune/multi_gan/tmp/svansteenkiste_gan-base-experiment-paper/study_num_24/task_num_4/task\begin{figure}[h]
+    \centering
+    \includegraphics[width=\linewidth]{figures/best-gan-base-experiment}
+    \caption{NS-GAN with spectral norm}
+    \label{fig:generated_gan_base_grid}
+\end{figure}\newpage\subsection{Triplet Multi MNIST}\begin{figure}[h]
+    \centering
+    \includegraphics[width=\linewidth]{figures/multi-mnist-3-triplet_grid}
+    \caption{Real}
+    \label{fig:real_relational_triplet_grid}
+\end{figure}\newpage\subsubsection{Structured GAN}% https://cnsviewer.corp.google.com/cns/vz-d/home/dune/multi_gan/tmp/svansteenkiste_multi_gan-relational-experiment-triplet-paper/study_num_7/task_num_10/task\begin{figure}[h]
+    \centering
+    \includegraphics[width=\linewidth]{figures/best-multi_gan-relational-experiment-triplet}
+    \caption{4-GAN rel. (1 block, 2 heads, no weight sharing) with spectral norm and WGAN penalty}
+    \label{fig:generated_multi_gan_relational_triplet_grid}
+\end{figure}\newpage\subsubsection{GAN}% https://cnsviewer.corp.google.com/cns/vz-d/home/dune/multi_gan/tmp/svansteenkiste_gan-relational-experiment-paper/study_num_24/task_num_1/task\begin{figure}[h]
+    \centering
+    \includegraphics[width=\linewidth]{figures/best-gan-relational-experiment-triplet}
+    \caption{NS-GAN with spectral norm}
+    \label{fig:generated_gan_relational_triplet_grid}
+\end{figure}\newpage\subsection{RGb-Occluded Multi MNIST}\begin{figure}[h]
+    \centering
+    \includegraphics[width=\linewidth]{figures/multi-mnist-3-uniform-rgb-occluded_grid}
+    \caption{Real}
+    \label{fig:real_relational_rgb_occluded_grid}
+\end{figure}\newpage\subsubsection{Structured GAN}% https://cnsviewer.corp.google.com/cns/vz-d/home/dune/multi_gan/tmp/svansteenkiste_multi_gan-relational-experiment-rgb-occluded-paper/study_num_6/task_num_7/task\begin{figure}[h]
+    \centering
+    \includegraphics[width=\linewidth]{figures/best-multi_gan-relational-experiment-rgb-occluded}
+    \caption{3-GAN rel. (2 blocks, 2 heads, no weight sharing) with spectral norm and WGAN penalty}
+    \label{fig:generated_multi_gan_relational_rgb_occluded_grid}
+\end{figure}\newpage\subsubsection{GAN}% https://cnsviewer.corp.google.com/cns/vz-d/home/dune/multi_gan/tmp/svansteenkiste_gan-relational-experiment-paper/study_num_62/task_num_1/task\begin{figure}[h]
+    \centering
+    \includegraphics[width=\linewidth]{figures/best-gan-relational-experiment-rgb-occluded}
+    \caption{NS-GAN with spectral norm}
+    \label{fig:generated_gan_relational_rgb_occluded_grid}
+\end{figure}\newpage\subsection{RGB-Occluded Multi MNIST + CIFAR10}\begin{figure}[h]
+    \centering
+    \includegraphics[width=\linewidth]{figures/multi-mnist-3-uniform-rgb-occluded-cifar10_grid}
+    \caption{Real}
+    \label{fig:real_background_grid}
+\end{figure}\newpage\subsubsection{Structured GAN}% https://cnsviewer.corp.google.com/cns/vz-d/home/dune/multi_gan/tmp/svansteenkiste_multi_gan_bg-background-experiment-paper/study_num_13/task_num_16/task\begin{figure}[h]
+    \centering
+    \includegraphics[width=\linewidth]{figures/best-multi_gan_bg-background-experiment}
+    \caption{5-GAN rel. (1 block, 2 heads, no weight sharing) bg. (no interaction) with WGAN penalty}
+    \label{fig:generated_multi_gan_bg_background_grid}
+\end{figure}\newpage\subsubsection{GAN}% https://cnsviewer.corp.google.com/cns/vz-d/home/dune/multi_gan/tmp/svansteenkiste_gan-background-experiment-paper/study_num_15/task_num_2/task\begin{figure}[h]
+    \centering
+    \includegraphics[width=\linewidth]{figures/best-gan-background-experiment}
+    \caption{WGAN with WGAN penalty}
+    \label{fig:generated_gan_background_grid}
+\end{figure}\newpage\subsection{CLEVR}\begin{figure}[h]
+    \centering
+    \includegraphics[width=\linewidth]{figures/clevr_grid}
+    \caption{Real}
+    \label{fig:real_clevr_grid}
+\end{figure}\newpage\subsubsection{Structured GAN}% https://cnsviewer.corp.google.com/cns/vz-d/home/dune/multi_gan/tmp/svansteenkiste_multi_gan_bg-clevr-experiment-paper/study_num_4/task_num_7/task\begin{figure}[h]
+    \centering
+    \includegraphics[width=\linewidth]{figures/best-multi_gan_bg-clevr-experiment}
+    \caption{3-GAN rel. (2 heads, 2 blocks, no weight sharing) bg. (with interaction) with WGAN penalty.}
+    \label{fig:generated_multi_gan_bg_clevr_grid}
+\end{figure}\newpage\subsubsection{GAN}% https://cnsviewer.corp.google.com/cns/vz-d/home/dune/multi_gan/tmp/svansteenkiste_gan-clevr-experiment-paper/study_num_15/task_num_2/task\begin{figure}[h]
+    \centering
+    \includegraphics[width=\linewidth]{figures/best-gan-clevr-experiment}
+    \caption{WGAN with WGAN penalty}
+    \label{fig:generated_gan_clevr_grid}
+\end{figure}
+
+
+\end{document}

@@ -5,7 +5,7 @@ url = 'http://arxiv.org/list/cs.{}/{}{}?show=1000'
 fields = ['CV']
 keywords = ["deep", "learn", "convolution", "recurrent", "neural", "network"]
 months = ['{:0>2d}'.format(i+1) for i in range(12)]
-years = ['{:0>2d}'.format(i) for i in range(15, 19)]
+years = ['{:0>2d}'.format(i) for i in range(10, 19)]
 
 f = open("paperlinks.txt", "wt")
 

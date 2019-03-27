@@ -20,7 +20,7 @@ if not os.path.exists(DOWNLOAD_FOLDER):
 if not os.path.exists(EXTRACT_FOLDER):
         os.mkdir(EXTRACT_FOLDER)
 
-for i in range(409, nb_papers, 1):
+for i in range(0, nb_papers, 1):
         paper_link = lines[2*i+1]
         paper_code = paper_link.split("/")[-1]
         paper_source_link = "https://arxiv.org/e-print/" + paper_code

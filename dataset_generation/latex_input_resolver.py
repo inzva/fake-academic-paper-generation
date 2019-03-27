@@ -60,7 +60,7 @@ def import_resolve(tex, path):
         
     return soup
 
-for i in range(401, 1000, 1):
+for i in range(0, nb_papers, 1):
     paper_folder_dir = EXTRACT_FOLDER + str(i) + "/**/"
     extension = "*.tex"
     tex_files = glob.glob(paper_folder_dir + extension, recursive=True)

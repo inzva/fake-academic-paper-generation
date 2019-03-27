@@ -18,7 +18,7 @@ selected_papers_file = open("selected_papers.txt", "wt")
 
 final_nb_papers = 0
 
-for i in range(0, nb_papers, 1):
+for i in range(0, 1000, 1):
     if os.path.exists(FINAL_FOLDER + str(i) + ".tex"):
         final_nb_papers += 1
         existing_papers_indices.append(i)
@@ -30,6 +30,6 @@ for i in range(0, nb_papers, 1):
 selected_papers_file.close()
 
 for i, paper_indice in enumerate(existing_papers_indices):
-    os.rename(FINAL_FOLDER+str(paper_indice), FINAL_FOLDER+str(i))
+    os.rename(FINAL_FOLDER+str(paper_indice)+".tex", FINAL_FOLDER+str(i)+".tex")
 
 print("final number papers:", final_nb_papers)

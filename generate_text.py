@@ -32,7 +32,7 @@ vocab_size = len(vocab)
 embedding_dim = 256
 
 # Number of RNN units
-rnn_units = 1024
+rnn_units = 2048
 
 if tf.test.is_gpu_available():
     rnn = tf.keras.layers.CuDNNLSTM

@@ -7,7 +7,7 @@ import os
 
 tf.enable_eager_execution()
 
-filePath = 'dataset_generation/papers/whole_data.txt'
+filePath = 'dataset/preprocessed_data.txt'
 
 # Read, then decode for py2 compat.
 text = open(filePath, 'rb').read().decode(encoding='utf-8')
@@ -35,12 +35,12 @@ embedding_dim = 256
 rnn_units = 1024
 
 if tf.test.is_gpu_available():
-    rnn = tf.keras.layers.GRU
+    rnn = tf.keras.layers.CuDNNLSTM
 else:
     import functools
 
     rnn = functools.partial(
-        tf.keras.layers.GRU, recurrent_activation='sigmoid')
+        tf.keras.layers.LSTM, recurrent_activation='sigmoid')
 
 
 def build_model(vocab_size, embedding_dim, rnn_units, batch_size):
@@ -108,4 +108,4 @@ def generate_text(model, start_string):
 
 
 with open('generated_text.txt', 'w+', encoding='utf-8') as f:
-    print(generate_text(model, start_string=u"\\documentclass: "), file=f)
+    print(generate_text(model, start_string=u"\\documentclass{"), file=f)

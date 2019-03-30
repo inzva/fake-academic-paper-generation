@@ -1,0 +1,705 @@
+\documentclass[10pt,twocolumn,letterpaper]{article}
+\usepackage{cvpr}
+\usepackage{epsfig}
+\usepackage{times}
+\usepackage[utf8]{inputenc} % allow utf-8 input
+\usepackage[T1]{fontenc}    % use 8-bit T1 fonts
+\usepackage{url}            % simple URL typesetting
+\usepackage{booktabs}       % professional-quality tables
+\usepackage{amsfonts}       % blackboard math symbols
+\usepackage{nicefrac}       % compact symbols for 1/2, etc.
+\usepackage{microtype}      % microtypography
+\usepackage{lipsum} 
+\usepackage{color}
+\usepackage{graphicx}
+\usepackage{subcaption}
+\usepackage{xspace}
+\usepackage{booktabs} % for professional tables
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{multirow}
+\usepackage{multicol}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{adjustbox}
+\usepackage{flushend}
+
+
+\usepackage[pagebackref=true,breaklinks=true,letterpaper=true,colorlinks,bookmarks=false]{hyperref}
+
+\cvprfinalcopy % *** Uncomment this line for the final submission
+
+\def\cvprPaperID{440} % *** Enter the CVPR Paper ID here
+\def\httilde{\mbox{\tt\raisebox{-.5ex}{\symbol{126}}}}
+
+\ifcvprfinal\pagestyle{empty}\fi
+
+
+\newcommand{\xin}[1]{\textcolor{red}{[Xin: #1]}}
+\newcommand{\ruth}[1]{\textcolor{magenta}{[Ruth: #1]}}
+\newcommand{\joey}[1]{\textcolor{blue}{[Joey: #1]}}
+\newcommand{\fisher}[1]{\textcolor{blue}{[Fisher: #1]}}
+\newcommand{\trevor}[1]{\textcolor{red}{[Trevor: #1]}}
+
+
+\newcommand{\model}{TAFE-Net\xspace}
+\newcommand{\modelplural}{TAFE-Nets\xspace}
+
+\def\vx{{\bf x}}
+\def\vX{{\bf X}}
+\def\vz{{\bf z}}
+\def\va{{\bf a}}
+
+\renewcommand{\vec}[1]{\mathbf{#1}}
+\newcommand\minisection[1]{\vspace{2mm}\noindent \textbf{#1}}
+
+\title{TAFE-Net: Task-Aware Feature Embeddings for \\ Efficient Learning and Inference}
+
+
+\author{
+  Xin Wang\quad Fisher Yu\quad 
+  Ruth Wang\quad
+  Trevor Darrell\quad Joseph E. Gonzalez \\
+  EECS Department, UC Berkeley 
+}
+
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Learning good feature embeddings for images often requires substantial training data.
+As a consequence, in settings where training data is limited (e.g., few-shot and zero-shot learning), we are typically forced to use a general feature embedding across prediction tasks.
+Ideally, we would like to construct feature embeddings that are tuned for the given task and even input image.
+In this work, we propose Task-Aware Feature Embedding Networks (\modelplural) to learn how to adapt the image representation to a new task in a meta learning fashion. 
+Our network is composed of a meta learner and a prediction network, where the meta learner generates parameters for the feature layers in the prediction network based on a task input so that the feature embedding can be accurately adjusted
+for that task.
+We show that our \model is highly effective in generalizing to new tasks or concepts and offers efficient prediction with low computational cost. 
+We demonstrate the general applicability of \model in several tasks including zero-shot/few-shot learning and dynamic efficient prediction. Our networks exceed or match the state-of-the-art on most tasks. In particular, our approach improves the prediction accuracy of unseen attribute-object pairs by 4 to 15 points on the challenging visual attributes composition task.
+\end{abstract}
+
+\section{Introduction}% \begin{enumerate}%     \item Feature embedding are central a wide range of computer vision tasks. %     \item However, learning rich embeddings requires substantial amounts of training time and data.%     \item A common practice is to reuse standard pre-trained embeddings from large supervised learning tasks and then fine tune those embeddings to new domains.%     \item However, in many few or zero shot learning settings there isn't sufficient data to fine-tune these embeddings%     \item In this work we develop a meta-learning technique to generate task specific embedding networks that can be used to adapt generic feature embeddings.%     \item We introduce a parameter generation network that combines a novel parameter factorization and secondary embedding loss to learn how to generate task specific embedding networks.% \end{enumerate}% \begin{enumerate}%     \item Fixed representations are common in many visual learning tasks, but may not have optimal efficiency when learning model parameters or performing inference on a new sample point.%     \item A wide range of problems require finding a new image embedding given a new task.% \end{enumerate}
+
+Feature embeddings are central to 
+computer vision.
+By mapping images into semantically rich vector spaces, feature embeddings extract key information that can be used for a wide range of prediction tasks.  
+However, learning good feature embeddings typically requires substantial amounts of training data and computation.  
+As a consequence, a common practice~\cite{donahue2014decaf,girshick2014rich,zeiler2014visualizing} is to re-use existing feature embeddings from convolutional networks (e.g., ResNet50~\cite{he2016deep}) trained on large-scale labeled training datasets (e.g., ImageNet~\cite{russakovsky2015imagenet}); to achieve maximum accuracy, these general feature embedding are often fine-tuned~\cite{girshick2014rich,donahue2014decaf,zeiler2014visualizing} or transformed~\cite{Hoffman_cycada2017} using additional task specific training data. 
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.48\textwidth]{figs/figs_r/figure_1_v4.pdf} \caption{A cartoon illustration of Task-aware Feature Embedding. In this case there are two binary prediction task: \texttt{hasCat} and \texttt{hasDog}).
+    Task-aware feature embeddings mean that the same image can have different embeddings for each task.
+    As a consequence, we can adopt a single task independent classification boundary for all tasks.}
+    \label{fig:tafe}
+\end{figure}
+
+In many settings, the training data are insufficient to learn or even adapt general feature embeddings to a given task.
+For example, in few-shot and zero-shot prediction tasks, the scarcity of training data forces the use of generic feature embeddings.
+As a consequence, in these situations much of the research instead focuses on the design of joint task and data embeddings~\cite{Changpinyo_2016_CVPR,frome2013devise,zhang2016zero} that can be generalized to unseen tasks or tasks with fewer examples. 
+Some have proposed treating the task embedding as linear separators and learning to generate them for new tasks~\cite{vinyals2016matching,lu2016visual}. 
+Others have proposed hallucinating additional data points~\cite{xian2018feature,hariharan2017low, wang2018low}. 
+However, in all cases, a common image embedding is shared across tasks. 
+As a consequence, the common image embedding may be out of the domain or sub-optimal for any individual prediction task. 
+This problem is exacerbated in settings where the number and diversity of training tasks is relatively small.
+
+\begin{figure*}[ht]
+    \centering
+    \includegraphics[width=1\textwidth]{figs/arch.pdf}
+    \caption{\model architecture design. \model has
+    a task-aware meta learner that generates the parameters of
+    the feature layers within a prediction network for classification. The generated weights are
+    factorized into task-specific weights in low dimension and 
+    shared weights across all tasks.}
+    \label{fig:model_arch}
+\end{figure*}
+
+In this work we explore a meta-learning approach to constructing task-aware feature embeddings (TAFE).  
+We introduce task-aware feature embedding networks
+(\modelplural\footnote{Pronounced taffy-nets}) composed of a task-aware meta learner that generates the parameters for feature embedding layers within a standard prediction network.
+As a consequence, we are able to learn a simple task-independent linear boundary that can separate the positive and negative examples through the use of the task aware feature embeddings. 
+To address the challenge of meta-learning with limited numbers of training tasks, we couple the task embedding to the task aware feature embeddings with the addition of a novel embedding loss.
+The resulting coupling improves generalization across tasks by jointly clustering both images and tasks.
+We therefore introduce a novel method to factorize the generated
+weights into small set of predicted weights and a larger set of shared weights.
+
+
+The proposed architecture exceeds the state-of-the-art zero-shot learning on four standard benchmarks without the need for additional data generation. On the newly proposed visual-attribute composition task which is a more challenging zero-shot learning task, 
+we are able to achieve an 4 to 15 point improvements over state-of-the-art descriminative models based on joint embedding. Our methods also achieve competitive results on the challenging few-shot learning benchmark based on ImageNet. Furthermore, the proposed model can be used for efficient inference
+on a per-input basis with little modification 
+and exceeds the performance of prior models that focus on model sparsification. 
+
+\section{Related Work}\minisection{Weight generation}. Several efforts~\cite{bertinetto2016learning, ha2016hypernetworks,denil2013predicting} have studied the idea of adopting one  meta network to generate weights of another network. Our task-aware meta learner serves a similar role for the weight generation 
+but in a more structured and constrained manner. We study different mechanisms to decompose the weights of the prediction network so that it can generate weights for multiple layers at once where Bertinetton~\etal~\cite{bertinetto2016learning} 
+focuses on generating weights for a single layer and Denil~\etal~\cite{denil2013predicting} can generate up to 95\% parameters of a single layer due to the quadratic size of the output space. As a byproduct of our design, we also study adding sparse constraints to the generated weights or efficient inference~\cite{lin2017runtime, wang2017skipnet, wu2018blockdrop} and the resulting model outperforms the state-of-the-art dynamic channel pruning technique~\cite{lin2017runtime}.
+
+\minisection{Joint embedding learning}. Our architecture leverages common task and 
+image embeddings to improve the task efficiency when learning the task 
+embedding. This approach is commonly used in work on zero- and few- shot learning~\cite{koch2015siamese, yang2018learning, vinyals2016matching, zhang2016zero, Changpinyo_2016_CVPR, frome2013devise}. 
+A metric-learning based objective \cite{koch2015siamese, yang2018learning, vinyals2016matching} is often used to jointly regularize the task embeddings and 
+image embeddings for training the classification network while our embedding objective is 
+used to address the data scarcity issue of the weight generation network.
+structure among previously seen tasks or concepts such that this learned prior can be combined with small amounts of new data for better generalization~\cite{finn2018learning}.  
+Our task-aware meta learner generalizes to new tasks with limited training data 
+thansks to our novel embedding loss. 
+
+\minisection{Feature modulation}. In the domain of visual question answering, previous works~\cite{perez2018film, de2017modulating} explore the use of question embedding network 
+to modulate the features of the primary convolutional network. Our factorized weight generation
+scheme for convolutional layers can also be viewed as channel-wise feature modulation. 
+
+\section{Task-Aware Feature Embedding}
+
+The choice of the featurization of data depends on the prediction tasks~\cite{donahue2014decaf, girshick2014rich}.
+For example, identifying whether images are underwater scenes or contain a particular digit relies on different representations (e.g., color or texture). 
+
+
+In many cases there is rich semantic meta-data describing the concept associated with a prediction task.
+For example, we might have text describing the objects of interest or the semantic meaning of the categories.
+Even the input image can be used to help characterize the prediction task. 
+Encoding the prediction task as part of the learning problem can aid in generalization.
+Xian~\etal~\cite{xian2018zero} and Frome~\etal~\cite{frome2013devise} demonstrate that modeling 
+the semantic relationship between tasks can help the model 
+generalize to new tasks. 
+
+
+In this work, we explore a mechanism 
+that can better incorporate
+the task specifications so that the model can learn and 
+predict more efficiently. 
+More specifically, we are
+interested in the design of models that can leverage meta-data describing the task to augment the data featurization.
+
+
+To address this problem, we propose \textit{Task-aware
+Feature Embedding} networks (\modelplural) that generate 
+feature embeddings conditioned on the task specification.
+We adopt a meta learning approach to construct \modelplural
+by generating task-specific parameters for the prediction
+network and introduce two key innovations in weight 
+factorization and embedding loss design to train \modelplural
+effectively. 
+
+\subsection{\model Model}
+We start with the \model design. There are two sub-networks
+in \model as shown in Figure~\ref{fig:model_arch}: a 
+task-aware meta leaner $\mathcal{G}$ and a prediction network
+$\mathcal{F}$. The task-aware meta learner takes a task specification (e.g., word2vec~\cite{mikolov2013efficient} encoding or example image) $\Vec{t}$ and generates the weights of layers in the prediction network. 
+The prediction network $\mathcal{F}$: 
+\begin{equation}
+    \Vec{y} = \mathcal{F}(\Vec{x}; \theta=\{\mathcal{G}(\Vec{t}), \theta_f\}),
+\end{equation}
+takes images or image features  $\Vec{x}$ as inputs and predicts the class label $\Vec{y}\in\{1...N\}$.
+The prediction network $\mathcal{F}$ is parameterized by $\theta$ which is composed
+of generated parameters from $\mathcal{G}$ for task-aware feature embeddings 
+and shared parameters  $\theta_f$ that are shared across tasks (e.g., generic feature extraction). 
+The task-aware feature embedding (TAFE) is the layer output
+of $\mathcal{F}$ before the final classification layer. 
+
+The task-aware meta learner $\mathcal{G}$ paramterized by $\eta$ is composed of an embedding network 
+$\mathcal{T}(\Vec{t})$ to generate a latent task embedding $\Vec{e}_\Vec{t}$ and a set of
+weight generators $\Vec{g}^i, i=\{1...K\}$ that generate parameters for K feature
+layers in $\mathcal{F}$ conditioned on $\Vec{e}_\Vec{t}$. 
+
+We now present details of the weight generation scheme for the feature layers in 
+$\mathcal{F}$. 
+The feature layers that produce the task aware feature embeddings (TAFE) can either be convolutional layers or fully-connected (FC) layers. 
+As noted by Bertinetto~\etal~\cite{bertinetto2016learning}, the 
+number of weights that must be estimated by the meta-learner is often much larger than the task specifications and can therefore be difficult to learn from a small number of example tasks.
+To ensure meta learner generalizes effectively, we propose a weight 
+factorization scheme along the output dimension of each FC layer and 
+the output channel dimension of a convolutional layer.
+This is distinct form the low-rank decomposition used in prior meta-learning works~\cite{bertinetto2016learning}. 
+The channel-wise factorization builds on the intuition 
+that channels of a convolutional layer
+may have different or even orthogonal functionality. 
+Given an input tensor $\Vec{x}^i\in \mathbb{R}^{w\times h\times c_\text{in}}$ for
+the $i\text{-th}$ feature layer in $\mathcal{F}$ whose weight is $\Vec{W}^i \in\mathbb{R}^{k\times k\times c_\text{in}\times c_\text{out}}$ 
+($k$ is the filter support size and $c_\text{in}$ and $c_\text{out}$ are 
+the number of input and output channels) and bias is  $\Vec{b}^i\in\mathbb{R}^{c_\text{out}}$, the output $\Vec{x}^{i+1}\in \mathbb{R}^{w'\times h'\times c_\text{out}}$ of the convolutional layer is given
+by 
+\begin{equation}
+    \Vec{x}^{i+1} = \Vec{W}^i * \Vec{x}^{i} + \Vec{b}^{i},
+\end{equation}
+where $*$ denotes convolution. Without loss of generality, we remove the bias term of the convolutional layer as it is often followed by the batch normalization~\cite{ioffe2015batch}. $\Vec{W}^i = \Vec{g}^i(\Vec{t})$ is
+the output of the $i\text{-th}$ weight generator in $\mathcal{G}$.  
+We decompose the 
+weight $\Vec{W}^i$ into 
+\begin{equation}
+\Vec{W}^i=\Vec{W}^i_\text{sr} *_{c_{\text{out}}} \Vec{W}^i_\text{ts},
+\end{equation}
+where $\Vec{W}^i_\text{sr}\in\mathbb{R}^{k\times k \times c_\text{in}\times c_\text{out}}$ is a shared parameter aggregating all tasks $\{\Vec{t}_1, ...\Vec{t}_N\}$ and $\Vec{W}_\text{ts}\in\mathbb{R}^{1\times1\times c_\text{out}}$
+is a task-specific parameter depending on the current task input.
+$*_{c_\text{out}}$ denotes the grouped convolution along the output channel dimension,
+i.e. each channel of $x*_{c_\text{out}} y$ is simply the convolution of the corresponding channels in $x$ and $y$. 
+
+\minisection{Weight factorization for FCs}. 
+Similar to the factorization of the convolution weights,
+the FC layer weights $\Vec{W}^i\in\mathbb{R}^{m\times n}$ can be decomposed into 
+\begin{equation}
+    \Vec{W}^i = \Vec{W}^i_\text{sr} \cdot \text{diag}(\Vec{W^i_\text{ts}}),
+\end{equation}
+where $ \Vec{W}^i_\text{sr}\in\mathbb{R}^{m\times n}$ is the shared parameters for
+all tasks and $\Vec{W}^i_\text{ts}\in\mathbb{R}^{n}$ is the task-specific parameter.
+
+With such factorization, the weight generators only need to generate the 
+task-specific parameters for each task in lower dimension and learn one set of
+parameters in high dimension shared across all tasks. 
+
+\subsection{Embedding Loss for Meta Learner}
+The number of task specifications used for training the
+task-aware meta learner is usually much smaller than the number of images available
+for training the prediction network. The data scarcity issue may lead to a 
+corrupted meta learner. We, therefore, propose to add a secondary \textit{embedding
+loss}$\mathcal{L}_\text{emb}$ for the meta learner alongside the standard classification loss $\mathcal{L}_\text{cls}$ used for the 
+prediction network. The overall objective is then defined as 
+\begin{equation}
+    \min_{\theta, \eta} \mathcal{L} = \min_{\theta, \eta} \mathcal{L}_\text{cls}
+    + \beta \cdot \mathcal{L}_\text{emb},
+\end{equation}
+where $\beta$ is the hyper-parameter to balance the two terms. We use $\beta$
+as 0.1 in our experiments if not specified. 
+
+The idea is to project the latent task embedding $\mathcal{T}(t)$ into a
+joint embedding space with the task-aware feature embedding (TAFE). We adopt a metric learning approach that for positive inputs of a
+given task, 
+the corresponding TAFE is 
+closer to the task embedding while for negative inputs, the corresponding TAFE is
+far from the task embedding as illustrated in Figure~\ref{fig:tafe}.
+
+We use hinged cosine similarity as the distance measurement  
+(i.e. $\mathcal{D}(p, q) = \max(\texttt{cosine\_sim}(p, q), 0)$)  and a regression
+loss defined as 
+\begin{equation}
+    \mathcal{L}_\text{emb} =\frac{1}{TS} \sum_i^T\sum_j^S{||\mathcal{D}(\text{TAFE}(\Vec{x}_j; \vec{t}_i), \mathcal{T}(\vec{t}_i)) - \Vec{q}_{i,j}||_2^2},
+\end{equation}
+where $\Vec{x}_j$ is the $j\text{-th}$ sample in the dataset, $\Vec{t}_i$ is 
+the $i\text{-th}$ task and $\Vec{q}_{i,j}$ is 1 if $\mathcal{F}(\Vec{x}_j; \Vec{t})_i$ predicts positive and 0 otherwise.
+$T$ and $S$ is the total number of task descriptions and input samples respectively.
+
+We find in experiments this additional supervision helps training the meta learner
+especially under the case where the number of training tasks is extremely limited. 
+
+An interesting usage of task aware feature embeddings is to adapt the feature embedding to the input image itself.  
+Moreover, the image that we are trying to classify provides some hints as to what is likely a good embedding for classifying that image.
+For example, having a hint as to the likely prediction or a high-level category is a form of task specifications that can inform the choice of image embedding.
+
+
+In this work we also explore the use of task aware feature embeddings as a mechanism to construct more compact feature embeddings for traditional classification tasks.
+We find that with simple sparse constraints on the weight generator, our model can be used to construct a unique thin embedding network for each input image with only minimal loss in prediction accuracy.
+
+In this setting, the task embedding network $\mathcal{T}$ takes the image as the input and outputs a probabilistic assignment to the pre-defined tasks. 
+That is to say, the embedding loss of the meta learner is defined using the cross-entropy loss with sparse constraints over the output of the weight generators ($K$ is the number of feature layers in the prediction network):
+\begin{equation}
+    \mathcal{L}_\text{emb} = \frac{1}{S}\sum_j^S \texttt{CE}(\mathcal{T}(\Vec{x}_j), \Vec{y}_j) + \frac{1}{K}\sum_i^K||\Vec{g}^i(\mathcal{T}(\Vec{x}_j))||_1.
+    \label{eq:ef_emb}
+\end{equation}
+
+This soft assignment can be regarded as a task description for the image at hand. 
+The computation for feature embedding can be reduced with the information from the meta network, since we can use the task description to decide which channels in each layer are related to the tasks of interest and which are not. To remove the irrelevant channels, we pass each of the generated parameters through a {\tt ReLU} non-linearity.
+If a parameter is 0, we don't have to compute the activation map for that channel because all the parameters can be generated before any computation in feature network. 
+This is similar to model cascading~\cite{wang2017idk} if the meta and feature networks are both treated as making predictions. 
+But in our case, the shallow network also generates weights for the more computation intensive network.
+
+\subsection{Model Configurations}
+We now describe the network configurations. In
+our work, we consider three types of task specifications: semantic representation
+in a vector format (e.g. word2vec~\cite{mikolov2013efficient} of the class labels),
+image features extracted from pre-trained models (the spacial dimension is collapsed) and raw images. For the first two cases detailed in Section~\ref{sec:exp},
+the task embedding network $\mathcal{T}$ is a three-layer FC network with hidden unit size of 2048 except 
+for the aPY dataset~\cite{farhadi2009describing} where we choose  $\mathcal{T}$ as a 2-layer FC network with the same hidden size to avoid overfitting. The weight generator $
+\Vec{g}^i$ is a single FC layer with the output dimension same as the output dimension
+of the corresponding feature layer in $\mathcal{F}$. To enable efficient inference,
+we just add a \texttt{ReLU} to the output of $\Vec{g}^i$. In the case where raw
+images are used as inputs, $\mathcal{T}$ is configured as a 5-layer convolutional
+network with $3\times3$ kernels following the feature down-sampling schedule of
+ResNets~\cite{he2016deep}. 
+
+For the prediction network, the TAFE is generated through a 3-layer FC
+network with the hidden size of 2048 if image features are extracted from pre-trained
+models and used as the input of the prediction network (on the aPY dataset, 
+we use a 1024-1024-1024-2048 FC network to avoid overfitting). If raw images 
+are used as the input, we will modify the backbone prediction network (e.g. VGG-16~\cite{simonyan2014very} and ResNet-50~\cite{he2016deep}) to generate the TAFE detailed in Section~\ref{sec:efficient_inference}.
+
+\newcommand{\controlmodel}{controller\xspace}\newcommand{\controlmodelplural}{controllers\xspace}\section{Experiments}\label{sec:exp}% We first showcase the performance improvement of \model on generalized zero-shot learning. 
+We first conduct experiments using five zero-shot learning benchmark datasets: SUN%~\cite{xiao2010sun}
+, CUB%~\cite{welinder2010caltech}
+, AWA1, %~\cite{lampert2009learning}, 
+AWA2 %~\cite{xian2018zero}
+and aPY %~\cite{farhadi2009describing} 
+following the generalized zero-shot learning setting proposed by Xian~\etal~\cite{xian2018zero}. We also provide results on the more 
+challenging visual attributes composition task proposed by Misra~\etal~\cite{misra2017red} on both
+MITStates~\cite{StatesAndTransformations} and StanfordVRD~\cite{lu2016visual} datasets. Our model surpasses the 
+state-of-the-art methods by a significant margin. We also evaluate the model on the few-shot learning and the 
+dynamic model sparsification tasks on the CIFAR and ImageNet 
+benchmarks and our model matches or exceed the prior works. 
+
+The GZSL setting proposed by Xian~\etal ~\cite{xian2018zero} is more realistic compared to the conventional zero-shot 
+learning which involves classifying test examples from both seen and unseen classes, with no
+prior distinction between them. We compare our model with 
+two lines of prior work in our experiments: (1) discriminative baselines~\cite{zhang2017learning, yang2018learning}% \joey{need more references}
+which focus on mapping the images into a rich semantic embedding space, and (2) generative models~\cite{xian2018feature,verma2017generalized}%go ahead% \joey{need more references gans papers}
+that tackle the data
+scarcity problem by generating synthetic images for the unseen classes using a GAN~\cite{goodfellow2014generative, zhu2017unpaired} based
+approach. 
+Our work falls into the first category of research but we demonstrate in 
+Table~\ref{tab:zs_1}
+that our approach is still competitive to the generative models with additional training data.
+
+\minisection{Datasets and evaluation metrics}. Following prior works~\cite{zhang2016zero, frome2013devise, akata2016label, akata2015evaluation}, 
+we conduct our experiments on 5 benchmark datasets (Table~\ref{tab:datasets}). We follow the evaluation metrics proposed by Xian~\etal~\cite{xian2018zero} to report the per class top-1 accuracy of both unseen $acc_u$ and seen classes $acc_s$ and the harmonic mean $H = 2 \times (acc_u \times acc_s)/(acc_u+acc_s)$. 
+
+\minisection{Training details}. We set the batch size to 32 and use Adam~\cite{kingma2014adam} as
+the optimizer with the initial learning rate of $10^{-4}$ for the prediction network and weight generators, and $10^{-5}$ for the task embedding network. 
+We reduce the learning rate by 10$\times$ at epoch 30 and 45, and
+train the network for 60 epochs. For AWA1, we train the network for 10 epochs and reduce the learning rate by 10$\times$ at epoch 5. 
+
+\begin{table}[h]
+\small
+\centering
+\caption{Datasets used in GZSL}
+\vspace{-1em}
+\addtolength{\tabcolsep}{-1pt}
+\label{tab:datasets}
+\adjustbox{width=\linewidth}{
+\begin{tabular}{@{}cccccc@{}}
+\toprule
+Dataset            & SUN   & CUB   & AWA1   & AWA2   & aPY    \\ \midrule
+No. of Images      & 14,340 & 11,788 & 30,475  & 37,322  & 15,339  \\
+Attributes Dim.  & 102   & 312   & 85     & 85     & 64     \\
+$\mathcal{Y}$      & 717   & 200   & 50     & 50     & 32     \\
+$\mathcal{Y}^{seen}$ & 645   & 150   & 40     & 40     & 20     \\
+$\mathcal{Y}^{unseen}$ & 72    & 50    & 10     & 10     & 12     \\
+Granularity        & fine  & fine  & coarse & coarse & coarse \\ \bottomrule
+\end{tabular}}
+\end{table}\minisection{Quantitative results}. We first report the performance of our \model w/o the proposed embedding loss in Table~\ref{tab:zs_1} compared to the non-generative models. Our best performing models surpass 
+ the prior models by a significant margin with an improvement of roughly 16 points on AWA1 and 17 points on aPY.
+ For the more challenging fine-grained SUN and CUB datasets, we are able to improve the results by 7 and 2 
+ points. Compared to the more recent approaches~\cite{zhang2017learning, yang2018learning}, our models have higher accuracy in the unseen classes which leads to the boost in the harmonic mean. 
+
+As an alternative approach to address the GZSL problem, Several~\cite{xian2018feature, verma2017generalized} propose to generate synthetic 
+images of the unseen classes conditioned on the class attributes with variants of GAN models~\cite{gan_goodfellow}. We show
+the comparison of our model with these generative models in Table~\ref{tab:zs_1}. Our model matches or outperforms the
+baseline generative models on both CUB and AWA1 datasets without using additional training data. 
+This indicates that better embedding learning may be more beneficial than the synthetic data generation. 
+However, task aware embeddings and data generation are complementary and could be combined to further improve accuracy.
+    \centering
+    \begin{subfigure}[t]{.8\linewidth}
+        \centering
+        \includegraphics[width=\linewidth]{figs/figs_r/zebra.pdf}
+    \end{subfigure}%
+    \\
+    \vspace{2em}
+    \begin{subfigure}[t]{.8\linewidth}
+        \centering
+        \includegraphics[width=\linewidth]{figs/figs_r/donkey.pdf}
+    \end{subfigure}
+    \caption{Task-aware Image Feature Embedding projected into two dimensions using t-SNE~\cite{tsne} for two tasks (Zebra and Donkey). Note that changing the task produces different embeddings for the same data.}
+    \label{fig:tafe-vis}
+\end{figure}\begin{table*}[t]
+\small
+\addtolength{\tabcolsep}{-1pt}
+\centering
+\caption{Evaluate \model on five standard benchmarks under generalized zero-shot learning setting. Models with $^\dagger$ (f-CLSWGAN and SE) generate additional data for training while the remaining models do not.  Our model is better than all models without
+additional data and also competitive compared to models with additional synthetic data.}
+\label{tab:zs_1}
+\adjustbox{width=\linewidth}{
+\begin{tabular}{@{}lccc|ccc|ccc|ccc|ccc@{}}
+\toprule
+\multirow{2}{*}{Method} & \multicolumn{3}{c|}{SUN} & \multicolumn{3}{c|}{CUB} & \multicolumn{3}{c|}{AWA1} & \multicolumn{3}{c|}{AWA2} & \multicolumn{3}{c}{aPY} \\
+                        & u  & s  & H     & u   & s  & H     & u   & s   & H     
+                        & u   & s   & H     & u   & s     & H  \\ \midrule
+LATEM~\cite{zhang2016zero}                   & 14.7    & 28.8  & 19.5  & 15.2     & 57.3  & 24.0  & 7.3      & 71.7   & 13.3  & 11.5     & 77.3   & 20.0  & 0.1 & 73.0  & 0.2   \\
+ALE~\cite{akata2016label}                    & 21.8    & 33.1  & 26.3  & 23.7     & 62.8  & 34.4  & 16.8     & 76.1   & 27.5  & 14.0     & 81.8   & 23.9  & 4.6      & 73.7  & 8.7   \\
+DeViSE\cite{frome2013devise}                  & 16.9    & 27.4  & 20.9  & 23.8     & 53.0  & 32.8  & 13.4     & 68.7   & 22.4  & 17.1     & 74.7   & 27.8  & 4.9      & 76.9  & 9.2   \\
+SJE~\cite{akata2015evaluation}                     & 14.7    & 80.5  & 19.8  & 23.5     & 59.2  & 33.6  & 11.3     & 74.6   & 19.6  & 8.0      & 73.9   & 14.4  & 3.7      & 55.7  & 6.9   \\
+SYNC ~\cite{Changpinyo_2016_CVPR}                  & 7.9     & 43.3  & 13.4  & 11.5     & 70.9  & 19.8  & 8.9      & 87.3   & 16.2  & 10.0     & 90.5   & 18.0  & 7.4      & 66.3  & 13.3  \\
+DEM~\cite{zhang2017learning} & 20.5 & 34.3 & 25.6 & 19.6 & 57.9 & 29.2 & 32.8 & 84.7 & 47.3 & 30.5 & 86.4 & 45.1 & 11.1 & 75.1 & 19.4 \\
+RelationNet~\cite{yang2018learning} & - & - & - & 38.1 & 61.1 & 47.0 & 31.4 & 91.3 & 46.7 & 30.0 & 93.4 & 45.3 & - & - & - \\
+\midrule
+f-CLSWGAN$^\dagger$~\cite{xian2018feature} &-&-&-& 57.7 & 43.7 & \textbf{49.7}&
+61.4 & 57.9 & 59.6 &-&-&-& -&-&- \\
+SE$^\dagger$~\cite{verma2017generalized} &-&-&-& 53.3 & 41.5 & 46.7 
+& 67.8 & 56.3 & 61.5  &-&-&-& -&-&- \\
+\midrule
+\model* & 27.7 & 41.1 & \textbf{33.1} & 36.5 & 60.0 & 45.4 & 46.1 & 81.4 & 58.8 & 31.9 & 91.2 & 47.2 & 19.4 & 71.3 & 30.5 \\
+\model & 27.9 & 40.2 & 33.0 & 41.0 & 61.4 & 49.2 & 50.5 & 84.4 & \textbf{63.2} & 36.7 & 90.6 &\textbf{52.2} & 24.3 & 75.4 & \textbf{36.8}\\
+\bottomrule
+\end{tabular}}
+\end{table*}% \begin{table}[ht]% \centering% \small% \caption{Compare \model with models trained with additional generated features. Our model is still competitive even without additional synthetic data.}% \begin{tabular}{@{}lccc|ccc@{}}% \toprule% \multirow{2}{*}{Method} & \multicolumn{3}{c|}{CUB} & \multicolumn{3}{c}{AWA1} \\%   & u   & s  & H     & u   & s   & H  \\ \midrule% f-CLSWGAN~\cite{xian2018feature} & 57.7 & 43.7 & \textcolor{red}{\textbf{49.7}} & 61.4 & 57.9 & 59.6 \\% SE~\cite{verma2017generalized} & 53.3 & 41.5 & 46.7 & 67.8 & 56.3 & \textcolor{blue}{61.5} \\% \midrule% \model & 41.0 & 61.4 & \textcolor{blue}{49.2} & 50.5 & 84.4 & \textcolor{red}{\textbf{63.2}}\\% \bottomrule% \end{tabular}% \label{tab:compare_with_additional_features}% \end{table}\minisection{Embedding loss ablation}. We provide numbers for our model w/o the embedding loss in
+Table~\ref{tab:zs_1}. 
+In general, models with the embedding loss have stronger performance than those 
+without the embedding loss except for the SUN dataset whose number of
+categories is about $3-22\times$ larger than the other datasets.  This observation matches our assumption
+that the additional supervision on the joint embedding better addresses the data scarcity issue (i.e. fewer
+class descriptions than the visual inputs) of training the controller model. 
+
+\minisection{Embedding visualization.}
+In Figure~\ref{fig:tafe-vis}, we visualize the task-aware feature embeddings 
+of images from the aPY dataset. As we can see, image embeddings are projected 
+into different clusters conditioned on the task specification. 
+
+\subsection{Unseen Visual-attribute Composition}
+Besides the standard zero-shot learning benchmarks, we evaluate our model in the visual-attribute composition task proposed by Misra~\etal~\cite{misra2017red}. The goal is to compose a set of visual concept primitives like attributes 
+and objects (e.g. \texttt{large elephant, old building,} etc.) to obtain new visual concepts for a given image. We see this task as a more challenging ``zero-shot'' learning task which requires the model not only to predict unseen visual concept compositions but model the contextuality of the concepts. 
+
+\minisection{Datasets and evaluation metrics}. We conduct the experiments on two
+datasets: MITStates~\cite{StatesAndTransformations} and
+the modified StanfordVRD~\cite{lu2016visual}. The setup is the same as Misra~\etal~\cite{misra2017red}.
+Each image in the MITStates dataset is assigned a pair of (attribute, object) as
+its label. The model is trained on 34K images with 1,292 label pairs and tested on
+19K images with 700 unseen pairs. The second dataset is constructed based on 
+the bounding boxes annotations of the StanfordVRD dataset. Each sample has an SPO (subject, predicate, object)
+tuple as the ground truth label.  The dataset has 7,701 SPO tuples and 1,029 of them
+are seen only in the test split. We evaluate our models only on examples with unseen
+labels. We extract the image features with
+pre-trained models on ImageNet. We use ResNet-101~\cite{he2016deep} as our main
+feature extractor and also test features extracted 
+with ResNet-18~\cite{he2016deep}, VGG-16/19~\cite{simonyan2014very} for ablation. 
+For the task specifications, we concatenate the word embeddings of the attributes
+and objects with word2vec~\cite{mikolov2013efficient} trained with GoogleNews. We
+also consider one-hot encoding for the task id in the ablation. 
+
+For evaluation metrics, we report the mean Average Precision (mAP) of images 
+with unseen labels in the test set together with the top-$k$ accuracy where
+$k=1,2,3$. We follow the same training schedule as that used in GZSL.
+
+\minisection{Quantitative results}. We compare our model with
+several baselines provided by Misra~\etal~\cite{misra2017red} and
+summarize the results in
+Table~\ref{tab:mit} for both MITStates and StanfordVRD
+datasets. Our model surpasses the state-of-the-art models
+with an improvement
+of more than 6 points in mAP and 4 to 15 points in top-$k$
+accuracy. Nagarajan and Grauman~\cite{nagarajan2018attrop}
+recently propose an embedding learning framework for visual-attribute composition. They report the top-1 
+accuracy of $12.0\%$ on the MITStates dataset with
+ResNet-18 features. For fair
+comparison, we use the same ResNet-18 features and obtain
+the top-1 accuracy of $15.1\%$. 
+
+
+\begin{minipage}[t]{.58\linewidth}
+   \centering
+   \captionof{table}{Evaluation on 700 unseen (attribute, object) pairs on 19K images of the MITStates Dataset and 1029 unseen SPO tuples on 1000 images of the StanfordVRD Dataset. \model improves over the baselines by a large margin.}
+   \label{tab:mit}
+   \small
+   \adjustbox{width=\linewidth}{
+    \begin{tabular}{lcccc|cccc}
+    \toprule
+    &  \multicolumn{4}{c}{MITStates} & \multicolumn{4}{c}{StanfordVRD} \\
+    \midrule
+    \multirow{2}{*}{Method} & \multirow{2}{*}{AP} &  \multicolumn{3}{c}{Top-$k$ Accuracy} & \multirow{2}{*}{AP} &  \multicolumn{3}{c}{Top-$k$ Accuracy} \\
+    &   & 1 & 2 & 3 & & 1 & 2 & 3 \\ \midrule
+    Visual Product~\cite{misra2017red} & 8.8 & 9.8 & 16.1 & 20.6 & 4.9 & 3.2 & 5.6 & 7.6 \\
+    Label Embed (LE)~\cite{misra2017red} & 7.9 & 11.2  & 17.6 & 
+    22.4 &  4.3 & 4.1  & 7.2  & 10.6  \\
+    LEOR~\cite{misra2017red} & 4.1 & 4.5  & 6.2 & 11.8 & 
+    0.9 & 1.1 & 1.3 & 1.3 \\
+    LE + R~\cite{misra2017red} & 6.7 & 9.3 & 16.3 & 20.8 &
+    3.9 & 3.9 & 7.1 & 10.4 \\
+    Red Wine~\cite{misra2017red} & 10.4  & 13.1 & 21.2 & 27.6 &
+    5.7  & 6.3 & 9.2  & 12.7 \\ \midrule
+    \model& \textbf{16.2} & \textbf{16.9} & \textbf{27.9} & \textbf{35.1} & \textbf{12.2}  & \textbf{12.3}  &\textbf{19.7} & \textbf{27.5} \\
+    \bottomrule
+    \end{tabular}}
+\end{minipage}\hfill
+\begin{minipage}[t]{.38\linewidth}
+   \centering
+   \captionof{table}{Ablation study with different task encoding and base network features. The variance of performance of \model under different settings is minimal.}
+   \label{tab:comp_ab}
+   \adjustbox{width=\linewidth}{
+   \renewcommand{\arraystretch}{1.27}% for the vertical padding
+    \begin{tabular}{lccccc}
+    \toprule
+    \multirow{2}{*}{Task Encoding} & \multirow{2}{*}{Features}  & \multirow{2}{*}{AP} & \multicolumn{3}{c}{Top-$k$ Accuracy} \\
+    &           &          & 1          & 2          & 3          \\ \midrule
+    Word2vec  & ResNet-101 & 16.2 & 17.2    & 27.8       & 35.7       \\
+    Onehot    & ResNet-101 & 16.1  & 16.1   & 26.8       & 33.8       \\
+    \midrule
+    Word2vec  & VGG16  & 16.3  & 16.4       & 26.4       & 33.0       \\
+    Onehot    & VGG16  & 16.3  & 16.4       & 25.9       & 32.5       \\
+    \midrule
+    Word2vec  & VGG19  & 15.6  & 16.2       & 26.0       & 32.4       \\
+    Onehot    & VGG19  & 16.3  & 16.4       & 26.0       & 33.1       \\
+    \bottomrule
+    \end{tabular}}
+\end{minipage}
+\end{figure*}\minisection{Ablation on the feature extractor and task specification}. We consider 
+different feature extractors (ResNet-101, VGG-16 and 19) and task encodings (word2vec and one-hot encoding) for ablation and summarize the results in Table~\ref{tab:comp_ab}. The average precision difference between different feature
+extractors are very minimal (within $0.1\%$) and the largest gap in Top-3 accuracy 
+is within $2\%$. This indicates that \model is robust in transforming the 
+generic features into task-aware feature embeddings. For the task encoding,
+the one-hot encoding is comparable to the word2vec encoding and even stronger 
+when using VGG-19 features. This shows that the task transformer network $\mathcal{T}$ is very expressive to extract rich semantic information simply from the
+task ids. 
+
+\begin{figure*}[t!]
+    \centering
+    \small
+    \adjustbox{width=\linewidth}{
+    \begin{tabular}{c | c}
+    Modern City & Ancient Town \\
+    \includegraphics[width=0.49\linewidth]{figs/figs_r/retrievals/modern_city.jpg}
+    &
+    \includegraphics[width=0.49\linewidth]{figs/figs_r/retrievals/ancient_town.jpg}
+     \\
+     Modern Clock & Ancient Clock \\
+    \includegraphics[width=0.49\linewidth]{figs/figs_r/retrievals/modern_clock.jpg}
+    &
+    \includegraphics[width=0.49\linewidth]{figs/figs_r/retrievals/ancient_clock.jpg}
+    \\
+    Sunny Valley & Sunny Creek \\
+    \includegraphics[width=0.49\linewidth]{figs/figs_r/retrievals/sunny_valley.jpg}
+    &
+    \includegraphics[width=0.49\linewidth]{figs/figs_r/retrievals/sunny_creek.jpg}
+    \\
+    \end{tabular}}
+    \caption{Top retrievals on the unseen pairs of the MITStates dataset. Our model can learn to compose new concepts from the existing attributes and objects
+    while respecting their context. The second row shows some of the failure cases.}
+    \label{fig:retrieval}
+\end{figure*}\minisection{Visualization}. 
+In Figure~\ref{fig:retrieval}, we show the top
+retrievals of unseen attribute-object pairs from the MITStates dataset. 
+Our model can learn to compose new concepts from the existing attributes and objects
+while respecting their context.
+
+Our model naturally fits the few-shot learning setting where one or few images
+of a certain category are used as the task descriptions. Unlike prior work on meta-learning 
+which experiments with few classes and low resolution images~\cite{vinyals2016matching, snell2017prototypical,finn2017model}, we evaluate
+our model on the challenging benchmark proposed by Hariharan and Girshick~\cite{hariharan2017low}. The benchmark is based on the ImageNet images and
+contains hundreds of classes that are divided into base classes and novel classes.
+At inference time, the model is provided with one or a few examples from the novel classes
+and hundreds of examples from the base classes. 
+The goal is to obtain high accuracy 
+on the novel classes without sacrificing the performance on the base classes. 
+
+\minisection{Baselines}. In our experiments, the  baselines we consider are the 
+state-of-the-art meta learning models Matching Network (MN)~\cite{vinyals2016matching}
+and Prototypical Network (PN)~\cite{snell2017prototypical}. We also compare the logistic regression (LogReg) baseline provided by Hariharan and Girshick~\cite{hariharan2017low}. Another line of research~\cite{wang2018low, hariharan2017low} for few-shot learning is to combine
+the meta-learner with a ``hallucinator'' to generate additional training data. We
+regard these works as complementary approaches to our meta-learning model. 
+
+\begin{table}[t]
+\centering
+\small
+\caption{Few-shot ImageNet Classification on ImageNet. Our model
+is competitive compared to the state-of-the-art meta learning model
+without hallucinator.}
+\label{tab:few-shot}
+\begin{tabular}{@{}l|cc|cc@{}}
+\toprule
+Method & \multicolumn{2}{c}{Novel Top-5 Acc} & \multicolumn{2}{|c}{All Top-5 Acc} \\
+ & n=1 & n=2  & n=1 & n=2  \\ 
+ \midrule
+LogReg ~\cite{hariharan2017low} & 38.4 & 51.1  & 40.8 & 49.9 \\
+PN~\cite{snell2017prototypical} & 39.3 & 54.4  &  49.5 & 61.0 \\
+MN~\cite{vinyals2016matching} &  43.6 & 54.0  &  54.4 & 61.0  \\
+\midrule
+\model & 43.0 & 53.9 & \textbf{55.7} & \textbf{61.9} \\
+\midrule\midrule
+LogReg w/ Analogies~\cite{hariharan2017low} & 40.7 & 50.8 & 52.2 & 59.4 \\
+PN w/ G ~\cite{wang2018low} & 45.0 & 55.9 & 56.9 & 63.2 \\ 
+\bottomrule
+\end{tabular}%
+\vspace{-1em}
+\end{table}\minisection{Experiment details}. We follow the prior works~\cite{hariharan2017low, wang2018low} to run five trials for each setting of n (the number of examples per
+novel class, n = 1 and 2 in our experiments) on the five different data splits and report the average top-5 accuracy of both
+the novel and all classes. We use the features trained with ResNet-10 using SGM
+loss provided by Hariharan and Girshick~\cite{hariharan2017low} as inputs. 
+For training, we sample 100
+classes in each iteration and use SGD with momentum of 0.9 as the optimizer. The
+initial learning rate is set to 0.1 except for the task embedding network (set to
+0.01) and the learning rate is reduced by 10$\times$ every 8k iterations.
+The model is trained for 
+30k iterations in total. Other hyper-paramters are set to the same as Hariharan and Girshick~\cite{hariharan2017low} if not mentioned.
+
+\minisection{Quantitative results}. As shown in Table~\ref{tab:few-shot}, our
+model is on par with the state-of-the-art meta learning models in the 
+novel classes while outperforming them in all categories. Attaching a ``hallucinator'' to the meta learning model improves performance in
+general. Our model can be easily attached with a hallucinator and we leave
+the detailed study as future work due to the time constraint. 
+
+\subsection{Efficient Inference in Data-Rich Classification}\label{sec:efficient_inference}
+As noted in Section~\ref{sec:shallow_emb_as_task}, the task embedding
+network and the feature embedding network can share the same input image. 
+In this case, the shallow embedding of the input image can be treated as a
+``task''and conditioned on it, and the weight generator network generates weights that
+are customized for the given input. Adding additional sparse constraints to 
+the generated weights, our model can be used to selectively sparsify the channels
+of the convolutional layers of the prediction network on a per-input basis. This
+is in line with prior works~\cite{lin2017runtime, luo2017thinet, he2017channel} on channel pruning and we demonstrate that with a slight
+change in the weight generator (adding sparsity constraints), our model is 
+competitive with or beats existing work on model 
+sparsification. 
+
+\minisection{Baselines}. The closest baseline is the runtime neural pruning (RNP) 
+proposed by Lin~\etal~\cite{lin2017runtime}, which dynamically prunes the channels
+of the subsequent convolutional layers based on the previous layer outputs. We
+compare with RNP on the CIFAR-100~\cite{krizhevsky2009learning} dataset using VGG-16 as the backbone following the setting as Lin~\etal~\cite{lin2017runtime}. We also
+consider state-of-the-art static channel pruning works~\cite{he2017channel, luo2017thinet,huang2017data, li2016pruning}, with ResNet-50 on the 
+ImageNet-2012~\cite{russakovsky2015imagenet} dataset.
+
+\minisection{Sparse weight generation for residual blocks}. For the bottleneck residual block used in ResNet-50~\cite{he2016deep} which has 3 convolutional layers with the kernel filter
+size of 1, 3 and 1, we only generate sparse
+weights for the middle convolutional layer which is the computation bottleneck and share the weights of the first and last layer across inputs.
+
+networks. For ImageNet, we train the network with the initial learning rate of 0.1 for 100 epochs and reduce it by 10$\times$ every 30 epochs.
+
+\minisection{Quantitative results}. We summarize our comparison with the baselines 
+in Figure~\ref{fig:rnp} and Table~\ref{tab:resnet-50-imagenet}. Our approach outperforms
+the previous baselines to achieve higher accuracy with lower runtime computation measured in floating point operations per second (FLOPs). 
+
+\begin{figure}[t]
+    \centering
+    \adjustbox{width=\linewidth}{
+    \includegraphics[width=\linewidth]{figs/cifar_v2.pdf}}
+    \vspace{-2em}
+    \caption{Comparison of \model and RNP with VGG-16 on CIFAR-100. Our model outperforms RNP under different accuracy and computation trade-off.  $\beta$ controls the amount of the L1 regularization in Equation~\ref{eq:ef_emb}.}
+    \label{fig:rnp}
+\end{figure}\begin{table}[t]
+\small
+\centering
+\caption{Pruned ResNet-50 on ImageNet. Top-1/5 error rate and
+computation FLOPs are reported. Our model achieves lower
+error rate with lower computational cost.}
+\label{tab:resnet-50-imagenet}
+\adjustbox{width=\linewidth}{
+\begin{tabular}{l|cccc}
+\toprule
+Model  & Top-1 & Top-5 &  FLOPs(x$10^9$) & Reduct.(\%) \\
+\midrule
+SSS~\cite{huang2017data} & 26.8 & - & 3.0 & 20.3 \\
+Li et al.~\cite{li2016pruning} & 27.0 & 8.9 & 3.0 & 19.0 \\
+He et al.~\cite{he2017channel} & - & 9.2 & 1.9 & 50.0 \\
+ThiNet~\cite{luo2017thinet} & 29.0 & 10.0 & 1.7 & 55.8 \\
+\midrule
+\model & \textbf{26.2} & \textbf{8.4} & \textbf{1.6} & \textbf{56.8} \\
+\bottomrule
+\end{tabular}}
+    \vspace{-1em}
+\end{table}% \paragraph{Training} % To train \model we follow common training practices~\cite{he2016deep, yu2017deep}. % For the CIFAR datasets, we start training with learning rate 0.1 for ResNet and 0.01 for VGG16, which is reduced by $10\times$ at 150 and 250 epochs with total 350 epochs for the baselines and 270 epochs for \model joint optimization stage and another 80 epochs for fine-tuning with fixed gating networks.% For ImageNet, % we train the network% with initial learning rate 0.1 for 100 epochs and reduce it by 10$\times$ every 30 epochs. % We do not further fine-tune the base convolutional network on ImageNet as we find the improvement from fine-tuning is marginal compared to that on CIFAR datasets.% We set the computational cost parameter $\lambda$ in the \model loss function (Eq.~\ref{equ:objective})% between [0.001, 8] (larger values reduce computation more).% We set $\mu = 1$ % for the CIFAR datasets to match the scale of the cross entropy loss on the base model. For ImageNet we set $\mu=0$ to improve base model feature extraction.% % Please add the following required packages to your document preamble:% % \usepackage{booktabs}% \begin{table}[]% \centering% \begin{tabular}{@{}c|cc@{}}% \toprule% Method               & Top-1 Error & FLOPs (x$10^8$) \\ \midrule% Li et al.\ ICLR 2017 & 8.50        & 0.63            \\% He et al.\ ICCV 2017 & 8.20        & 0.63            \\% \model               & 7.24        & 0.58            \\% \model               & 7.19        & 0.63            \\ \midrule% Li et al.\ ICLR 2017 & 6.94        & 0.91            \\% \model               & 7.00        & 0.70            \\% \model               & 6.80        & 0.78            \\% \model               & 6.40        & 0.89            \\ \midrule% Li et al.\ ICLR 2017 & 6.90        & 1.12            \\% \model               & 6.24        & 1.09            \\ \midrule% ResNet-56            & 6.33        & 1.25            \\% \model               & 6.16        & 1.23            \\ \bottomrule% \end{tabular}% \caption{\model \emph{vs} static pruning on ResNet-56 on CIFAR-10.}% \end{table}% % Please add the following required packages to your document preamble:% % \usepackage{booktabs}% \begin{table}[]% \centering% \begin{tabular}{@{}ccc@{}}% \toprule% Method               & Top-1 Error & FLOPs (x$10^8$) \\ \midrule% Li et al.\ ICLR 2017 & 6.70        & 1.54            \\% \model               & 6.76        & 1.13            \\% \model               & 6.20        & 1.37            \\ \midrule% Li et al.\ ICLR 2017 & 6.45        & 2.10            \\% ResNet-110           & 5.80        & 2.50            \\% \model               & 5.82        & 2.09            \\ \bottomrule% \end{tabular}% \caption{\model \emph{vs} static pruning on ResNet-110 on CIFAR-10.}% \end{table}% Please add the following required packages to your document preamble:% \usepackage{booktabs}% \begin{table}[]% \centering% \small% \caption{\model \emph{vs} RPN on VGG on CIFAR-100.\xin{convert this back to a plot?}}% \label{rnp}% \begin{tabular}{@{}ccc@{}}% \toprule% Method                  & Top-1 Error (\%) & FLOPs ($\times 10^8$) \\ \midrule% RNP                     & 40.80       & 0.38            \\% RNP                     & 39.66       & 0.87            \\% \model without finetune & 37.64       & 0.41            \\% \model                  & \textbf{32.91}       & \textbf{0.41}            \\ \midrule% RNP                     & 37.89       & 1.64            \\% \model without finetune & 32.33       & 1.45            \\% \model                  & \textbf{28.15}       & \textbf{1.45}            \\ \midrule% RNP                     & 35.98       & 3.13            \\% \model without finetune & 32.16       & 1.93            \\% \model without finetune & 31.25       & 2.28            \\% \model without finetune & 31.81       & 3.13            \\% \model      & \textbf{27.22}       & \textbf{1.93} \\% \model with finetune    & 27.17       & 2.28            \\ % \bottomrule% \end{tabular}% \end{table}
+\section{Conclusion}
+In this work, we explored a meta learning based approach to generate task aware feature embeddings for settings with little or no training data.
+We proposed TAFE-Net, a network that generates task aware feature embeddings (TAFE) conditioned on the given task descriptions.
+\model is composed of a task-aware 
+meta learner that generates weights for the feature embedding layers in a standard prediction network.
+To address the challenges in training the meta learner, we introduced two key
+innovations: (1) adding an additional embedding loss to improve the generalization of the meta learner; (2) a novel weight factorization
+scheme to generate parameters of the prediction network more effectively. 
+We demonstrated the general applicability of the proposed network design on a range of applications including zero/few shot learning and dynamic
+efficient prediction, and exceeded or matched the state-of-the-art on most applications. 
+
+
+
+
+
+{\small
+\bibliographystyle{ieee}
+\bibliography{references}
+}
+
+
+\end{document}
+
+

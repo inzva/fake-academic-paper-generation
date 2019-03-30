@@ -8,7 +8,7 @@ import time
 
 tf.enable_eager_execution()
 
-filePath = 'dataset_generation/papers/whole_data.txt'
+filePath = 'dataset/preprocessed_data.txt'
 
 # Read, then decode for py2 compat.
 text = open(filePath, 'rb').read().decode(encoding='utf-8')
@@ -83,15 +83,15 @@ vocab_size = len(vocab)
 embedding_dim = 256
 
 # Number of RNN units
-rnn_units = 1024
+rnn_units = 2048
 
 if tf.test.is_gpu_available():
-    rnn = tf.keras.layers.GRU
+    rnn = tf.keras.layers.CuDNNLSTM
 else:
     import functools
 
     rnn = functools.partial(
-        tf.keras.layers.GRU, recurrent_activation='sigmoid')
+        tf.keras.layers.LSTM, recurrent_activation='sigmoid')
 
 
 def build_model(vocab_size, embedding_dim, rnn_units, batch_size):
@@ -200,4 +200,4 @@ def generate_text(model, start_string):
     return (start_string + ''.join(text_generated))
 
 
-print(generate_text(model, start_string=u"ROMEO: "))
+print(generate_text(model, start_string=u"\\documentclass{"))

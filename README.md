@@ -12,7 +12,18 @@ mechanism [2]. We also want to try GANs to generate realistic LaTeX code. [3]
 
 ## Dataset
 
-To be explained
+Dataset is needed to be preprocessed because of noise such as created by comments and non-UTF characters. Therefore, we used _preprocess_char.py_ to delete comments and characters that used below a certain threshold, in our experiments it is 100. 
+
+For our baseline model, we decided to use character level embedding. The details of the preprocessed char-based dataset is given below.
+
+|         **Feature**         |  **Value** |
+|:------------------------------:|:----------:|
+| # of Unique Token              |     102    |
+| # of Token                     | 37,921,928 |
+| Lower to Upper Case Ratio |    23.95   |
+| Non-word to Word Ratio         |    3.17    |
+
+Further information about contents of dataset will be explained...
 
 ## Project Dependencies
 

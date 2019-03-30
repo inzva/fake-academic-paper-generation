@@ -17,25 +17,25 @@ To the best of our knowledge there was no available dataset compiled from academ
 
 All scripts related to the dataset preparation can be found in the **dataset_generation** directory.
 
-Steps for the dataset preparation:
-#### Select a subset of academic papers on arxiv.org  
+#### Steps for the dataset preparation:
+##### 1) Select a subset of academic papers on arxiv.org  
 We selected Computer Vision as the topic of interest for the dataset. Therefore, we crawled arxiv.org to find papers tagged as Computer Vision between 2015 - 2018. (BeautifulSoup is used as html parser)
 
 related scripts: 
 * **dataset_generation/crawler.py** (crawles arxiv.org as specified and writes the result to **paperlinks.txt**)
 * **dataset_generation/random_paper_sampler.py** (samples examples from **paperlinks.txt** and writes the result to **selected_papers.txt**)
 
-#### Download the source files
+##### 2) Download the source files
 We downloaded the source files as tar files for the selected papers and untar/unzip them.
 
 related script: **dataset_generation/downloader.py** (reads selected papers from **selected_papers.txt**, downloads the source files and untar/unzip them)
 
-#### Find the latex source files for each paper and Compile each paper into one latex file
+##### 3) Find the latex source files for each paper and Compile each paper into one latex file
 We resolved \include, \input kind of import statements in latex source files in order to compile each paper into one latex file and wrote a latex file for each paper. 
 
 related script: **dataset_generation/latex_input_resolver.py** (Finds the latex files from the source files, reads the content using TexSoup, finds the root files(files including documentclass statement), recursively replaces the import statements with the content of the imported file, and writes a latex file for each paper.)
 
-other helper scripts:
+##### other helper scripts:
 * **dataset_generation/complete_dataset.py** (kind of combination of all these scripts which finds problematic source files and replaces them with other papers from the **paperlinks.txt**)
 * **dataset_generation/renumber_paper.py** (renames the papers like 0.tex, 1.tex, 2.tex so on)
 

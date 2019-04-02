@@ -5,8 +5,18 @@ import tensorflow as tf
 import numpy as np
 import os
 import time
+import argparse
 
 tf.enable_eager_execution()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--seq_length', type=int, default=100, help='Input sequence length given to the recurrent network')
+parser.add_argument('--recurrent_layers', type=int, default=1, help='Number of stacked recurrent layers')
+parser.add_argument('--recurrent_units', type=int, default=1024, help='Number of recurrent units in each layer')
+parser.add_argument('--embedding_dim', type=int, default=256, help='Embedding dimension')
+parser.add_argument('--epochs', type=int, default=3, help='Number of training epochs')
+parser.add_argument('--batch_size', type=int, default=64, help='Size of the training batches')
+opt = parser.parse_args()
 
 filePath = 'dataset/preprocessed_data.txt'
 
@@ -32,7 +42,7 @@ text_as_int = np.array([char2idx[c] for c in text])
 print('{} ---- characters mapped to int ---- > {}'.format(repr(text[:13]), text_as_int[:13]))
 
 # The maximum length sentence we want for a single input in characters
-seq_length = 100
+seq_length = opt.seq_length
 examples_per_epoch = len(text) // seq_length
 
 # Create training examples / targets
@@ -65,7 +75,7 @@ for i, (input_idx, target_idx) in enumerate(zip(input_example[:5], target_exampl
     print("  expected output: {} ({:s})".format(target_idx, repr(idx2char[target_idx])))
 
 # Batch size
-BATCH_SIZE = 64
+BATCH_SIZE = opt.batch_size
 steps_per_epoch = examples_per_epoch // BATCH_SIZE
 
 # Buffer size to shuffle the dataset
@@ -80,10 +90,10 @@ dataset = dataset.shuffle(BUFFER_SIZE).batch(BATCH_SIZE, drop_remainder=True)
 vocab_size = len(vocab)
 
 # The embedding dimension
-embedding_dim = 256
+embedding_dim = opt.embedding_dim
 
 # Number of RNN units
-rnn_units = 2048
+rnn_units = opt.recurrent_units
 
 if tf.test.is_gpu_available():
     rnn = tf.keras.layers.CuDNNLSTM
@@ -95,15 +105,12 @@ else:
 
 
 def build_model(vocab_size, embedding_dim, rnn_units, batch_size):
-    model = tf.keras.Sequential([
-        tf.keras.layers.Embedding(vocab_size, embedding_dim,
-                                  batch_input_shape=[batch_size, None]),
-        rnn(rnn_units,
-            return_sequences=True,
-            recurrent_initializer='glorot_uniform',
-            stateful=True),
-        tf.keras.layers.Dense(vocab_size)
-    ])
+    model = tf.keras.Sequential()
+    model.add(tf.keras.layers.Embedding(vocab_size, embedding_dim, batch_input_shape=[batch_size, None]))
+    for i in range(opt.recurrent_layers):
+        model.add(rnn(rnn_units, return_sequences=True, recurrent_initializer='glorot_uniform', stateful=True))
+    model.add(tf.keras.layers.Dense(vocab_size))
+
     return model
 
 
@@ -140,7 +147,9 @@ model.compile(
     loss=loss)
 
 # Directory where the checkpoints will be saved
-checkpoint_dir = './training_checkpoints'
+checkpoint_dir = '/mnt/apg-checkpoints/training_checkpoints_LSTM_HL_{}_HU_{}_seq_len_{}'.format(opt.recurrent_layers,
+                                                                                                opt.recurrent_units,
+                                                                                                opt.seq_length)
 # Name of the checkpoint files
 checkpoint_prefix = os.path.join(checkpoint_dir, "ckpt_{epoch}")
 
@@ -148,7 +157,7 @@ checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
     filepath=checkpoint_prefix,
     save_weights_only=True)
 
-EPOCHS = 3
+EPOCHS = opt.epochs
 
 history = model.fit(dataset.repeat(), epochs=EPOCHS, steps_per_epoch=steps_per_epoch, callbacks=[checkpoint_callback])
 

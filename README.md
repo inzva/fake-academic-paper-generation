@@ -52,10 +52,10 @@ For our baseline model, we decided to use character level embedding. The details
 
 |         **Feature**         |  **Value** |
 |:------------------------------:|:----------:|
-| # of Unique Token              |     102    |
-| # of Token                     | 37,921,928 |
-| Lower to Upper Case Ratio |    23.95   |
-| Non-word to Word Ratio         |    3.17    |
+| Number of Unique Token              |     102    |
+| Number of Token                     | 37,921,928 |
+| Lower-case to Upper-case Ratio |    23.95   |
+| Word to Non-word Ratio         |    3.17    |
 
 
 ## Project Dependencies

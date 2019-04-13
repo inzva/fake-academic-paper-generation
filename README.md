@@ -65,12 +65,25 @@ For our baseline model, we decided to use character level embedding. The details
 - TexSoup (for dataset preparation)
 - BeautifulSoup (for dataset preparation)
 
-## How to Run
+## Models
 
-##### Baseline Model
+### Baseline Model
+The rnn model described in the blog post "The Unreasonable Effectiveness of Recurrent Neural Networks"[1] 
+#### How to Run:
 After preparing the dataset, run **char-rnn.py** to train the model.
 
 When training is over, run **generate_text.py**. This script will load the last
+checkpoint and generate a number of characters using the learned parameters.
+
+### Simplified Transformer Model
+From Transformer Model [2], the parts related to translation problem is deleted.
+
+<img src="./simplified_transformer/simplified_transformer_model.png" height="400"/>
+
+#### How to Run:
+After preparing the dataset, run **simplified_transformer/simplified_transformer.py** to train the model.
+
+When training is over, run **simplified_transformer/generate_text.py**. This script will load the last
 checkpoint and generate a number of characters using the learned parameters.
 
 ## References

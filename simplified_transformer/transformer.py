@@ -6,7 +6,7 @@ from tensorflow.keras.models import *
 from tensorflow.keras.layers import *
 from tensorflow.keras.callbacks import *
 from tensorflow.keras.initializers import *
-import tensorflow.keras.backend as K
+import keras.backend as K
 
 import tensorflow as tf
 

@@ -59,6 +59,8 @@ For our baseline model, we decided to use character level embedding. The details
 
 
 ## Project Dependencies
+- Tensorflow 1.12
+- NumPy
 - TexSoup (for dataset preparation)
 - BeautifulSoup (for dataset preparation)
 
@@ -67,8 +69,6 @@ For our baseline model, we decided to use character level embedding. The details
 ### Baseline Model
 The rnn model described in the blog post "The Unreasonable Effectiveness of Recurrent Neural Networks"[1] 
 #### How to Run:
-Dependencies: NumPy, TensorFlow 1.12
-
 After preparing the dataset, run **char-rnn.py** to train the model.
 
 When training is over, run **generate_text.py**. This script will load the last
@@ -80,8 +80,6 @@ From Transformer Model [2], the parts related to translation problem is deleted.
 <img src="./simplified_transformer/simplified_transformer_model.png" height="400"/>
 
 #### How to Run:
-Dependencies: NumPy, TensorFlow 2.0
-
 After preparing the dataset, run **simplified_transformer/simplified_transformer.py** to train the model.
 
 When training is over, run **simplified_transformer/generate_text.py**. This script will load the last

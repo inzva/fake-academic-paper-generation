@@ -18,13 +18,13 @@ opt = parser.parse_args()
 import random, os, sys
 import numpy as np
 import tensorflow as tf
-tf.enable_eager_execution()
+
 
 from tensorflow.keras.models import *
 from tensorflow.keras.layers import *
 from tensorflow.keras.callbacks import *
 from tensorflow.keras.initializers import *
-import keras.backend as K
+import tensorflow.keras.backend as K
 
 from transformer import Encoder, GetPosEncodingMatrix
 
@@ -144,8 +144,9 @@ print("Prediction shape: ", example_batch_predictions.shape, " # (batch_size, se
 print("scalar_loss:      ", example_batch_loss.numpy().mean())
 
 model.compile(
-    optimizer=tf.train.AdamOptimizer(),
-    loss=loss)
+    optimizer=tf.keras.optimizers.Adam(),
+    loss=loss,
+    target_tensors=Input(shape=(None,), dtype='int32'))
 
 
 # Directory where the checkpoints will be saved

@@ -153,6 +153,10 @@ checkpoint_dir = './experiment/training_checkpoints_seq_len_{}'.format(opt.seq_l
 # Name of the checkpoint files
 checkpoint_prefix = os.path.join(checkpoint_dir, "ckpt_{epoch}")
 
+os.makedirs(checkpoint_dir, exist_ok=True)
+#RecursionError: maximum recursion depth exceeded while saving parameters
+sys.setrecursionlimit(10000)
+
 checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
     filepath=checkpoint_prefix,
     save_weights_only=True)

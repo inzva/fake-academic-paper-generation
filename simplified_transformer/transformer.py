@@ -28,21 +28,23 @@ class LayerNormalization(Layer):
 	def compute_output_shape(self, input_shape):
 		return input_shape
 
-class ScaledDotProductAttention():
-	def __init__(self, d_model, attn_dropout=0.1):
-		self.temper = np.sqrt(d_model)
-		self.dropout = Dropout(attn_dropout)
-	def __call__(self, q, k, v, mask):
-		attn = Lambda(lambda x:K.batch_dot(x[0],x[1],axes=[2,2])/self.temper)([q, k])
-		if mask is not None:
-			mmask = Lambda(lambda x:(-1e+10)*(1-x))(mask)
-			attn = Add()([attn, mmask])
-		attn = Activation('softmax')(attn)
-		attn = self.dropout(attn)
-		output = Lambda(lambda x:K.batch_dot(x[0], x[1]))([attn, v])
-		return output, attn
+class ScaledDotProductAttention(Layer):
+    def __init__(self, d_model, attn_dropout=0.1):
+        self.temper = np.sqrt(d_model)
+        self.dropout = Dropout(attn_dropout)
+        super(ScaledDotProductAttention, self).__init__()
 
-class MultiHeadAttention():
+    def __call__(self, q, k, v, mask):
+        attn = Lambda(lambda x:K.batch_dot(x[0],x[1],axes=[2,2])/self.temper)([q, k])
+        if mask is not None:
+            mmask = Lambda(lambda x:(-1e+10)*(1-x))(mask)
+            attn = Add()([attn, mmask])
+        attn = Activation('softmax')(attn)
+        attn = self.dropout(attn)
+        output = Lambda(lambda x:K.batch_dot(x[0], x[1]))([attn, v])
+        return output, attn
+
+class MultiHeadAttention(Layer):
 	# mode 0 - big martixes, faster; mode 1 - more clear implementation
 	def __init__(self, n_head, d_model, d_k, d_v, dropout, mode=0, use_norm=True):
 		self.mode = mode
@@ -113,7 +115,7 @@ class MultiHeadAttention():
 		outputs = Add()([outputs, q])
 		return self.layer_norm(outputs), attn
 
-class PositionwiseFeedForward():
+class PositionwiseFeedForward(Layer):
 	def __init__(self, d_hid, d_inner_hid, dropout=0.1):
 		self.w_1 = Conv1D(d_inner_hid, 1, activation='relu')
 		self.w_2 = Conv1D(d_hid, 1)
@@ -126,7 +128,7 @@ class PositionwiseFeedForward():
 		output = Add()([output, x])
 		return self.layer_norm(output)
 
-class EncoderLayer():
+class EncoderLayer(Layer):
 	def __init__(self, d_model, d_inner_hid, n_head, d_k, d_v, dropout=0.1):
 		self.self_att_layer = MultiHeadAttention(n_head, d_model, d_k, d_v, dropout=dropout)
 		self.pos_ffn_layer  = PositionwiseFeedForward(d_model, d_inner_hid, dropout=dropout)
@@ -135,7 +137,7 @@ class EncoderLayer():
 		output = self.pos_ffn_layer(output)
 		return output, slf_attn
 
-class DecoderLayer():
+class DecoderLayer(Layer):
 	def __init__(self, d_model, d_inner_hid, n_head, d_k, d_v, dropout=0.1):
 		self.self_att_layer = MultiHeadAttention(n_head, d_model, d_k, d_v, dropout=dropout)
 		self.enc_att_layer  = MultiHeadAttention(n_head, d_model, d_k, d_v, dropout=dropout)
@@ -188,7 +190,7 @@ class Encoder():
 			if return_att: atts.append(att)
 		return (x, atts) if return_att else x
 
-class Decoder():
+class Decoder(Layer):
 	def __init__(self, d_model, d_inner_hid, n_head, d_k, d_v, \
 			  layers=6, dropout=0.1, word_emb=None, pos_emb=None):
 		self.emb_layer = word_emb

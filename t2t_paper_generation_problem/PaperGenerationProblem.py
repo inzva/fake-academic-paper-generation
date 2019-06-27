@@ -109,4 +109,7 @@ class PaperGenerationProblem(text_problems.Text2SelfProblem):
                                         inputs_prefix=self.inputs_prefix,
                                         targets_prefix=self.targets_prefix)
 
-
+    def hparams(self, defaults, unused_model_hparams):
+        super(PaperGenerationProblem, self).hparams(defaults, unused_model_hparams) 
+        p = defaults
+        p.loss_multiplier = 1.0

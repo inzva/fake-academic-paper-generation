@@ -3,8 +3,8 @@ import argparse
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--folder', type=str, default="experiment")
-parser.add_argument('--model', type=str, default="transformer", choices=["transformer"])
-parser.add_argument('--hparams_set', type=str, default="transformer_small", choices=["transformer_small"])
+parser.add_argument('--model', type=str, default="transformer")
+parser.add_argument('--hparams_set', type=str, default="transformer_small")
 opt = parser.parse_args()
 
 folder = os.path.join(opt.folder, opt.model, opt.hparams_set)

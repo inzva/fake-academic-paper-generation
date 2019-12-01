@@ -72,13 +72,13 @@ checkpoint and generate a number of characters using the learned parameters.
 Transformer [2] is another popular model.
 
 #### How to Run:
-We use [Tensor2Tensor](https://github.com/tensorflow/tensor2tensor) [3] for Transformer model. See [t2t_paper_generation_problem](t2t_paper_generation_problem) directory for details.
+We use [Tensor2Tensor](https://github.com/tensorflow/tensor2tensor) [3] for Transformer model. See **[t2t_paper_generation_problem](t2t_paper_generation_problem)** directory for details.
 
 ### Transformer-XL
 Transformer-XL [4] is a new model aiming to extend Transformer such that long term dependecies could be handled properly.
 
 #### How to Run:
-We use the original code shared by the authors who propose Transformer-XL. See [transformer-xl](transformer-xl) directory for details.
+We use the original code shared by the authors who propose Transformer-XL. See **[transformer-xl](transformer-xl)** directory for details.
 
 ## References
 

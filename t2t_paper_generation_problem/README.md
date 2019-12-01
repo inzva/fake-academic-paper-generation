@@ -6,6 +6,8 @@ pip install tensor2tensor==1.13.2
 ```
 
 ### Train Model
+**First, you need to change [PaperGenerationProblem.py](PaperGenerationProblem.py) line 20 with the URL to the dataset created using the code specied in [the main README](../README.md).**
+
 ```
 python t2t_paper_generation_problem/train.py
 ```

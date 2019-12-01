@@ -19,7 +19,7 @@ class PaperGenerationProblem(text_problems.Text2SelfProblem):
     def corpus_url(self):
         url = "Update here with the URL to the Dataset"
         if url == "Update here with the URL to the Dataset":
-            raise Exception("Add the URL to the Dataset")
+            raise Exception("Update the URL to the Dataset")
         return 
 
     @property

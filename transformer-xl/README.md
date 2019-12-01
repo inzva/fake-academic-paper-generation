@@ -1,3 +1,5 @@
+This code is adapted from https://github.com/kimiyoung/transformer-xl.
+
 # Transformer-XL: Attentive Language Models Beyond a Fixed-Length Context
 
 This repository contains the code in **PyTorch** for the paper

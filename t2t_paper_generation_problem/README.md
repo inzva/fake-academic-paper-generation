@@ -5,13 +5,21 @@
 pip install tensor2tensor==1.13.2
 ```
 
-### Train
+### Train Model
 ```
 python t2t_paper_generation_problem/train.py
 ```
 
-### Generate Paper from the Trained Model
 ```
-python t2t_paper_generation_problem/generate_paper.py
+usage: train.py [-h] [--folder FOLDER] [--model MODEL]
+                [--hparams_set HPARAMS_SET]
+
+optional arguments:
+  -h, --help            show this help message and exit
+  --folder FOLDER
+  --model MODEL
+  --hparams_set HPARAMS_SET
 ```
 
+# Generate Paper from the Trained Model
+See [Tensor2Tensor](https://github.com/tensorflow/tensor2tensor)

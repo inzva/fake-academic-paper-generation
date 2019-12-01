@@ -17,8 +17,10 @@ from tensor2tensor.data_generators import text_encoder
 class PaperGenerationProblem(text_problems.Text2SelfProblem):
     @property
     def corpus_url(self):
-        return ("https://github.com/inzva/fake-academic-paper-generation/"
-                "raw/master/dataset/preprocessed_data.txt")
+        url = "Update here with the URL to the Dataset"
+        if url == "Update here with the URL to the Dataset":
+            raise Exception("Add the URL to the Dataset")
+        return 
 
     @property
     def is_generate_per_split(self):
@@ -113,3 +115,11 @@ class PaperGenerationProblem(text_problems.Text2SelfProblem):
         super(PaperGenerationProblem, self).hparams(defaults, unused_model_hparams) 
         p = defaults
         p.loss_multiplier = 1.0
+    
+    def eval_metrics(self):
+        return [
+            metrics.Metrics.ACC, metrics.Metrics.ACC_TOP5,
+            metrics.Metrics.ACC_PER_SEQ, metrics.Metrics.BITS_PER_CHAR,
+            metrics.Metrics.NEG_LOG_PERPLEXITY, metrics.Metrics.APPROX_BLEU, 
+            metrics.Metrics.ROUGE_2_F, metrics.Metrics.ROUGE_L_F
+        ]

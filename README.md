@@ -49,6 +49,10 @@ Using this specified process, we downloaded 4-5 GB source files for papers since
 ### Preprocessing
 Dataset is needed to be preprocessed because of noise such as created by comments and non-UTF characters. Therefore, we used _preprocess_char.py_ to delete comments and characters that used below a certain threshold, in our experiments it is 100. 
 
+
+After running the _preprocess_char.py_ script, which outputs preprocessed .tex files, we concatenate (merge) the .tex files to create "preprocessed_data.txt", a text file that includes the complete dataset. To do so, we use the following unix/linux command:
+```cat dataset/*.tex > preprocessed_data.txt```
+
 For our baseline model, we decided to use character level embedding. The details of the preprocessed char-based dataset is given below.
 
 |         **Feature**         |  **Value** |
